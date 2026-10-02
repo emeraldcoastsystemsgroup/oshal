@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Judge and ledger of the storyboard-agy live-acceptance case (ADR-130 amendment 2026-10-02), over a fake api port. Pass needs the card's step to pass with a PNG of at least 64 x 64 from antigravity-cli and a generate_image DONE receipt; a degraded card (another default, or not the operator) is unavailable; a missing receipt, a non-PNG or a card that failed is a fail; a render workspace the card did not remove turns the case red, and a workspace outside the card's tag is a cleanup error. The case posts exactly one Lab run for the card and nothing else.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Judge and ledger of the storyboard-agy live-acceptance case (ADR-130 amendment 2026-10-02, the bot-level rule), over a fake api port. Pass needs the card's step to pass with a PNG of at least 64 x 64 from antigravity-cli, a generate_image DONE receipt, the bot's report that it ran antigravity-cli and a 'match' reconcile (its own setting, never switched); a degraded card (the render bot on another rail, or not the operator) is unavailable; a missing receipt, a non-PNG, another provider, a 'corrected' or unreported reconcile, or a card that failed is a fail; a render workspace the card did not remove turns the case red, and a workspace outside the card's tag is a cleanup error. The case posts exactly one Lab run for the card and nothing else.
  */
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
@@ -15,7 +15,7 @@ const TASK = 'sbimg-testlab-live-storyboard-0a1b2c3d';
 
 const passOutput = (over: Record<string, unknown> = {}) => ({
   provider: 'antigravity-cli', model: 'gemini-3.8-flash-low', sourceMimeType: 'image/jpeg', format: 'png', width: 1024, height: 1024, bytes: 2048,
-  cliRender: { taskId: TASK, tool: 'generate_image', toolState: 'DONE', locator: 'step-output', sha256: 'f'.repeat(64) },
+  cliRender: { taskId: TASK, tool: 'generate_image', toolState: 'DONE', locator: 'step-output', sha256: 'f'.repeat(64), ranOn: 'antigravity-cli', providerConfigAction: 'match' },
   cleanup: { taskId: TASK, removed: true }, ...over,
 });
 
@@ -27,15 +27,15 @@ function world(step: { state: string; detail?: string; output?: unknown } | null
 }
 
 describe('storyboard-agy live acceptance', () => {
-  it('passes on a real PNG from antigravity-cli with the generate_image DONE receipt and the workspace removed', async () => {
+  it('passes on a real PNG from antigravity-cli with the generate_image DONE receipt, a match reconcile and the workspace removed', async () => {
     const api = world({ state: 'pass', output: passOutput() });
     const result = await agy.run({ api: api.api });
     expect(result.state).toBe('pass');
-    expect(result.detail).toContain('1024 x 1024 PNG from image/jpeg, model gemini-3.8-flash-low, generate_image DONE (step-output)');
+    expect(result.detail).toContain('1024 x 1024 PNG from image/jpeg, model gemini-3.8-flash-low, generate_image DONE (step-output), ran on the bot\'s own antigravity-cli (reconcile match)');
     expect(result.cleanup).toMatchObject({ removed: [`render-workspace ${TASK}`], outstanding: [], errors: [] });
     expect(result.cleanup.kept[0]).toContain(`bot-task-record ${TASK}`);
     expect(api.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /api/test-lab/run']);
-    expect(api.calls[0].body).toEqual({ scenarioId: 'storyboard-swarm-default-render' });
+    expect(api.calls[0].body).toEqual({ scenarioId: 'storyboard-antigravity-render' });
   });
 
   it.each([
@@ -43,6 +43,9 @@ describe('storyboard-agy live acceptance', () => {
     ['a receipt short of DONE', passOutput({ cliRender: { taskId: TASK, tool: 'generate_image', toolState: 'ACTIVE' } }), /no receipt/],
     ['not a PNG', passOutput({ format: null, width: 0, height: 0 }), /not a PNG of at least 64 x 64/],
     ['another rail', passOutput({ provider: 'codex-cli' }), /did not come from antigravity-cli/],
+    ['a turn run on another provider', passOutput({ cliRender: { ...passOutput().cliRender, ranOn: 'openai-codex' } }), /does not report that the turn ran on antigravity-cli/],
+    ['a switched provider', passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: 'corrected' } }), /does not report a match on its own provider setting/],
+    ['an unreported reconcile', passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: null } }), /does not report a match/],
   ])('fails a passing card with %s', async (_label, output, reason) => {
     const result = await agy.run({ api: world({ state: 'pass', output }).api });
     expect(result.state).toBe('fail');
@@ -65,8 +68,8 @@ describe('storyboard-agy live acceptance', () => {
     expect(foreign.cleanup.errors[0]).toContain('not its own tag: sbimg-someone-else');
   });
 
-  it('a degraded card (another default rail, or not the operator) is unavailable; an older build is unavailable', async () => {
-    const other = await agy.run({ api: world({ state: 'degraded', detail: "The resolved image rail is 'codex-cli' (swarm-default, swarm default openai-codex), not antigravity-cli. Nothing was rendered." }).api });
+  it('a degraded card (the render bot on another rail, or not the operator) is unavailable; an older build is unavailable', async () => {
+    const other = await agy.run({ api: world({ state: 'degraded', detail: "The resolved image rail is 'codex-cli' (render-bot, general-bot on openai-codex), not antigravity-cli. Nothing was rendered." }).api });
     expect(other.state).toBe('unavailable');
     expect(other.detail).toContain("'codex-cli'");
     const older = await agy.run({ api: world(null).api });

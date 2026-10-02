@@ -4,7 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the storyboard image rail (BACKLOG "Free ComfyUI storyboard provider"). Which rail renders a storyboard still decides whether the stage costs money per image and whether it can serve anybody but the operator, and nothing in the cockpit said which one this deployment would pick. The live step reads the selection and probes the free GPU rail's own health, so an operator can see that the FREE rail is standing by - or exactly which of url / workflow / reachability is missing - without submitting a frame. Read-only: it generates no image, submits no job and spends nothing.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (the image default follows the swarm default). The rail readback now asks selectStoryboardImageProvider - the function the resolver itself uses - instead of re-deriving the default, so it names the swarm-default harness and reports a refused default ("the swarm default <harness> cannot make images") as a fail. New explicit-only card storyboard-swarm-default-render: as the signed-in caller, it requires the resolved default to be antigravity-cli, renders ONE frame through that rail (a generated 256 x 256 red-circle anchor and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, requires a real PNG back plus the bot's receipt that generate_image reached DONE, and removes exactly that workspace (proven gone). It spends one model turn on the operator's subscription, so it never runs from "run all". The new guards are attached as regressionTests.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (the bot-level rule: the render bot's own effective harness picks the image rail). The rail readback now awaits selectStoryboardImageProvider - the function the resolver itself uses - instead of re-deriving the default, so it names the render bot and the harness it followed and reports a refused selection ("<bot> runs <harness>, which cannot make images") as a fail. New explicit-only card storyboard-antigravity-render: as the signed-in caller, it requires the resolved rail to be antigravity-cli, renders ONE frame through it (a generated 256 x 256 red-circle anchor and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, requires a real PNG back plus the bot's receipt that generate_image reached DONE, and removes exactly that workspace (proven gone). It spends one model turn on the operator's subscription, so it never runs from "run all". The new guards are attached as regressionTests.
  *
  * @module routes/test-lab-storyboard-scenarios
  */
@@ -26,7 +26,7 @@ import type { Scenario, ScenarioRunContext, StepResult } from './test-lab-scenar
 const logger = createChildLogger({ module: 'test-lab-storyboard-scenarios' });
 const APP = 'storyboard';
 const LABEL = 'Storyboard image rail';
-const RENDER_LABEL = 'Render one frame on the swarm-default rail';
+const RENDER_LABEL = 'Render one frame on the render bot\'s antigravity rail';
 /** The brief the live render sends: an edit whose correct answer is easy to see and hard to fake. */
 const RENDER_BRIEF = 'Make the red circle blue. Keep the white background and the circle\'s size and position exactly as they are.';
 /** The live render's own task workspaces, and nothing else, are what its cleanup may remove. */
@@ -52,10 +52,10 @@ const OPERATOR_RAILS = new Set(['codex-cli', 'antigravity-cli']);
  */
 async function railStep(_cookie: string): Promise<StepResult> {
   const result = (state: StepResult['state'], detail: string): StepResult => ({ app: APP, label: LABEL, state, detail });
-  const selection = selectStoryboardImageProvider();
+  const selection = await selectStoryboardImageProvider();
   if (!selection.ok) return result('fail', `No storyboard image rail can be selected: ${selection.reason}. Every storyboard frame will fail at selection until this is fixed.`);
   const selected = selection.id;
-  const via = selection.source === 'swarm-default' ? ` (follows the swarm default ${selection.swarmDefault})` : '';
+  const via = selection.source === 'render-bot' ? ` (follows the render bot ${selection.renderBot} on ${selection.harness})` : '';
 
   const comfy = createComfyUiImageProvider();
   const health = comfy.healthCheck ? await comfy.healthCheck() : { ok: false, detail: 'the free rail reports no health probe' };
@@ -113,7 +113,9 @@ function removeRenderWorkspace(taskId: string): { taskId: string; removed: boole
 
 /**
  * @description Judge one finished render: a real PNG of a usable size, from the antigravity rail,
- * carrying the bot's receipt that generate_image reached DONE, with its workspace removed.
+ * carrying the bot's receipt that generate_image reached DONE, run on the bot's own antigravity-cli
+ * setting (the bot reports it ran antigravity-cli and its ADR-034 reconcile was a 'match', not a
+ * switch), with its workspace removed.
  * @param {StoryboardImageResult} rendered - The provider's answer.
  * @param {{removed: boolean}} cleanup - The workspace cleanup fact.
  * @returns {{state: StepResult['state'], detail: string}} The verdict.
@@ -124,15 +126,18 @@ function judgeRender(rendered: StoryboardImageResult, cleanup: { removed: boolea
   const problems = [
     ...(size && size.width >= 64 && size.height >= 64 ? [] : ['the image is not a PNG of at least 64 x 64']),
     ...(receipt?.tool === 'generate_image' && receipt.toolState === 'DONE' ? [] : ['no receipt shows a generate_image step that reached DONE']),
+    ...(receipt?.ranOn === 'antigravity-cli' ? [] : [`the bot reports the turn ran on ${receipt?.ranOn ?? 'nothing'}, not antigravity-cli`]),
+    ...(receipt?.providerConfigAction === 'match' ? [] : [`the bot's provider reconcile was ${receipt?.providerConfigAction ?? 'not reported'}, not a match on its own setting`]),
     ...(cleanup.removed ? [] : ['the render workspace was not removed']),
   ];
-  const facts = `${size ? `${size.width} x ${size.height} PNG` : 'no PNG'} from ${rendered.sourceMimeType ?? 'an unreported format'}, model ${rendered.model}, located by ${receipt?.locator ?? 'nothing'}`;
-  return problems.length ? { state: 'fail', detail: `${problems.join('; ')} (${facts}).` } : { state: 'pass', detail: `The swarm-default rail rendered the frame: ${facts}; generate_image reached DONE; workspace removed.` };
+  const facts = `${size ? `${size.width} x ${size.height} PNG` : 'no PNG'} from ${rendered.sourceMimeType ?? 'an unreported format'}, model ${rendered.model}, ran on ${receipt?.ranOn ?? 'unreported'} (reconcile ${receipt?.providerConfigAction ?? 'unreported'}), located by ${receipt?.locator ?? 'nothing'}`;
+  return problems.length ? { state: 'fail', detail: `${problems.join('; ')} (${facts}).` } : { state: 'pass', detail: `The render bot's antigravity rail rendered the frame: ${facts}; generate_image reached DONE; workspace removed.` };
 }
 
 /**
- * @description Explicit-only live step: render ONE frame through the resolved default for the
- * signed-in caller and require that the antigravity-cli rail produced it. One model turn.
+ * @description Explicit-only live step: render ONE frame through the resolved rail for the
+ * signed-in caller and require that the antigravity-cli rail produced it on the render bot's own
+ * setting. One model turn.
  * @param {string} _cookie - Unused; the step runs in-process as the server-derived caller.
  * @param {Record<string, unknown>} _prior - Unused.
  * @param {ScenarioRunContext} [runtime] - The server-derived caller.
@@ -141,9 +146,9 @@ function judgeRender(rendered: StoryboardImageResult, cleanup: { removed: boolea
 async function renderStep(_cookie: string, _prior: Record<string, unknown>, runtime?: ScenarioRunContext): Promise<StepResult> {
   const result = (state: StepResult['state'], detail: string, output?: unknown): StepResult => ({ app: APP, label: RENDER_LABEL, state, detail, ...(output === undefined ? {} : { output }) });
   if (!runtime?.ownerSub) return result('fail', 'No server-derived caller reached the step; nothing was rendered.');
-  const selection = selectStoryboardImageProvider();
-  if (!selection.ok) return result('fail', `The image default refused: ${selection.reason}. Nothing was rendered.`);
-  if (selection.id !== 'antigravity-cli') return result('degraded', `The resolved image rail is '${selection.id}' (${selection.source}${selection.swarmDefault ? `, swarm default ${selection.swarmDefault}` : ''}), not antigravity-cli. Nothing was rendered.`);
+  const selection = await selectStoryboardImageProvider();
+  if (!selection.ok) return result('fail', `The image selection refused: ${selection.reason}. Nothing was rendered.`);
+  if (selection.id !== 'antigravity-cli') return result('degraded', `The resolved image rail is '${selection.id}' (${selection.source}${selection.renderBot ? `, ${selection.renderBot} on ${selection.harness}` : ''}), not antigravity-cli. Nothing was rendered.`);
   try {
     const resolved = await resolveStoryboardImageProvider({ userSub: runtime.ownerSub });
     if (resolved.id !== 'antigravity-cli') return result('fail', `The resolver chose '${resolved.id}' although the selection named antigravity-cli. Nothing was rendered.`);
@@ -164,7 +169,7 @@ async function renderStep(_cookie: string, _prior: Record<string, unknown>, runt
   if (!rendered) return result('fail', `The render failed: ${failure.slice(0, 400)}${cleanup.removed ? '' : ' The render workspace was not removed.'}`, { taskId, cleanup, kept });
   const size = pngSize(rendered.image);
   const verdict = judgeRender(rendered, cleanup);
-  return result(verdict.state, verdict.detail, { provider: 'antigravity-cli', model: rendered.model, sourceMimeType: rendered.sourceMimeType ?? null,
+  return result(verdict.state, verdict.detail, { provider: 'antigravity-cli', renderBot: selection.renderBot, botHarness: selection.harness, model: rendered.model, sourceMimeType: rendered.sourceMimeType ?? null,
     format: size ? 'png' : null, width: size?.width ?? 0, height: size?.height ?? 0, bytes: rendered.image.length, cliRender: rendered.cliRender ?? null, cleanup, kept });
 }
 
@@ -173,7 +178,7 @@ export const STORYBOARD_SCENARIOS: Scenario[] = [{
   id: 'storyboard-image-rail',
   title: 'Storyboard stills — which rail renders them, and whether it is free',
   group: 'tool',
-  description: 'Reads which image rail this deployment would render storyboard frames on (in demo mode it follows the swarm default: antigravity-cli or codex-cli, and a swarm default that cannot make images is reported as refused) and probes the free GPU rail (ComfyUI) for readiness, naming exactly what is missing when it is not ready. A paid rail selected by accident is a per-image bill nobody chose, and the demo CLI rails serve only the operator — this is the read that tells them apart. Read-only: no frame is generated and nothing is spent.',
+  description: 'Reads which image rail this deployment would render storyboard frames on (in demo mode it follows the render bot\'s own harness - its own switch row, else the swarm default: antigravity-cli or codex-cli, and a harness that cannot make images is reported as refused, naming the bot) and probes the free GPU rail (ComfyUI) for readiness, naming exactly what is missing when it is not ready. A paid rail selected by accident is a per-image bill nobody chose, and the demo CLI rails serve only the operator — this is the read that tells them apart. Read-only: no frame is generated and nothing is spent.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/storyboard-comfyui-provider.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-codex-cli-provider.spec.ts' },
@@ -183,11 +188,11 @@ export const STORYBOARD_SCENARIOS: Scenario[] = [{
   ],
   steps: [{ id: 'rail', app: APP, label: LABEL, run: railStep }],
 }, {
-  id: 'storyboard-swarm-default-render',
-  title: 'Storyboard stills — render one frame on the swarm-default (antigravity) rail',
+  id: 'storyboard-antigravity-render',
+  title: 'Storyboard stills — render one frame on the render bot\'s antigravity rail',
   group: 'tool',
   explicitOnly: true,
-  description: 'As you, requires the resolved storyboard image default to be antigravity-cli, renders ONE frame through it (a generated red-circle reference and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, and requires a real PNG back with the bot\'s receipt that generate_image reached DONE. Removes exactly that workspace and proves it gone; the render bot\'s task record and usage row stay as the audit trail. Serves only the deployment operator in demo mode. Spends one model turn on the operator\'s subscription.',
+  description: 'As you, requires the resolved storyboard image rail to be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), renders ONE frame through it (a generated red-circle reference and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, and requires a real PNG back with the bot\'s receipt that generate_image reached DONE. The render bot\'s provider is never switched for it. Removes exactly that workspace and proves it gone; the render bot\'s task record and usage row stay as the audit trail. Serves only the deployment operator in demo mode. Spends one model turn on the operator\'s subscription.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/storyboard-image-default.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-antigravity-image-turn.spec.ts' },

@@ -4,18 +4,37 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the antigravity-cli storyboard image rail (ADR-130 amendment 2026-10-02), across the real filesystem and a real child process. The render chain is real end to end except the HTTP hop: the antigravity-cli provider stages the anchor and builds the prompt, the boot-seam executor hands the envelope to the REAL bot-node execution handler, which runs the REAL TaskController message path, the REAL AgenticController, the REAL AntigravityProvider and the REAL AntigravityCLIWrapper, which spawns tests/fixtures/fake-agy-image.cjs with its own argv, cwd and private HOME; the stand-in writes the image into that HOME the way agy 1.2.8 did in the headless proof. Pins: the image comes back to the provider (JPEG converted to a real PNG, source format reported, receipt says generate_image DONE) and the private HOME is gone afterwards; the prompt names generate_image, passes the anchor's absolute path in ImagePaths and forbids code, commands and additions, and it reaches agy verbatim inside the handler's SEC-05 data record, without the ticket/handover scaffolding. Guard A: no generate_image step (image in the brain anyway), a run_command-only stream (image drawn into the workspace), a generate_image that ended in ERROR, an image older than the turn, a step output naming a file outside the private brain, and a workspace that already holds an output are all refused with nothing collected, and the HOME is still removed. An ordinary (non-image) turn collects nothing, and an image turn cannot combine with host-tools-only or a tool bridge. The only doubles are outside the boundary: the two any-bot sqlite stores (in memory) and the HTTP hop between the executor and the handler.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The bot-level rule end to end (ADR-130 amendment 2026-10-02): one render crosses the REAL boot wiring (wireCliStoryboardImageExecutor) over the canonical runtime-params resolver and the REAL switch snapshot (fleet default antigravity-cli), a BotNodeClient double that does only what the /api/swarm-execute route does with the body (the REAL parseBotNodeProviderAuthority onto the envelope, the REAL buildBotNodeHttpResponse back), and the REAL bot-node handler with its ADR-034 dispatchConfigRuntime seam reporting the bot on antigravity-cli. The bot's reconcile is a 'match', setActiveProvider is never called, the provider reports the turn ran on antigravity-cli, and the image still comes back. The case fails if the wiring stamps anything but the bot's own record (a rail harness, a fallback chain the real post-execution check would accept).
  */
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 
 import { createBotNodeExecutionHandler } from '../../src/app/bot-node-execution-handler';
 import { createAntigravityCliImageProvider } from '../../src/features/video-generation/services/storyboard-antigravity-image-provider';
 import { registerCliStoryboardImageExecutor } from '../../src/features/video-generation/services/storyboard-cli-image-executor';
+import { registerStoryboardRenderBotReader } from '../../src/features/video-generation/services/storyboard-image-default';
+import { wireCliStoryboardImageExecutor } from '../../src/app/storyboard-cli-image-wiring';
+import { parseBotNodeProviderAuthority } from '../../src/app/bot-node-provider-authority';
+import { buildBotNodeHttpResponse } from '../../src/app/bot-node-http-response';
+import { clearRenderBotSwitch, installRenderBotSwitch, switchRow } from '../fixtures/storyboard-render-bot-switch';
+
+/** The HTTP hop to the node: the only double between the wiring and the real handler (set per case). */
+const hop = vi.hoisted(() => ({ deliver: null as null | ((agentId: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>) }));
+vi.mock('@/features/agent-management', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  BotNodeClient: class {
+    async execute(agentId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+      if (!hop.deliver) throw new Error('no bot node behind the hop in this case');
+      return hop.deliver(agentId, body);
+    }
+  },
+  createRegistryEndpointResolver: () => ({}),
+}));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const AgenticController = require('../../any-bot/server/controllers/AgenticController');
@@ -65,6 +84,9 @@ beforeEach(() => {
 
 afterEach(() => {
   registerCliStoryboardImageExecutor(null);
+  registerStoryboardRenderBotReader(null);
+  clearRenderBotSwitch();
+  hop.deliver = null;
   fs.rmSync(scratch, { recursive: true, force: true });
   for (const key of ENV_KEYS) {
     if (saved[key] === undefined) delete process.env[key];
@@ -197,6 +219,51 @@ describe('antigravity-cli storyboard rail, through the real bot-node chain and a
     const files = fs.readdirSync(renderWorkspaces()[0]);
     expect(files).not.toContain('output.jpg');
     expect(files).not.toContain('output.image-turn.json');
+    expect(fs.existsSync(observations()[0].home)).toBe(false);
+  }, 60_000);
+});
+
+describe('the bot-level rule end to end: the real wiring, the route\'s mapping and the real handler\'s reconcile', () => {
+  /** The bot node's ADR-034 runtime seam: the bot runs its own antigravity-cli setting; records every switch. */
+  function botRuntime() {
+    const switches: Array<[string, string | undefined]> = [];
+    return {
+      switches,
+      getActiveProvider: () => ({ provider: 'antigravity-cli', model: 'gemini-3.8-flash-low' }),
+      setActiveProvider: (provider: string, model?: string) => { switches.push([provider, model]); return { provider, model: model ?? 'gemini-3.8-flash-low' }; },
+    };
+  }
+
+  /** What /api/swarm-execute does with the body: provider authority onto the envelope, the result back as JSON. */
+  function routeTo(handler: ReturnType<typeof createBotNodeExecutionHandler>) {
+    return async (agentId: string, body: Record<string, unknown>) => {
+      const envelope = { correlationId: `http-${String(body.taskId)}`, fromAgentId: 'swarm-controller', toAgentId: agentId, channel: `agent.${agentId}`,
+        messageType: 'request' as const, payload: {
+          text: body.text, workspaceTaskId: body.workspaceFolderId, workspaceFolderId: body.workspaceFolderId, externalId: body.taskId,
+          agenticMode: body.agenticMode ?? true, direct: body.direct === true, userSub: body.userSub,
+          ...parseBotNodeProviderAuthority(body), ...(body.imageTurn === true ? { imageTurn: true } : {}),
+        } };
+      return buildBotNodeHttpResponse(await handler(envelope), { durationMs: 0, taskId: String(body.taskId), defaultModel: 'gemini-3.8-flash-low', defaultProvider: 'antigravity-cli' });
+    };
+  }
+
+  it('a render bot on the antigravity fleet default renders on its own harness: reconcile match, no switch, the image comes back', async () => {
+    const installed = await installRenderBotSwitch([switchRow('fleet-default', 'antigravity-cli', { modelId: 'gemini-3.8-flash-low', fallbackOrder: ['openai-codex'] })]);
+    const runtime = botRuntime();
+    const bodies: Array<Record<string, unknown>> = [];
+    const deliver = routeTo(createBotNodeExecutionHandler({
+      anyBotTaskController: botNodeTaskController(), providerName: 'antigravity-cli', modelName: 'gemini-3.8-flash-low', dispatchConfigRuntime: runtime,
+    }));
+    hop.deliver = async (agentId, body) => { bodies.push(body); return deliver(agentId, body); };
+    wireCliStoryboardImageExecutor({ runtimeParamsResolver: () => installed.resolver });
+
+    const result = await createAntigravityCliImageProvider(OWNER).generateWithMeta!('make the circle blue', await anchor());
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', fallbackOrder: [], providerConfigRequired: true, imageTurn: true });
+    expect(result.cliRender).toMatchObject({ tool: 'generate_image', toolState: 'DONE', ranOn: 'antigravity-cli', providerConfigAction: 'match' });
+    expect(runtime.switches, 'the render never changes the render bot\'s provider').toEqual([]);
+    expect((await sharp(result.image).metadata()).format).toBe('png');
     expect(fs.existsSync(observations()[0].home)).toBe(false);
   }, 60_000);
 });

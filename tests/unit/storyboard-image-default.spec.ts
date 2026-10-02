@@ -3,40 +3,37 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the storyboard image default following the swarm default (ADR-130 amendment 2026-10-02). Pins the mapping through the REAL resolver: in demo mode the fleet-default harness picks the rail (antigravity-cli -> antigravity-cli, openai-codex and codex-cli -> codex-cli); a harness with no image rail (claude-code, cline, gemini-cli) fails closed with "the swarm default <harness> cannot make images; set STORYBOARD_IMAGE_PROVIDER" and never reaches a paid provider; an explicit STORYBOARD_IMAGE_PROVIDER always wins; the non-demo default stays codex; no fleet row (or no reader) keeps codex-cli; a switch that has not loaded, or a reader that throws, fails closed; a non-operator caller of the antigravity default is refused as not configured with no fallback. The boot reader is the REAL readFleetDefaultHarness over the REAL ProviderSwitchSnapshot (an in-memory store is the only double): a fleet-default write followed by the snapshot's own refresh moves the image rail with no re-registration and no restart.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the storyboard image selection by the bot-level rule (ADR-130 amendment 2026-10-02): the RENDER BOT's own effective provider picks the rail. Through the REAL resolver: antigravity-cli -> antigravity-cli, openai-codex/codex-cli -> codex-cli; a harness with no image rail (claude-code, cline, gemini-cli, a Cline-backed id) fails closed naming the bot and the harness and never reaches a paid provider; no provider record, and a reader that cannot answer, fail closed; an explicit STORYBOARD_IMAGE_PROVIDER always wins; the non-demo default stays codex; no reader registered keeps codex-cli; a non-operator caller is refused as not configured with no fallback. The chain cases use the REAL boot reader (createStoryboardRenderBotReader) over the canonical runtime-params resolver the swarm extension builds, the REAL ProviderSwitchSnapshot and the REAL registry readers (tests/fixtures/storyboard-render-bot-switch.ts): the bot's own row overrides the fleet default in both directions, the registry declaration answers when there are no rows, an unread snapshot refuses, and a row write moves the rail at the next refresh with no restart.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  registerStoryboardSwarmDefaultReader,
+  registerStoryboardRenderBotReader,
   selectStoryboardImageProvider,
-  type StoryboardSwarmDefault,
+  type StoryboardRenderBot,
 } from '../../src/features/video-generation/services/storyboard-image-default';
 import { resolveStoryboardImageProvider } from '../../src/features/video-generation/services/storyboard-image-providers';
 import { registerCliStoryboardImageExecutor } from '../../src/features/video-generation/services/storyboard-cli-image-executor';
-import { readFleetDefaultHarness } from '../../src/app/storyboard-cli-image-wiring';
-import { setInstalledProviderSwitchSnapshot } from '../../src/app/composition/provider-switch-runtime';
-import { ProviderSwitchSnapshot } from '../../src/features/agent-management/services/provider-switch-snapshot';
-import type { ProviderSwitchRow } from '../../src/shared/llm-runtime';
+import { createStoryboardRenderBotReader } from '../../src/app/storyboard-cli-image-wiring';
+import { clearRenderBotSwitch, installRenderBotSwitch, RENDER_BOT, switchRow } from '../fixtures/storyboard-render-bot-switch';
 
 const OPERATOR = 'operator-sub-1';
 const ENV_KEYS = ['STORYBOARD_IMAGE_PROVIDER', 'DEMO_MODE', 'OSHAL_OPERATOR_SUBS'] as const;
-const CATALOG = { harnessTypes: ['codex-cli', 'antigravity-cli', 'claude-code', 'cline', 'gemini-cli'], clineApiProviders: ['gemini'] };
 
-const fleet = (harness: string | null, loaded = true): void => {
-  registerStoryboardSwarmDefaultReader((): StoryboardSwarmDefault => ({ loaded, harness }));
+const bot = (harness: string | null, name = 'general-bot'): void => {
+  registerStoryboardRenderBotReader(async (): Promise<StoryboardRenderBot> => ({ name, harness }));
 };
 const refusal = (promise: Promise<unknown>): Promise<Error | null> => promise.then(() => null, (e: Error) => e);
 
-/** The fleet-default row store the real snapshot reads; the only double in the reader case. */
-function memoryRows(): { rows: Map<string, ProviderSwitchRow>; source: { listAll(): Promise<ProviderSwitchRow[]> } } {
-  const rows = new Map<string, ProviderSwitchRow>();
-  return { rows, source: { listAll: async () => Array.from(rows.values()) } };
+/** The real boot reader over the canonical resolver for the default render bot. */
+async function realReader(...args: Parameters<typeof installRenderBotSwitch>) {
+  const installed = await installRenderBotSwitch(...args);
+  registerStoryboardRenderBotReader(createStoryboardRenderBotReader(RENDER_BOT, { runtimeParamsResolver: () => installed.resolver }));
+  return installed;
 }
-const fleetRow = (providerId: string): ProviderSwitchRow => ({ scopeId: 'fleet-default', providerId, modelId: null, updatedBy: OPERATOR, updatedAt: new Date().toISOString() });
 
-describe('storyboard image default follows the swarm default (ADR-130, 2026-10-02)', () => {
+describe('storyboard image selection: the render bot\'s own harness picks the rail (ADR-130, 2026-10-02)', () => {
   const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
 
   beforeEach(() => {
@@ -44,9 +41,9 @@ describe('storyboard image default follows the swarm default (ADR-130, 2026-10-0
     delete process.env.STORYBOARD_IMAGE_PROVIDER;
     process.env.DEMO_MODE = 'true';
     process.env.OSHAL_OPERATOR_SUBS = OPERATOR;
-    registerStoryboardSwarmDefaultReader(null);
+    registerStoryboardRenderBotReader(null);
     registerCliStoryboardImageExecutor(async () => ({ success: false, responseText: '', error: 'never called here' }));
-    setInstalledProviderSwitchSnapshot(null);
+    clearRenderBotSwitch();
   });
 
   afterEach(() => {
@@ -55,90 +52,124 @@ describe('storyboard image default follows the swarm default (ADR-130, 2026-10-0
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    registerStoryboardSwarmDefaultReader(null);
+    registerStoryboardRenderBotReader(null);
     registerCliStoryboardImageExecutor(null);
-    setInstalledProviderSwitchSnapshot(null);
+    clearRenderBotSwitch();
   });
 
-  it('antigravity-cli as the swarm default resolves the antigravity-cli rail for the operator', async () => {
-    fleet('antigravity-cli');
-    expect(selectStoryboardImageProvider()).toEqual({ ok: true, id: 'antigravity-cli', source: 'swarm-default', swarmDefault: 'antigravity-cli' });
+  it('a render bot on antigravity-cli resolves the antigravity-cli rail for the operator', async () => {
+    bot('antigravity-cli');
+    expect(await selectStoryboardImageProvider()).toEqual({ ok: true, id: 'antigravity-cli', source: 'render-bot', renderBot: 'general-bot', harness: 'antigravity-cli' });
     const provider = await resolveStoryboardImageProvider({ userSub: OPERATOR });
     expect(provider.id).toBe('antigravity-cli');
     expect(provider.costClass).toBe('free');
   });
 
-  it.each(['openai-codex', 'codex-cli', 'OpenAI-Codex'])('%s as the swarm default resolves codex-cli', async (harness) => {
-    fleet(harness);
+  it.each(['openai-codex', 'codex-cli', 'OpenAI-Codex'])('a render bot on %s resolves codex-cli', async (harness) => {
+    bot(harness);
     expect((await resolveStoryboardImageProvider({ userSub: OPERATOR })).id).toBe('codex-cli');
   });
 
-  it.each(['claude-code', 'cline', 'gemini-cli', 'gemini'])('%s as the swarm default fails closed and names the override', async (harness) => {
-    fleet(harness);
+  it.each(['claude-code', 'cline', 'gemini-cli', 'gemini'])('a render bot on %s fails closed naming the bot and the harness', async (harness) => {
+    bot(harness);
     const err = await refusal(resolveStoryboardImageProvider({ userSub: OPERATOR }));
-    expect(err?.message).toContain(`the swarm default ${harness} cannot make images; set STORYBOARD_IMAGE_PROVIDER`);
+    expect(err?.message).toContain(`general-bot runs ${harness}, which cannot make images; give that bot an image-capable harness, or set STORYBOARD_IMAGE_PROVIDER to an image API`);
     expect(err?.message).toContain('Refusing to fall back to a paid provider');
   });
 
-  it('an explicit STORYBOARD_IMAGE_PROVIDER wins over every swarm default, including one that cannot make images', async () => {
-    fleet('claude-code');
-    process.env.STORYBOARD_IMAGE_PROVIDER = 'codex-cli';
-    expect((await resolveStoryboardImageProvider({ userSub: OPERATOR })).id).toBe('codex-cli');
-    fleet('antigravity-cli');
+  it('a render bot with no provider record, and a reader that cannot answer, fail closed', async () => {
+    bot(null);
+    expect((await refusal(resolveStoryboardImageProvider({ userSub: OPERATOR })))?.message).toMatch(/general-bot has no provider record .*set STORYBOARD_IMAGE_PROVIDER/);
+    registerStoryboardRenderBotReader(async () => { throw new Error('snapshot exploded'); });
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: false, reason: expect.stringContaining('snapshot exploded') });
+  });
+
+  it('an explicit STORYBOARD_IMAGE_PROVIDER wins over every render bot, including one that cannot make images', async () => {
+    bot('claude-code');
     process.env.STORYBOARD_IMAGE_PROVIDER = 'comfyui';
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'comfyui', source: 'explicit' });
+    expect(await selectStoryboardImageProvider()).toEqual({ ok: true, id: 'comfyui', source: 'explicit', renderBot: null, harness: null });
+    bot('antigravity-cli');
+    process.env.STORYBOARD_IMAGE_PROVIDER = 'codex-cli';
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', source: 'explicit' });
   });
 
-  it('outside demo mode the default stays codex whatever the swarm default is', () => {
+  it('outside demo mode the default stays codex whatever the render bot runs', async () => {
     delete process.env.DEMO_MODE;
-    fleet('antigravity-cli');
-    expect(selectStoryboardImageProvider()).toEqual({ ok: true, id: 'codex', source: 'platform-default', swarmDefault: null });
+    bot('antigravity-cli');
+    expect(await selectStoryboardImageProvider()).toEqual({ ok: true, id: 'codex', source: 'platform-default', renderBot: null, harness: null });
   });
 
-  it('no fleet-default row, or no reader at all, keeps the ADR-130 codex-cli default', () => {
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', source: 'demo-default' });
-    fleet(null);
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', source: 'demo-default' });
+  it('with no reader registered (no boot wiring in this process) the demo default stays codex-cli', async () => {
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', source: 'demo-default' });
   });
 
-  it('a switch that has not loaded, or a reader that throws, fails closed', async () => {
-    fleet(null, false);
-    expect((await refusal(resolveStoryboardImageProvider({ userSub: OPERATOR })))?.message).toMatch(/the swarm default is not known yet.*set STORYBOARD_IMAGE_PROVIDER/);
-    registerStoryboardSwarmDefaultReader(() => { throw new Error('snapshot exploded'); });
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: false });
-  });
-
-  it('a non-operator caller of the antigravity default is refused as not configured, with no fallback', async () => {
-    fleet('antigravity-cli');
+  it('a non-operator caller of the antigravity rail is refused as not configured, with no fallback', async () => {
+    bot('antigravity-cli');
     const err = await refusal(resolveStoryboardImageProvider({ userSub: 'someone-else' }));
     expect(err?.message).toMatch(/storyboard image provider 'antigravity-cli' is not configured/);
     expect(err?.message).toMatch(/Refusing to fall back/);
   });
+});
 
-  it('the boot reader follows the real switch snapshot: a fleet write moves the rail at the next refresh, no restart', async () => {
-    registerStoryboardSwarmDefaultReader(readFleetDefaultHarness);
-    expect(selectStoryboardImageProvider(), 'no switch store in this process').toMatchObject({ ok: true, id: 'codex-cli', source: 'demo-default' });
+describe('the boot reader over the canonical record: bot row, then fleet default, then registry', () => {
+  const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+  beforeEach(() => {
+    for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
+    process.env.DEMO_MODE = 'true';
+    delete process.env.STORYBOARD_IMAGE_PROVIDER;
+  });
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      const v = savedEnv[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    registerStoryboardRenderBotReader(null);
+    clearRenderBotSwitch();
+  });
 
-    const { rows, source } = memoryRows();
-    const snapshot = new ProviderSwitchSnapshot(source, CATALOG);
-    setInstalledProviderSwitchSnapshot(snapshot, CATALOG);
-    expect(selectStoryboardImageProvider(), 'installed but not read yet').toMatchObject({ ok: false });
+  it('the fleet default antigravity-cli reaches a render bot with no row of its own', async () => {
+    await realReader([switchRow('fleet-default', 'antigravity-cli', { modelId: 'gemini-3.8-flash-low' })]);
+    expect(await selectStoryboardImageProvider()).toEqual({ ok: true, id: 'antigravity-cli', source: 'render-bot', renderBot: 'general-bot', harness: 'antigravity-cli' });
+  });
 
-    rows.set('fleet-default', fleetRow('antigravity-cli'));
-    await snapshot.refresh();
-    expect(selectStoryboardImageProvider()).toEqual({ ok: true, id: 'antigravity-cli', source: 'swarm-default', swarmDefault: 'antigravity-cli' });
+  it('the render bot\'s own row overrides the fleet default: a bot on codex renders on codex-cli while the fleet is antigravity', async () => {
+    await realReader([switchRow('fleet-default', 'antigravity-cli'), switchRow(RENDER_BOT, 'openai-codex')]);
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', harness: 'openai-codex' });
+  });
 
-    rows.set('fleet-default', fleetRow('openai-codex'));
-    expect(selectStoryboardImageProvider(), 'before the refresh the last read stands').toMatchObject({ id: 'antigravity-cli' });
-    await snapshot.refresh();
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', swarmDefault: 'openai-codex' });
+  it('the bot row wins in the other direction too: a bot on claude-code is refused although the fleet default could make images', async () => {
+    await realReader([switchRow('fleet-default', 'antigravity-cli'), switchRow(RENDER_BOT, 'claude-code')]);
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: false, harness: 'claude-code',
+      reason: 'general-bot runs claude-code, which cannot make images; give that bot an image-capable harness, or set STORYBOARD_IMAGE_PROVIDER to an image API' });
+  });
 
-    rows.set('fleet-default', fleetRow('claude-code'));
-    await snapshot.refresh();
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: false, swarmDefault: 'claude-code' });
+  it('a fleet default of claude-code is refused for a bot with no row, never a paid fallback', async () => {
+    await realReader([switchRow('fleet-default', 'claude-code')]);
+    const selection = await selectStoryboardImageProvider();
+    expect(selection).toMatchObject({ ok: false, renderBot: 'general-bot', harness: 'claude-code' });
+  });
 
-    rows.delete('fleet-default');
-    await snapshot.refresh();
-    expect(selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', source: 'demo-default' });
+  it('with no rows the registry declaration answers (general-bot declares openai-codex)', async () => {
+    await realReader([]);
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', harness: 'openai-codex' });
+  });
+
+  it('a snapshot that has not completed its first read refuses instead of guessing', async () => {
+    await realReader([switchRow('fleet-default', 'antigravity-cli')], { loaded: false });
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: false, reason: expect.stringMatching(/provider could not be read.*first successful read/) });
+  });
+
+  it('a row write moves the rail at the next refresh, with no re-registration and no restart', async () => {
+    const installed = await realReader([switchRow('fleet-default', 'antigravity-cli')]);
+    expect(await selectStoryboardImageProvider()).toMatchObject({ id: 'antigravity-cli' });
+    installed.rows.set(RENDER_BOT, switchRow(RENDER_BOT, 'codex-cli'));
+    expect(await selectStoryboardImageProvider(), 'before the refresh the last read stands').toMatchObject({ id: 'antigravity-cli' });
+    await installed.refresh();
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: true, id: 'codex-cli', harness: 'codex-cli' });
+    installed.rows.delete(RENDER_BOT);
+    installed.rows.set('fleet-default', switchRow('fleet-default', 'cline'));
+    await installed.refresh();
+    expect(await selectStoryboardImageProvider()).toMatchObject({ ok: false, harness: 'cline' });
   });
 });

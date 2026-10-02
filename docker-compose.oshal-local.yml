@@ -50,7 +50,7 @@
 # 42 | maintainer@emeraldcoastsystemsgroup.com | Forward OSHAL_DEV_WORKSPACE_INDEX_ENABLED beside the ADR-077 dev-console gates it sits behind. The dev-workspace-index store package's route and Jarvis tool read it from process.env in the api, and compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS, so setting it in .env could not enable the package (found by the deploy lane 2026-09-28). Default false, so an untouched box is unchanged. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 43 | maintainer@emeraldcoastsystemsgroup.com   | World classify on the swarm's accounted rail (operator decisions 2026-09-21 and 2026-10-02). WORLD_CLASSIFY_PROVIDERS (an in-process claude/codex CLI list the controller refused unattended, so no item was model-classified from 2026-08-06) selects nothing now; it is forwarded with no default only so news-fetcher can warn an operator who still sets it. Forwarded for the rail: WORLD_CLASSIFY_BOT (the classify bot, default general-bot), WORLD_CLASSIFY_OWNER_SUB (the accountable owner every call carries; blank on a DEMO box with exactly one operator means that operator), WORLD_CLASSIFY_OWNER_ISSUER (that owner's verified issuer, needed when the bot-node hop is signed; blank = the single active verified-principal record for the subject), the optional WORLD_CLASSIFY_PROVIDER_ID / WORLD_CLASSIFY_MODEL stamp (blank = the classify bot's canonical provider record, the swarm default) and WORLD_CLASSIFY_CALL_TIMEOUT_MS (one chunk's ceiling, default 120000). WORLD_CLASSIFY_CODEX_MODEL is no longer forwarded: nothing reads it. Guard for the rail knobs: tests/unit/compose-env-passthrough.spec.ts.
 # 44 | maintainer@emeraldcoastsystemsgroup.com   | WORLD_CLASSIFY_BUDGET_PER_PULSE (default 4): the per-fire slice of the classify budget, so one pulse cannot spend the hour's calls and overrun its dispatch budget.
-# 45 | maintainer@emeraldcoastsystemsgroup.com | Comment only: the STORYBOARD_IMAGE_PROVIDER note now states the ADR-130 amendment (2026-10-02) - antigravity-cli is a valid value, and with it unset under DEMO_MODE the default follows the swarm default; the CLI render-rail knobs serve both CLI rails. No value changes.
+# 45 | maintainer@emeraldcoastsystemsgroup.com | Comment only: the STORYBOARD_IMAGE_PROVIDER note now states the ADR-130 amendment (2026-10-02) - antigravity-cli is a valid value, and with it unset under DEMO_MODE the render bot's own harness picks the rail; the CLI render-rail knobs serve both CLI rails. No value changes.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -324,10 +324,11 @@ x-bot-env: &bot-env
   OPENROUTER_FREE_MODEL: ${OPENROUTER_FREE_MODEL:-}
   # Storyboard/portrait image engine (video-generation storyboard-image-providers.ts):
   # codex | comfyui | vertex | openrouter | codex-cli | antigravity-cli — explicit, fail-closed.
-  # Unset, the default is demo-aware (ADR-130, amended 2026-10-02): under DEMO_MODE it follows
-  # the swarm default (fleet row antigravity-cli -> antigravity-cli, openai-codex/codex-cli or no
-  # row -> codex-cli, any other harness refused); codex otherwise (needs a PLATFORM OpenAI key —
-  # the ChatGPT-subscription token is rejected by /v1/images).
+  # Unset, the default is demo-aware (ADR-130, amended 2026-10-02): under DEMO_MODE the render
+  # bot's own provider picks the rail (its own switch row, else the fleet default: antigravity-cli
+  # -> antigravity-cli, openai-codex/codex-cli -> codex-cli, any other harness refused naming the
+  # bot); codex otherwise (needs a PLATFORM OpenAI key — the ChatGPT-subscription token is rejected
+  # by /v1/images). Set, it is the explicit override.
   # `openrouter` BILLS the shared OpenRouter key per image (~$0.04, gemini-2.5-flash-image).
   # The :free-only guard above covers the CHAT fallback only — this knob is a deliberate,
   # separate opt-in (Portrait Studio + Video Studio storyboards ride it).

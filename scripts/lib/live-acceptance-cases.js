@@ -11,7 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Register the forge-edit case (live-acceptance-forge-edit.js) for "Strategy Studio and Bot Forge conversational parity" (the Forge half): one tagged two-bot pack written, deployed, edited and deployed again through the Packs panel, then the pack, manifest, personas, app and both agents removed. No model turn; it writes, so the card is explicit-only.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets case: one tagged build root planned in-process, its children run one at a time over the signed hop, and the root assembled; spends model turns and writes tickets, so its Lab card is explicit-only.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Register the package-run case (live-acceptance-package-run.js) for the Test Lab run-path authority scope: the installed presentations brand-render case run through the durable run route, every run read timed against 1 s. No model turn; it writes the Lab's run-history row and starts a package sandbox, so the card is explicit-only.
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | Registered storyboard-agy (live-acceptance-storyboard-agy.js): one frame through the swarm-default antigravity-cli image rail via the explicit-only Lab card storyboard-swarm-default-render (ADR-130 amendment 2026-10-02). It spends one model turn and writes a tagged render workspace, which it removes.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Registered storyboard-agy (live-acceptance-storyboard-agy.js): one frame through the antigravity-cli image rail the render bot's own harness selects, via the explicit-only Lab card storyboard-antigravity-render (ADR-130 amendment 2026-10-02, the bot-level rule); the bot must report a 'match' reconcile, so the render switched nothing. It spends one model turn and writes one tagged task workspace, which it removes.
  */
 
 'use strict';
@@ -36,7 +36,7 @@ const CASES = Object.freeze([
   { module: require('./live-acceptance-forge-edit.js'), backlog: 'Strategy Studio and Bot Forge conversational parity', spendsModel: false, writes: true },
   { module: require('./live-acceptance-tickets-in-tickets.js'), backlog: 'The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh', spendsModel: true, writes: true },
   { module: require('./live-acceptance-package-run.js'), backlog: 'Test Lab package runs cancel themselves when an all-package authority re-check runs past 5 s (2026-10-01)', spendsModel: false, writes: true },
-  { module: require('./live-acceptance-storyboard-agy.js'), backlog: 'Storyboard images follow the swarm default (antigravity) - live proof on the box', spendsModel: true, writes: true },
+  { module: require('./live-acceptance-storyboard-agy.js'), backlog: 'Storyboard images follow the render bot\'s own harness (antigravity) - live proof on the box', spendsModel: true, writes: true },
 ]);
 
 /**

@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live acceptance for the storyboard image default following the swarm default (ADR-130 amendment 2026-10-02). Runs the explicit-only Lab card storyboard-swarm-default-render as the operator: the resolved default must be antigravity-cli, one frame must render through it on the bot node, the answer must be a real PNG of at least 64 x 64 with the bot's receipt that generate_image reached DONE, and the card's tagged task workspace must be removed. The render bot's task record and its chat_tasks usage row are kept as the audit trail. One model turn on the operator's subscription.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live acceptance for the storyboard image rail chosen by the render bot's own harness (ADR-130 amendment 2026-10-02, the bot-level rule). Runs the explicit-only Lab card storyboard-antigravity-render as the operator: the resolved rail must be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), one frame must render through it on the bot node, and the answer must be a real PNG of at least 64 x 64 with the bot's receipt that generate_image reached DONE, the bot's report that the turn ran on antigravity-cli, and its ADR-034 reconcile reported as 'match' (the dispatch carried the bot's own setting and switched nothing). The card's tagged task workspace must be removed. The render bot's task record and its chat_tasks usage row are kept as the audit trail. One model turn on the operator's subscription.
  */
 
 'use strict';
@@ -12,9 +12,9 @@ const common = require('./live-acceptance-common.js');
 
 const CASE_ID = 'storyboard-agy-live';
 const KEY = 'storyboard-agy';
-const TITLE = 'A storyboard frame renders on the swarm-default (antigravity) image rail: generate_image DONE, a real PNG';
+const TITLE = 'A storyboard frame renders on the render bot\'s own antigravity harness: generate_image DONE, a real PNG, no provider switch';
 const NEEDS = Object.freeze(['api']);
-const CARD_ID = 'storyboard-swarm-default-render';
+const CARD_ID = 'storyboard-antigravity-render';
 /** The card's own tagged render workspaces; nothing else is counted as this run's. */
 const RENDER_TASK = /^sbimg-testlab-live-storyboard-[0-9a-f]{8}$/;
 /** The suites that guard the seams this case crosses live. */
@@ -23,8 +23,9 @@ const REGRESSION_TESTS = Object.freeze(['storyboard-image-default', 'storyboard-
 
 /**
  * @description Judge the card's one step: pass only with a real PNG from antigravity-cli, the
- * generate_image DONE receipt, and the workspace removed. A degraded step (the default is another
- * rail, or the caller is not the operator) means the case cannot judge this box yet.
+ * generate_image DONE receipt, the bot's report that it ran antigravity-cli with a 'match' reconcile
+ * (its own setting, untouched), and the workspace removed. A degraded step (the render bot's rail is
+ * another one, or the caller is not the operator) means the case cannot judge this box yet.
  * @param {{status: number, json: object}} res - POST /api/test-lab/run for the card.
  * @returns {{state: string, detail: string, output: object|null}} The judgement and the step output.
  */
@@ -41,9 +42,11 @@ function judgeCard(res) {
     ...(output && output.provider === 'antigravity-cli' ? [] : ['the frame did not come from antigravity-cli']),
     ...(output && output.format === 'png' && output.width >= 64 && output.height >= 64 ? [] : ['the frame is not a PNG of at least 64 x 64']),
     ...(receipt && receipt.tool === 'generate_image' && receipt.toolState === 'DONE' ? [] : ['no receipt shows generate_image reaching DONE']),
+    ...(receipt && receipt.ranOn === 'antigravity-cli' ? [] : ['the bot does not report that the turn ran on antigravity-cli']),
+    ...(receipt && receipt.providerConfigAction === 'match' ? [] : ['the bot does not report a match on its own provider setting (the dispatch must never switch it)']),
   ];
   if (problems.length) return { state: 'fail', detail: `card ${CARD_ID} passed but ${problems.join('; ')}`, output };
-  return { state: 'pass', detail: `card ${CARD_ID}: ${output.width} x ${output.height} PNG from ${output.sourceMimeType}, model ${output.model}, generate_image DONE (${receipt.locator})`, output };
+  return { state: 'pass', detail: `card ${CARD_ID}: ${output.width} x ${output.height} PNG from ${output.sourceMimeType}, model ${output.model}, generate_image DONE (${receipt.locator}), ran on the bot's own antigravity-cli (reconcile match)`, output };
 }
 
 /**

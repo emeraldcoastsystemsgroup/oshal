@@ -102,8 +102,8 @@ A rejected script sets the series `failed` and never reaches an image.
 the cast holds. Frames are cropped (the image model draws a white page margin around wide
 shots) and **near-duplicates are rejected** — the "one scene over and over" failure,
 mechanized. Frames upload to the caller's Drive (the render node fetches by id; the LAN is
-firewalled both ways). Provider chosen by `STORYBOARD_IMAGE_PROVIDER`; unset, the default
-follows the swarm default in demo mode and is `codex` otherwise (see the table below).
+firewalled both ways). Provider chosen by `STORYBOARD_IMAGE_PROVIDER`; unset, in demo mode the
+render bot's own harness picks the rail and otherwise it is `codex` (see the table below).
 
 **RENDER** (`dispatchStoryboardedEpisode`, expensive). Hands the node one episode's stills
 (by Drive id) and the animation prompt per scene, over `shell.exec` — the same gated
@@ -145,8 +145,8 @@ personality after `;`.
 
 | id | default | cost | auth |
 |---|---|---|---|
-| `antigravity-cli` | **yes, in demo mode when the swarm default is `antigravity-cli`** | **free** (subscription-included) | the swarm's Antigravity harness on a bot node: agy's `generate_image` tool, handed back by the bot only when that tool step reached DONE (ADR-130 amendment 2026-10-02). Same demo carve and executor as `codex-cli` |
-| `codex-cli` | **yes, in demo mode when the swarm default is `openai-codex`/`codex-cli`, or there is no fleet-default row** | **free** (subscription-included) | the swarm's own codex harness on a bot node (ADR-130) — SEC-05 demo carve: `DEMO_MODE` + operator caller passed as `userSub`; bot via `STORYBOARD_CLI_IMAGE_BOT_ID` |
+| `antigravity-cli` | **yes, in demo mode when the render bot's own provider is `antigravity-cli`** (its own switch row, else the fleet default) | **free** (subscription-included) | the render bot's own Antigravity harness: agy's `generate_image` tool, handed back by the bot only when that tool step reached DONE (ADR-130 amendment 2026-10-02). Same demo carve and executor as `codex-cli`; the dispatch carries the bot's own record and never switches it |
+| `codex-cli` | **yes, in demo mode when the render bot's own provider is `openai-codex`/`codex-cli`** | **free** (subscription-included) | the render bot's own codex harness (ADR-130) — SEC-05 demo carve: `DEMO_MODE` + operator caller passed as `userSub`; bot via `STORYBOARD_CLI_IMAGE_BOT_ID` |
 | `codex` | **yes, off demo** | operator's own OpenAI account (`gpt-image-1` / edits) | **platform** key only — `OPENAI_API_KEY` or `openAiApiKey`; the codex ChatGPT-subscription login can **not** call `/v1/images` (different auth realm) |
 | `comfyui` | | **free** — the GPU box that runs LoRA | `COMFYUI_URL` + workflow |
 | `vertex` | | **paid**, per image | Google cloud-platform scope |
@@ -154,8 +154,9 @@ personality after `;`.
 
 Selection **fails closed**: an unconfigured provider throws with instructions rather than
 falling through to one that bills. A silent fallback to a paid vendor is the bug, not the fix.
-In demo mode a swarm default with no image rail (for example `claude-code`) is refused with
-"the swarm default <harness> cannot make images; set STORYBOARD_IMAGE_PROVIDER".
+In demo mode a render bot whose own harness has no image rail (for example `claude-code`) is
+refused with "<bot> runs <harness>, which cannot make images; give that bot an image-capable
+harness, or set STORYBOARD_IMAGE_PROVIDER to an image API".
 
 ## Traps this build hit (don't re-learn them)
 

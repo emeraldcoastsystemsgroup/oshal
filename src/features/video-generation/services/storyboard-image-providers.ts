@@ -9,7 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | codex-cli sibling (ADR-130): renders through the swarm's own codex HARNESS on a bot node — codex CLI 0.147+ has native image generation (proven live 2026-08-22 on the bind-mounted ChatGPT login: text-to-image AND anchored edits, gpt-5.5 and gpt-5.6-sol both), which the subscription CAN use even though the platform Images API rejects it. The controller never spawns the CLI: an app-boot-registered executor (storyboard-cli-image-executor) delegates to a bot node over swarm-execute, where the SEC-05 demo carve (DEMO_MODE + operator sub) governs the spawn; files travel via the shared workspace volume. Demo-mode default: with STORYBOARD_IMAGE_PROVIDER unset and DEMO_MODE on, selection now defaults to codex-cli (config → swarm env → demo default); explicit env always wins.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | comfyui is a real provider, not a throw. Submit/poll/fetch against the ComfyUI HTTP API, the same protocol and shape as the video sibling providers/comfyui-provider.ts (ADR-070): probe /system_stats, inject the frame prompt into a pinned API-format workflow, POST /prompt, poll /history, fetch /view, and reject anything that is not a PNG. Built on the operator's 2026-09-21 decision: it is free per image, and it is the ONLY free rail that can serve a caller who is not the operator — the codex-cli sibling sits behind the DEMO_MODE + operator-sub carve — on the same box a trained LoRA lands on. URL reuses COMFYUI_URL (one box, one key to rotate); the workflow needs its own COMFYUI_STORYBOARD_WORKFLOW because COMFYUI_WORKFLOW_PATH is a text-to-VIDEO graph. The wait is bounded TWICE (wall-clock deadline + attempt cap) by COMFYUI_STORYBOARD_TIMEOUT_MS so a sleeping GPU box fails visibly instead of hanging the stage, and the timeout message avoids a bare HTTP-status number so the caller's retry classifier does not treat it as transient. available()/healthCheck() share one status() that names WHICH of url/workflow/reachability is missing, and the resolver's comfyui hint now quotes it. An anchor frame is uploaded via /upload/image into an optional %ANCHOR% slot; a workflow without that slot logs a WARN rather than silently rendering unanchored against a prompt that says "use the reference image".
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Entry 5's "bounded TWICE" was false, and adversarial verification measured it: only the /history poll carried a signal, so a black-holed /prompt rejected after 304753 ms on the OS socket timeout (203x the configured window, knob never consulted) and a black-holed /view or /upload/image was still pending at 20 s. Now ONE deadline is taken at the top of generate() and EVERY call — upload, submit, each poll, fetch — goes through comfyFetch with a signal cut from what is left of it, so the window bounds the whole frame and a hung hop is reported by route name instead of as undici's bare "fetch failed". Also from the same verification: the anchor upload sends a per-call unique filename and no `overwrite`, because LoadImage reads its file at node-EXECUTION time and a fixed shared name let caller B's anchor render into caller A's queued frame on the one rail that serves more than the operator; status() now performs the same workflow load generate() does (parse + require the %PROMPT% slot), so a corrupt or slotless workflow no longer reads as a green "ready" on the Test Lab card; a /history body that is not an object and a `messages` that is not an array are both handled instead of crashing the reporting path; and a non-2xx /history answer is warned about once per distinct status and named in the final timeout message (as HTTP_5xx, kept out of the caller's transient classifier on purpose).
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (operator: the swarm default is the default; it is antigravity). A sixth sibling, antigravity-cli (storyboard-antigravity-image-provider.ts), renders through the same bot-node executor and demo carve as codex-cli. The demo default now follows the swarm default instead of naming codex-cli: selection moved to selectStoryboardImageProvider (storyboard-image-default.ts), which maps the fleet-default harness to its image rail and fails closed for a harness that cannot make images; the explicit env still wins and the non-demo default is still codex. The codex-cli render request names its harness ('openai-codex') so the executor stamps the rail's own harness. StoryboardImageResult gains optional sourceMimeType (the format a rail produced before PNG normalization) and cliRender (a CLI render's task id and the bot's generate_image receipt).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (operator: the swarm default is the default, and the bot's own setting wins). A sixth sibling, antigravity-cli (storyboard-antigravity-image-provider.ts), renders through the same bot-node executor and demo carve as codex-cli. The demo default no longer names codex-cli: selection moved to selectStoryboardImageProvider (storyboard-image-default.ts, now awaited), which maps the RENDER BOT's own effective harness to its image rail and fails closed, naming the bot and harness, for a harness that cannot make images; the explicit env still wins and the non-demo default is still codex. The codex-cli render request names its rail ('codex-cli'), never a harness to switch the bot onto. StoryboardImageResult gains optional sourceMimeType (the format a rail produced before PNG normalization) and cliRender (a CLI render's task id, the bot's generate_image receipt, the provider the bot ran on and what its ADR-034 reconcile did).
  */
 /**
  * @description Storyboard image providers — siblings behind one interface.
@@ -63,7 +63,11 @@ export interface StoryboardImageResult {
   /** The format the rail actually produced, when it normalized it to PNG for the frame cropper. */
   sourceMimeType?: 'image/png' | 'image/jpeg';
   /** A CLI render's task workspace and the bot's collection receipt (antigravity-cli). */
-  cliRender?: { taskId: string; tool: string; toolState: string; locator: string; sha256: string };
+  cliRender?: {
+    taskId: string; tool: string; toolState: string; locator: string; sha256: string;
+    /** The provider the bot reports the turn ran on, and what its ADR-034 reconcile did ('match' = untouched). */
+    ranOn?: string | null; providerConfigAction?: string | null;
+  };
 }
 
 /** @description What a storyboard image provider must do: make one still, optionally matching a reference. */
@@ -698,7 +702,7 @@ export function createCodexCliImageProvider(userSub?: string): StoryboardImagePr
       taskId: id,
       workspaceFolderId: id,
       userSub,
-      harness: 'openai-codex',
+      rail: 'codex-cli',
     });
     const outPath = path.join(dir, 'output.png');
     if (!result.success) {
@@ -728,12 +732,12 @@ export function createCodexCliImageProvider(userSub?: string): StoryboardImagePr
 /**
  * @description Choose the storyboard image provider. Explicit, and fails closed.
  *
- * `STORYBOARD_IMAGE_PROVIDER` selects; with it unset, a demo deployment follows the swarm default
- * (antigravity-cli → antigravity-cli, openai-codex → codex-cli, no fleet-default row → codex-cli,
- * any other harness → refused) and every other deployment uses `codex` (ADR-130 and its
- * 2026-10-02 amendment; selectStoryboardImageProvider). If the selection is refused or not
- * configured we throw and say what to do — we never silently fall through to a provider that
- * bills per image.
+ * `STORYBOARD_IMAGE_PROVIDER` selects; with it unset, a demo deployment renders on the render
+ * bot's own harness (its own switch row, else the fleet default: antigravity-cli → antigravity-cli,
+ * openai-codex/codex-cli → codex-cli, any other harness → refused naming the bot and harness) and
+ * every other deployment uses `codex` (ADR-130 and its 2026-10-02 amendment;
+ * selectStoryboardImageProvider). If the selection is refused or not configured we throw and say
+ * what to do — we never silently fall through to a provider that bills per image.
  *
  * @param {{vertexToken?: string, userSub?: string}} opts credentials/identity the selected provider may need
  * @returns {Promise<StoryboardImageProvider>} the chosen, verified-available provider
@@ -741,7 +745,7 @@ export function createCodexCliImageProvider(userSub?: string): StoryboardImagePr
 export async function resolveStoryboardImageProvider(
   opts: { vertexToken?: string; userSub?: string } = {},
 ): Promise<StoryboardImageProvider> {
-  const selection = selectStoryboardImageProvider();
+  const selection = await selectStoryboardImageProvider();
   if (!selection.ok) {
     throw new Error(`storyboard image provider: ${selection.reason}. Refusing to fall back to a paid provider you did not ask for.`);
   }
@@ -773,6 +777,6 @@ export async function resolveStoryboardImageProvider(
             : "no Google token with the cloud-platform scope — the caller's gcp connector must grant it (read-only is not enough)";
     throw new Error(`storyboard image provider '${want}' is not configured — ${hint}. Refusing to fall back to a paid provider you did not ask for.`);
   }
-  logger.info({ provider: chosen.id, costClass: chosen.costClass, source: selection.source, swarmDefault: selection.swarmDefault }, 'storyboard image provider selected');
+  logger.info({ provider: chosen.id, costClass: chosen.costClass, source: selection.source, renderBot: selection.renderBot, harness: selection.harness }, 'storyboard image provider selected');
   return chosen;
 }
