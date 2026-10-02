@@ -78,13 +78,24 @@ export class SwarmVerificationService {
   private readonly meshTransport?: MeshTransport;
   private readonly workItemRepository?: WorkItemRepository;
   private readonly isDelegationEnforced: () => boolean;
-  private readonly runWorkspaceTests?: WorkspaceTestRunner;
+  private runWorkspaceTests?: WorkspaceTestRunner;
 
   constructor(deps: SwarmVerificationDeps = {}) {
     this.meshTransport = deps.meshTransport;
     this.workItemRepository = deps.workItemRepository;
     this.isDelegationEnforced = deps.isDelegationEnforced ?? (() => false);
     this.runWorkspaceTests = deps.runWorkspaceTests;
+  }
+
+  /**
+   * @description Wires the test runner after construction: the bot-node client it needs is built
+   * later in the composition root than this service.
+   * @param runner - The runner.
+   * @returns Nothing.
+   */
+  setWorkspaceTestRunner(runner: WorkspaceTestRunner): void {
+    this.runWorkspaceTests = runner;
+    logger.info('Workspace test runner wired into SwarmVerificationService: code work passes only on an executed, green run');
   }
 
   /**

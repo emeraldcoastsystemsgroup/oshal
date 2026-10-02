@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Enforce the shared exact-subject contract for trusted provider execution without trimming or collapsing an invalid assertion into an ownerless request.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | `workspace-tests/run`: verification's executed test run of a build ticket's deliverables, sent over the same signed route as a deterministic intent to test-engineer's node (its fixed owner). The only input is the root workspace id (a lower-case UUID, signed with the body); the node runs the workspace's own tests with a scrubbed environment (bot-node-workspace-test-run.ts) and answers the run as JSON in the completion. No model, no credential, no command from the request.
  */
 
 import {
@@ -11,6 +12,7 @@ import {
   type VisualResponseProviderRecord,
 } from '@/features/visual-response';
 import { requireExactUserSubject } from '@/shared/security/exact-user-subject';
+import { runWorkspaceTests } from './bot-node-workspace-test-run';
 
 /** Server-authored read-only provider operations a bot node may execute without model mediation. */
 export type TrustedProviderIntent =
@@ -31,6 +33,12 @@ export type TrustedProviderIntent =
     operation: 'product-search';
     query: string;
     limit: number;
+  }
+  | {
+    schemaVersion: 1;
+    kind: 'workspace-tests';
+    operation: 'run';
+    workspaceFolderId: string;
   };
 
 export interface TrustedProviderExecutionContext {
@@ -51,15 +59,22 @@ export interface TrustedProviderExecutionDeps {
   normalizeGmailRecord(data: unknown): unknown;
   normalizeWalmartCatalogRecord(data: unknown, query: string, retrievedAt?: string): unknown;
   now(): Date;
+  /** Runs the tests in one ticket workspace and reports the run (bot-node-workspace-test-run.ts); absent on a node without one. */
+  runWorkspaceTests?(workspaceFolderId: string): Promise<unknown>;
 }
 
 const SAFE_LOCATION = /^[\p{L}\p{N} _.,'-]{1,120}$/u;
 const SAFE_PRODUCT_QUERY = /^[\p{L}\p{N}][\p{L}\p{N}\p{Zs}.,&'()/%+\-:]{0,199}$/u;
+const WORKSPACE_FOLDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** test-engineer: the fixed owner of the workspace test run, whatever bot wrote the code. */
+export const WORKSPACE_TESTS_AGENT_ID = 'a0000000-0000-0000-0000-000000000005';
 
 const TRUSTED_PROVIDER_AGENT_IDS: Readonly<Record<TrustedProviderIntent['kind'], string>> = {
   weather: 'a0000000-0000-0000-0000-000000000036',
   'priority-email': 'b0000000-0000-0000-0000-000000000001',
   'walmart-catalog': 'b0070000-0000-0000-0000-000000000001',
+  'workspace-tests': WORKSPACE_TESTS_AGENT_ID,
 };
 
 /** Dedicated least-privilege owner for a server-authored provider read. */
@@ -95,6 +110,12 @@ export function parseTrustedProviderIntent(input: unknown): TrustedProviderInten
       return undefined;
     }
     return { schemaVersion: 1, kind: 'walmart-catalog', operation: 'product-search', query, limit };
+  }
+  if (value.kind === 'workspace-tests' && value.operation === 'run') {
+    if (!hasExactKeys(value, ['schemaVersion', 'kind', 'operation', 'workspaceFolderId'])) return undefined;
+    const workspaceFolderId = typeof value.workspaceFolderId === 'string' ? value.workspaceFolderId : '';
+    if (!WORKSPACE_FOLDER_ID.test(workspaceFolderId)) return undefined;
+    return { schemaVersion: 1, kind: 'workspace-tests', operation: 'run', workspaceFolderId };
   }
   return undefined;
 }
@@ -148,6 +169,13 @@ export async function executeTrustedProviderIntent(
       completion: `Live weather provider lookup completed for ${record.record.location}.`,
       providerRecords: [record],
     };
+  }
+
+  if (intent.kind === 'workspace-tests') {
+    // The run is the record: the controller reads it back from the completion text.
+    if (!deps.runWorkspaceTests) throw new Error('Workspace test run is unavailable on this node');
+    const run = await deps.runWorkspaceTests(intent.workspaceFolderId);
+    return { completion: JSON.stringify(run), providerRecords: [] };
   }
 
   if (intent.kind === 'walmart-catalog') {
@@ -218,6 +246,7 @@ function defaultExecutionDeps(): TrustedProviderExecutionDeps {
   };
   /* eslint-enable @typescript-eslint/no-require-imports */
   return {
+    runWorkspaceTests: (workspaceFolderId) => runWorkspaceTests(workspaceFolderId),
     formatWeather: (location) => weatherTools['format-weather']({ location, format: 'json' }),
     gmailDigest: (accessToken) => gmail.gmailDigest(accessToken),
     walmartSearch: (credential, query, limit) => walmart.searchLiveCatalog(credential, query, limit),

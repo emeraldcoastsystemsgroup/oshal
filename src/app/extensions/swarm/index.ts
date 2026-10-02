@@ -135,6 +135,7 @@ import { SelectorCompositionService } from '@/features/selector-composition';
 import { BudgetService } from '@/features/cost-governance';
 import { SelfHealAutoApplyEngine } from '@/features/alert-triage';
 import { createSelfHealRemediationExecutor } from '@/app/self-heal-remediation-executor';
+import { WORKSPACE_TESTS_AGENT_ID } from '@/app/bot-node-provider-intent';
 import {
   PlaneTicketWritebackAdapter,
   GitHubTicketWritebackAdapter,
@@ -166,6 +167,7 @@ import {
   buildTaskCallOutResolver,
   PostgresSubtaskLifecycleStore,
   createSignedChildDispatcher,
+  createNodeWorkspaceTestRunner,
 } from '@/features/swarm-orchestration';
 import { ConfigSyncService } from '@/features/config-sync';
 import { TicketService, PostgresTicketStore, WorkspaceService, PostgresWorkspaceStore } from '@/features/ticketing';
@@ -746,6 +748,21 @@ export function createSwarmExtensionBindings(
       workItemRepository,
       runtimeParamsResolver,
       readTicketStatus: async (ticketId) => (await ticketService.getTicket(ticketId))?.status ?? null,
+    }));
+    // Verification runs code work's tests where the deliverables live: the workspace-tests/run
+    // intent crosses the same signed hop to its fixed owner, and the run is recorded on the child.
+    verificationService.setWorkspaceTestRunner(createNodeWorkspaceTestRunner({
+      botNodeClient,
+      agentId: WORKSPACE_TESTS_AGENT_ID,
+      readTicket: async (ticketId) => {
+        const ticket = await ticketService.getTicket(ticketId) as { ownerSub?: string | null; metadata?: unknown } | null;
+        return ticket ? { ownerSub: ticket.ownerSub ?? null, metadata: (ticket.metadata ?? null) as Record<string, unknown> | null } : null;
+      },
+      recordRun: async (ticketId, run) => {
+        const ticket = await ticketService.getTicket(ticketId);
+        if (!ticket) return;
+        await ticketService.updateTicket(ticketId, { metadata: { ...((ticket.metadata ?? {}) as Record<string, unknown>), verificationTests: run } });
+      },
     }));
   }
 

@@ -128,6 +128,11 @@ describe('the runner output parser', () => {
     expect(parsed).toEqual({ passed: 11, failed: 1, summaryParsed: true, failedTests: ['deliverables/tests/slugify.test.ts > slugify > handles strings already containing hyphens or underscores'] });
   });
 
+  it('reads a coloured summary and failure line', () => {
+    const coloured = '\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m deliverables/src/slugify.test.ts\u001b[2m > \u001b[22mslugify\u001b[2m > \u001b[22mhyphenates\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[31m1 failed\u001b[39m\u001b[22m\u001b[2m | \u001b[22m\u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m\u001b[90m (2)\u001b[39m\n';
+    expect(parseTestOutput(coloured)).toEqual({ passed: 1, failed: 1, summaryParsed: true, failedTests: ['deliverables/src/slugify.test.ts > slugify > hyphenates'] });
+  });
+
   it('reads an all-green summary', () => {
     expect(parseTestOutput(' Test Files  2 passed (2)\n      Tests  10 passed (10)\n')).toEqual({ passed: 10, failed: 0, failedTests: [], summaryParsed: true });
   });

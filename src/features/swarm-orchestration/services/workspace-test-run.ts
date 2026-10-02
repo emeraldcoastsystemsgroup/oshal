@@ -58,6 +58,9 @@ export interface ParsedTestOutput {
   summaryParsed: boolean;
 }
 
+/** Terminal colour and cursor sequences a runner may print even when piped. */
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
 const SUMMARY_LINE = /^\s*Tests\s+(.+?)\s*\(\d+\)\s*$/m;
 const SUMMARY_PART = /(\d+)\s+(passed|failed|skipped|todo)/g;
 /** vitest's file-qualified failure lines (`FAIL  file > suite > name`); the canonical names. */
@@ -72,7 +75,8 @@ const TRAILING_DURATION = /\s+(?:\[\s*)?[\d.]+\s*m?s(?:\s*\])?\s*$/;
  * @param output - The runner's stdout and stderr.
  * @returns Counts, failing names and whether a summary was found.
  */
-export function parseTestOutput(output: string): ParsedTestOutput {
+export function parseTestOutput(rawOutput: string): ParsedTestOutput {
+  const output = rawOutput.replace(ANSI, '');
   const summary = SUMMARY_LINE.exec(output);
   const counts = { passed: 0, failed: 0 };
   if (summary) {

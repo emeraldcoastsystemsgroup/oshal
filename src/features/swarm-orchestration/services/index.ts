@@ -113,6 +113,11 @@ export {
   type ParsedTestOutput,
 } from './workspace-test-run';
 export {
+  createNodeWorkspaceTestRunner,
+  WORKSPACE_TESTS_INTENT,
+  type NodeWorkspaceTestRunnerDeps,
+} from './node-workspace-test-runner';
+export {
   InMemoryMeshTransport,
   SwarmEscalationError,
   buildExecutionEnvelope,
