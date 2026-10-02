@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for world classify on the swarm's accounted rail (operator decisions 2026-09-21 "the principle of one" and 2026-10-02 "operator identity"; found dead live 2026-10-02: no model-classified world item since 2026-08-06, ~55 "claude-code unattended execution is disabled" warns per pulse). In-process and mock-only: the chokepoint module is a recorder here; the signed hop itself is crossed by world-classify-delegation.spec.ts. Pins the owner rule (explicit subject; the sole operator on a DEMO box; never guessed) and the verified issuer (explicit; the single active directory record; never guessed); the dispatch (owned, issuer-carrying, direct + agentic so the node runs it host-tools-only, the instruction on the pattern channel for a node and leading the text for an inline bot, stamped with the bot's canonical provider record unless an explicit one is configured); the refusals (a CLI with no tool-less mode, no provider record, unknown bot, incomplete turn, the call ceiling); registration (only with an owner, and with a verified issuer when the hop is signed); the boot and per-fire wiring; and that news-fetcher constructs no model provider of its own.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Second review: the provider set is an allow-list (every id outside it, catalog ids included, is refused); the stamp always carries an empty fallback chain; an inline classify bot, a bot with an auto-executable tool grant, and an explicit model that differs from the canonical one are refused before dispatch; the owner is re-resolved on its TTL and a principal disabled later stops the next chunk; an operator-asserted issuer is reported as such.
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
@@ -34,7 +35,7 @@ const registry = () => [
 const ctx = { pool: { query: async () => ({ rows: [] }) } } as never;
 const OWNER = 'operator-sub-1';
 const ISSUER = 'https://identity.oshal.example.com';
-const CANON = { providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', configVersion: 7, providerConfigRequired: true };
+const CANON = { providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', configVersion: 7, providerConfigRequired: true, fallbackOrder: ['openai-codex'] };
 const env = (values: Record<string, string>) => values as unknown as NodeJS.ProcessEnv;
 /** A node client double: where the bot runs and whether the hop is signed. */
 const client = (over: { onNode?: boolean; signed?: boolean } = {}) =>
@@ -48,6 +49,7 @@ let configureWorldClassify: Fetcher['configureWorldClassify'];
 let worldClassifyConfigured: Fetcher['worldClassifyConfigured'];
 let currentRequestIdentity: typeof import('@/shared/services/database/request-identity')['getRequestIdentity'];
 const canonicalStamp = vi.fn();
+const grantedTools = vi.fn();
 
 // Loaded once: the provider module pulls a wide module graph (seconds), like the Jarvis specs.
 beforeAll(async () => {
@@ -61,16 +63,19 @@ beforeEach(() => {
   execute.mockResolvedValue({ success: true, response: '[{"i":0,"s":0.4,"e":[{"n":"NVIDIA","t":"org"}],"ev":{"t":"earnings","i":0.7}}]', provider: 'antigravity-cli', model: 'gemini-3.8-flash-low' });
   canonicalStamp.mockReset();
   canonicalStamp.mockResolvedValue(CANON);
+  grantedTools.mockReset();
+  grantedTools.mockResolvedValue([]);
   configureWorldClassify([]);
 });
 afterEach(() => { vi.unstubAllEnvs(); });
 
 const items = (n: number) => Array.from({ length: n }, (_, i) => ({ title: `Item ${i}`, description: 'A test description.', outlet: 'Test Wire', link: '', pubDate: '' }));
 const opts = (over: Record<string, unknown> = {}) => ({ botName: 'general-bot', callTimeoutMs: 120_000, ...over });
-const owner = (issuer: string | null = ISSUER) => ({ sub: OWNER, issuer });
-const provider = (over: { options?: Record<string, unknown>; deps?: Record<string, unknown>; issuer?: string | null } = {}) =>
+const owner = (issuer: string | null = ISSUER): { sub: string; issuer: string | null; issuerSource: 'verified-principal' | 'none' } =>
+  ({ sub: OWNER, issuer, issuerSource: issuer ? 'verified-principal' : 'none' });
+const provider = (over: { options?: Record<string, unknown>; deps?: Record<string, unknown>; issuer?: string | null; env?: Record<string, string> } = {}) =>
   P.createWorldClassifyProvider(ctx, owner(over.issuer === undefined ? ISSUER : over.issuer), opts(over.options) as never,
-    { registry, botClient: client(), canonicalStamp, ...over.deps } as never);
+    { registry, botClient: client(), canonicalStamp, grantedTools, ...over.deps } as never, env(over.env ?? { WORLD_CLASSIFY_OWNER_SUB: OWNER, WORLD_CLASSIFY_OWNER_ISSUER: ISSUER }));
 const sent = (call = 0) => execute.mock.calls[call] as [unknown, unknown, string, Record<string, unknown>];
 
 describe('whose work world classification is', () => {
@@ -87,18 +92,16 @@ describe('whose work world classification is', () => {
     expect(P.worldClassifyOwnerSub(env({ OSHAL_OPERATOR_SUBS: OWNER }))).toBeUndefined();
   });
 
-  it('the verified issuer is the configured one, else the single active directory record — never a guess', async () => {
+  it('the verified issuer is the single active directory record — never a guess; an env issuer is operator-asserted unless the directory holds it', async () => {
     const demo = { DEMO_MODE: 'true', OSHAL_OPERATOR_SUBS: OWNER };
-    const directory = vi.fn(async () => ['https://accounts.example.com']);
-    expect(await P.resolveWorldClassifyOwner(ctx, env({ ...demo, WORLD_CLASSIFY_OWNER_ISSUER: ` ${ISSUER} ` }), { verifiedIssuers: directory }))
-      .toEqual({ sub: OWNER, issuer: ISSUER });
-    expect(directory).not.toHaveBeenCalled();
-    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: directory })).toEqual({ sub: OWNER, issuer: 'https://accounts.example.com' });
-    expect(directory).toHaveBeenCalledWith(OWNER);
-    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: async () => ['https://a.example.com', 'https://b.example.com'] })).toEqual({ sub: OWNER, issuer: null });
-    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: async () => [] })).toEqual({ sub: OWNER, issuer: null });
-    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: async () => { throw new Error('directory down'); } })).toEqual({ sub: OWNER, issuer: null });
-    expect(await P.resolveWorldClassifyOwner(ctx, env({ DEMO_MODE: 'true' }), { verifiedIssuers: directory })).toBeUndefined();
+    const one = async () => ['https://accounts.example.com'];
+    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: one })).toEqual({ sub: OWNER, issuer: 'https://accounts.example.com', issuerSource: 'verified-principal' });
+    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: async () => ['https://a.example.com', 'https://b.example.com'] })).toEqual({ sub: OWNER, issuer: null, issuerSource: 'none' });
+    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: async () => [] })).toEqual({ sub: OWNER, issuer: null, issuerSource: 'none' });
+    expect(await P.resolveWorldClassifyOwner(ctx, env(demo), { verifiedIssuers: async () => { throw new Error('directory down'); } })).toEqual({ sub: OWNER, issuer: null, issuerSource: 'none' });
+    expect(await P.resolveWorldClassifyOwner(ctx, env({ ...demo, WORLD_CLASSIFY_OWNER_ISSUER: ` ${ISSUER} ` }), { verifiedIssuers: one })).toEqual({ sub: OWNER, issuer: ISSUER, issuerSource: 'operator-asserted' });
+    expect(await P.resolveWorldClassifyOwner(ctx, env({ ...demo, WORLD_CLASSIFY_OWNER_ISSUER: ISSUER }), { verifiedIssuers: async () => [ISSUER] })).toEqual({ sub: OWNER, issuer: ISSUER, issuerSource: 'verified-principal' });
+    expect(await P.resolveWorldClassifyOwner(ctx, env({ DEMO_MODE: 'true' }), { verifiedIssuers: one })).toBeUndefined();
   });
 
   it('reads the directory through its store when no seam is given: only ACTIVE records for that exact subject count', async () => {
@@ -108,7 +111,7 @@ describe('whose work world classification is', () => {
       { issuer: 'https://other.example.com', user_sub: 'someone-else', provider: 'x', email: null, email_verified: true, display_name: null, canonical_local_sub: null, status: 'active', first_seen_at: '2026-01-01', last_seen_at: '2026-01-02' },
     ];
     const withDirectory = { pool: { query: async () => ({ rows }) } } as never;
-    expect(await P.resolveWorldClassifyOwner(withDirectory, env({ DEMO_MODE: 'true', OSHAL_OPERATOR_SUBS: OWNER }))).toEqual({ sub: OWNER, issuer: 'https://accounts.example.com' });
+    expect(await P.resolveWorldClassifyOwner(withDirectory, env({ DEMO_MODE: 'true', OSHAL_OPERATOR_SUBS: OWNER }))).toEqual({ sub: OWNER, issuer: 'https://accounts.example.com', issuerSource: 'verified-principal' });
   });
 
   it('options: the default bot and call ceiling; the retired WORLD_CLASSIFY_PROVIDERS list selects nothing', () => {
@@ -118,8 +121,8 @@ describe('whose work world classification is', () => {
   });
 });
 
-describe('the classify dispatch: one owned, tool-less turn per chunk through the chokepoint', () => {
-  it('on a node: owner + verified issuer, direct + agentic, the instruction on the pattern channel, the canonical provider record', async () => {
+describe('the classify dispatch: one owned, tool-less, chain-less turn per chunk through the chokepoint', () => {
+  it('owner + verified issuer, direct + agentic, the instruction on the pattern channel, the canonical record with NO fallback chain', async () => {
     let identityDuringCall: unknown;
     execute.mockImplementationOnce(async () => { identityDuringCall = currentRequestIdentity(); return { success: true, response: '[{"i":0,"s":0.4}]' }; });
     const p = provider();
@@ -137,52 +140,61 @@ describe('the classify dispatch: one owned, tool-less turn per chunk through the
     expect(request.text).toBe('Subject: NVIDIA\nItems:\n0. Nvidia beats estimates');
     expect(String(request.taskId)).toMatch(/^world-classify-[0-9a-f-]{36}$/);
     expect(request.workspaceFolderId).toBe(request.taskId);
-    // The classify bot's canonical record (the swarm default), not the owner's personal brain.
+    // The classify bot's canonical record (the swarm default), not the owner's personal brain — and never its chain.
     expect(canonicalStamp).toHaveBeenCalledWith(agentId);
-    expect(request).toMatchObject(CANON);
+    expect(request).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', configVersion: 7, providerConfigRequired: true, fallbackOrder: [] });
     expect(request.byoLlmConnection).toBeUndefined();
     expect(identityDuringCall).toMatchObject({ sub: OWNER, principalIssuer: ISSUER, isOperator: false });
   });
 
-  it('an inline bot has no pattern channel: the instruction leads the text', async () => {
-    await provider({ deps: { botClient: client({ onNode: false }) } }).complete('the items', 'the instruction');
-    const [, , , request] = sent();
-    expect(request.text).toBe('the instruction\n\nthe items');
-    expect(request.pattern).toBeUndefined();
+  it('a bot with no node of its own is refused: an inline turn would run the owner\'s brain with the instruction in the untrusted text', async () => {
+    await expect(provider({ deps: { botClient: client({ onNode: false }) } }).complete('the items', 'the instruction')).rejects.toThrow('no node of its own');
+    expect(execute).not.toHaveBeenCalled();
   });
 
-  it('WORLD_CLASSIFY_BOT picks another registered bot; an explicit provider/model is the stamp and the canonical record is not consulted', async () => {
-    const options = P.worldClassifyOptions(env({ WORLD_CLASSIFY_BOT: 'research-bot', WORLD_CLASSIFY_PROVIDER_ID: 'antigravity-cli', WORLD_CLASSIFY_MODEL: 'gemini-3.8-pro' }));
-    await P.createWorldClassifyProvider(ctx, owner(), options, { registry, botClient: client(), canonicalStamp } as never).complete('prompt');
+  it('a bot that holds any auto-executable tool grant is refused', async () => {
+    grantedTools.mockResolvedValueOnce(['web_fetch']);
+    await expect(provider().complete('p', 's')).rejects.toThrow('auto-executable tool grants (web_fetch)');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('WORLD_CLASSIFY_BOT picks another registered bot; an explicit admissible provider is the stamp and the canonical record is not consulted', async () => {
+    const options = P.worldClassifyOptions(env({ WORLD_CLASSIFY_BOT: 'research-bot', WORLD_CLASSIFY_PROVIDER_ID: 'antigravity-cli' }));
+    await P.createWorldClassifyProvider(ctx, owner(), options, { registry, botClient: client(), canonicalStamp, grantedTools } as never).complete('prompt');
     const [, , agentId, request] = sent();
     expect(agentId).toBe('a0000000-0000-0000-0000-000000000020');
-    expect(request).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-pro', userSub: OWNER });
+    expect(request).toMatchObject({ providerId: 'antigravity-cli', fallbackOrder: [], userSub: OWNER });
+    expect(request.model).toBeUndefined();
     expect(request.providerConfigRequired).toBeUndefined();
     expect(canonicalStamp).not.toHaveBeenCalled();
   });
 
+  it('an explicit model is admitted only when it is the node\'s model', async () => {
+    await provider({ options: { providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low' } }).complete('p');
+    expect(sent()[3]).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low' });
+    await expect(provider({ options: { providerId: 'antigravity-cli', model: 'gemini-3.8-pro' } }).complete('p')).rejects.toThrow('runs its boot model');
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('without an issuer (an unsigned hop) the owner still rides, with no issuer field', async () => {
-    await provider({ issuer: null }).complete('p');
+    await provider({ issuer: null, deps: { botClient: client({ signed: false }) }, env: { WORLD_CLASSIFY_OWNER_SUB: OWNER } }).complete('p');
     const [, , , request] = sent();
     expect(request.userSub).toBe(OWNER);
     expect('principalIssuer' in request).toBe(false);
   });
 
-  it.each([['claude-code'], ['openai-codex'], ['codex-cli'], ['gemini-cli'], ['cline']])(
-    'refuses %s: a CLI with no tool-less mode never receives fetched text', async (providerId) => {
+  it.each([['claude-code'], ['openai-codex'], ['codex-cli'], ['gemini-cli'], ['cline'], ['openai'], ['gemini'], ['anthropic'], ['openrouter']])(
+    'refuses %s: only a runtime that holds no tools on a host-tools-only turn may classify fetched text', async (providerId) => {
       canonicalStamp.mockResolvedValue({ providerId, providerConfigRequired: true });
-      await expect(provider().complete('p', 's')).rejects.toThrow('no tool-less mode');
-      await expect(provider({ options: { providerId } }).complete('p', 's')).rejects.toThrow('no tool-less mode');
+      await expect(provider().complete('p', 's')).rejects.toThrow('not an admissible classify provider');
+      await expect(provider({ options: { providerId } }).complete('p', 's')).rejects.toThrow('not an admissible classify provider');
       expect(execute).not.toHaveBeenCalled();
     });
 
-  it('a hosted provider id is admissible; a record that names no provider is not', async () => {
-    canonicalStamp.mockResolvedValue({ providerId: 'openai', model: 'gpt-5.5', providerConfigRequired: true });
-    await provider().complete('p');
-    expect(sent()[3]).toMatchObject({ providerId: 'openai' });
+  it('a record that names no provider is refused: nothing is dispatched unstamped', async () => {
     canonicalStamp.mockResolvedValue({ providerConfigRequired: true });
     await expect(provider().complete('p')).rejects.toThrow('no provider record');
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('an unregistered bot, a bot without an id, or an incomplete turn throws (the chunk falls back to lexicon upstream)', async () => {
@@ -197,13 +209,30 @@ describe('the classify dispatch: one owned, tool-less turn per chunk through the
     execute.mockImplementationOnce(() => new Promise(() => { /* never settles */ }));
     await expect(provider({ options: { callTimeoutMs: 30 } }).complete('p')).rejects.toThrow(/exceeded 30ms/);
   });
+
+  it('the owner is re-resolved on its TTL: a principal disabled later stops the next chunk, and a new sign-in is picked up', async () => {
+    let clock = 1_000_000;
+    const issuers = vi.fn(async () => [ISSUER]);
+    const p = P.createWorldClassifyProvider(ctx, owner(), opts() as never,
+      { registry, botClient: client({ signed: true }), canonicalStamp, grantedTools, verifiedIssuers: issuers, now: () => clock } as never,
+      env({ WORLD_CLASSIFY_OWNER_SUB: OWNER }));
+    await p.complete('p');
+    expect(issuers).not.toHaveBeenCalled();           // inside the TTL: the registered owner is reused
+    clock += 61_000;
+    issuers.mockResolvedValueOnce([]);                // the directory row was disabled meanwhile
+    await expect(p.complete('p')).rejects.toThrow('no longer has a single verified issuer');
+    expect(execute).toHaveBeenCalledTimes(1);
+    clock += 61_000;                                  // signed in again
+    await p.complete('p');
+    expect(sent(1)[3]).toMatchObject({ userSub: OWNER, principalIssuer: ISSUER });
+  });
 });
 
 describe('registration: the rail exists only with an owner, and with a verified issuer when the hop is signed', () => {
   const demo = { DEMO_MODE: 'true', OSHAL_OPERATOR_SUBS: OWNER };
 
   it('no owner → nothing registered, nothing dispatched; analyzeBatch answers lexicon-shaped rows', async () => {
-    expect(await P.registerWorldClassifyRail(ctx, env({}), { registry, botClient: client(), canonicalStamp } as never)).toBe('no-owner');
+    expect(await P.registerWorldClassifyRail(ctx, env({}), { registry, botClient: client(), canonicalStamp, grantedTools } as never)).toBe('no-owner');
     expect(worldClassifyConfigured()).toBe(false);
     const out = await analyzeBatch(items(3), 'NVIDIA');
     expect(out.every((r) => r.s === null && r.entities.length === 0 && r.event === null)).toBe(true);
@@ -211,7 +240,7 @@ describe('registration: the rail exists only with an owner, and with a verified 
   });
 
   it('a signed hop and no verified issuer → nothing registered (the refused dispatch is never attempted)', async () => {
-    const deps = { registry, botClient: client({ signed: true }), canonicalStamp, verifiedIssuers: async () => [] };
+    const deps = { registry, botClient: client({ signed: true }), canonicalStamp, grantedTools, verifiedIssuers: async () => [] };
     expect(await P.registerWorldClassifyRail(ctx, env(demo), deps as never)).toBe('no-verified-issuer');
     expect(worldClassifyConfigured()).toBe(false);
     await analyzeBatch(items(2), 'NVIDIA');
@@ -219,14 +248,14 @@ describe('registration: the rail exists only with an owner, and with a verified 
   });
 
   it('an unsigned hop needs no issuer; a signed hop with one verified issuer registers and analyzeBatch reaches the rail', async () => {
-    const unsigned = { registry, botClient: client({ signed: false }), canonicalStamp, verifiedIssuers: async () => [] };
+    const unsigned = { registry, botClient: client({ signed: false }), canonicalStamp, grantedTools, verifiedIssuers: async () => [] };
     expect(await P.registerWorldClassifyRail(ctx, env(demo), unsigned as never)).toBe('registered');
-    const signed = { registry, botClient: client({ signed: true }), canonicalStamp, verifiedIssuers: async () => [ISSUER] };
+    const signed = { registry, botClient: client({ signed: true }), canonicalStamp, grantedTools, verifiedIssuers: async () => [ISSUER] };
     expect(await P.registerWorldClassifyRail(ctx, env(demo), signed as never)).toBe('registered');
     expect(worldClassifyConfigured()).toBe(true);
     const out = await analyzeBatch(items(3), 'NVIDIA');
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(sent()[3]).toMatchObject({ userSub: OWNER, principalIssuer: ISSUER, agenticMode: true, direct: true });
+    expect(sent()[3]).toMatchObject({ userSub: OWNER, principalIssuer: ISSUER, agenticMode: true, direct: true, fallbackOrder: [] });
     expect(out[0]).toEqual({ s: 0.4, entities: [{ name: 'NVIDIA', type: 'org' }], event: { type: 'earnings', intensity: 0.7 } });
   });
 });

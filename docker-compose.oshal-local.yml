@@ -1191,11 +1191,15 @@ services:
       # owned, direct turn per chunk through executeBotOrInline to the classify bot. WORLD_CLASSIFY_BOT picks
       # the registered bot (default general-bot). Each turn is stamped with that bot's CANONICAL provider
       # record (the swarm default when nothing names another) unless WORLD_CLASSIFY_PROVIDER_ID /
-      # WORLD_CLASSIFY_MODEL name one for the node to reconcile onto.
-      # TOOL-LESS: the prompt carries text fetched from the web, so the turn goes out in the direct shape a
-      # node runs host-tools-only (a CLI brain gets no native tools), and a CLI provider with no tool-less
-      # mode is refused before dispatch. Today antigravity-cli is the only CLI that runs tool-less; codex and
-      # claude-code have no such mode, so a stamp that names one sends every chunk back to lexicon.
+      # WORLD_CLASSIFY_MODEL name one for the node to reconcile onto (the model must be the node's own).
+      # TOOL-LESS: the prompt carries text fetched from the web, so the turn goes out in the interactive shape
+      # a node runs host-tools-only (the CLI brain gets no native tools), with an EMPTY fallback chain, only to a
+      # bot on its own node that holds no auto-executable tool grant. The provider must be in the admissible set
+      # — the node runtimes that honour that marker, today antigravity-cli alone; a catalog id runs on a node's
+      # Cline CLI with native tools, codex and claude-code have no tool-less mode — so any other stamp sends
+      # every chunk back to lexicon. NOTE: on a DEMO box the default render rail (STORYBOARD_IMAGE_PROVIDER
+      # unset) also uses general-bot, pinned to openai-codex; a node refuses a differently stamped dispatch
+      # while one is in flight, so point WORLD_CLASSIFY_BOT at another node to keep the two apart.
       # WHOSE work it is (operator decision 2026-10-02): the world schedules are framework-scope, and a bot
       # node admits an unbrokered CLI provider only for the deployment operator's own request on a DEMO box
       # (ADR-127). Every classify call therefore carries WORLD_CLASSIFY_OWNER_SUB; blank on a DEMO box with

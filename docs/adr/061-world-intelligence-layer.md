@@ -253,15 +253,29 @@ What one classify turn is:
   `WORLD_CLASSIFY_MODEL`) stamps an explicit provider instead, which the node reconciles onto
   ([ADR-034](034-bidirectional-config-ownership-sync.md)). A stamp that names no provider is refused:
   nothing is dispatched unstamped.
-- **Holding no tools of its own.** The prompt carries text fetched from the web, so the turn goes out
-  in the direct shape a bot node runs host-tools-only: a CLI brain gets no native tools, and the
-  node's own loop brokers only the tools the classify bot is granted. A CLI provider with no tool-less
-  mode is refused before anything is sent. Today `antigravity-cli` is the only CLI that runs
-  tool-less; codex and claude-code have no such mode, so a record or an explicit stamp that names one
-  sends every chunk back to lexicon. A hosted provider id is admitted.
-- **Instruction and data on separate channels.** To a bot with its own node the classify instruction
-  rides the server-authored `pattern` channel and the `text` is only the subject line and the
-  contained items. An inline bot has no pattern channel, so there the instruction leads the text.
+- **Holding no tools of its own, and never failing over to one that does.** The prompt carries text
+  fetched from the web, so the turn goes out in the interactive shape (direct + agentic) a bot node
+  marks host-tools-only: the CLI brain gets no native tools, and the node's own loop brokers only
+  the tools the classify bot is granted. Four refusals keep that true before anything is sent:
+  the stamped provider must be in the **admissible set** — the node runtimes that honour the
+  host-tools-only marker, today `antigravity-cli` alone (a node has no hosted runtime: a catalog id
+  such as `gemini` or `openai` runs on its Cline CLI with native tools, and codex and claude-code have
+  no tool-less mode, so every other id is refused, however it is named); the stamp always carries an
+  **empty fallback chain** (the fleet-default row chains `antigravity-cli` to `openai-codex`), and the
+  node's failover wrapper never enters its chain for a host-tools-only turn; the classify bot must
+  hold **no auto-executable tool grant** (`agent_tools`, checked per chunk); and the bot must run on
+  **its own node** (an inline bot would run the owner's brain with the instruction in the untrusted
+  text). On the node, a host-tools-only turn whose allowlist holds only the completion floor ends at
+  the first tool request the model makes, so one classify call is one provider call. A refused chunk
+  falls back to lexicon.
+- **Instruction and data on separate channels.** The classify instruction rides the server-authored
+  `pattern` channel (trusted configuration on the node) and the `text` is only the subject line and
+  the contained items (untrusted content).
+- **Sharing the node.** On a DEMO deployment with `STORYBOARD_IMAGE_PROVIDER` unset, the ADR-130
+  render rail dispatches to the same default bot (`general-bot`) pinned to `openai-codex`. A node
+  refuses a dispatch whose provider record differs from the one in flight, so during a render a
+  classify chunk falls back to lexicon and during a classify burst a render is refused. Set
+  `WORLD_CLASSIFY_BOT` (or the render rail's bot) to a different node to keep the two apart.
 - **On whose account (operator decision 2026-10-02).** The world schedules are framework-scope and
   carry no owner, and a bot node admits an unbrokered CLI provider only for the deployment operator's
   own request on a DEMO deployment
@@ -272,9 +286,13 @@ What one classify turn is:
   chokepoint's execute-entitlement check and the owner's cost-governance budget gate like any other
   bot call.
 - **With which issuer.** A signed bot-node hop needs more than a subject, so the dispatch also carries
-  the owner's **verified issuer**: `WORLD_CLASSIFY_OWNER_ISSUER`, else the single active record the
-  verified-principal directory (`oshal_verified_principals`) holds for that subject. Several records,
-  none, or an unreadable directory yield no issuer; none is guessed.
+  the owner's **verified issuer**: the single active record the verified-principal directory
+  (`oshal_verified_principals`, written by the sign-in boundary alone) holds for that subject.
+  Several records, none, or an unreadable directory yield no issuer; none is guessed.
+  `WORLD_CLASSIFY_OWNER_ISSUER` names one explicitly; it is operator configuration, not verification,
+  so the rail logs it as operator-asserted unless the directory holds that same record. The owner
+  and issuer are re-read at most once a minute: a principal disabled later stops being signed for at
+  the next chunk, and a sign-in that arrives later is picked up without a restart.
 - **Recorded where.** The node records the turn's cost in `chat_tasks` under the classify bot's agent
   id with the owner as `owner_sub` (task id `world-classify-<uuid>::<agent id>`). An item a model
   scored is archived with `classifier_model` set to the backend's name (`swarm:<bot>`, so
@@ -291,8 +309,8 @@ weakened. The budget caps below still bound every call.
 | `WORLD_CLASSIFY_BOT` | The registered bot that classifies. A name that is not in the active registry fails every chunk (lexicon). | `general-bot` |
 | `WORLD_CLASSIFY_OWNER_SUB` | The accountable owner every classify call carries. Blank on a DEMO box with exactly one `OSHAL_OPERATOR_SUBS` entry means that operator; blank anywhere else means no owner (lexicon only). | blank |
 | `WORLD_CLASSIFY_OWNER_ISSUER` | The owner's verified issuer, needed when the bot-node hop is signed. Blank means the single active verified-principal record for that subject. | blank |
-| `WORLD_CLASSIFY_PROVIDER_ID` | An explicit provider stamp for the node to reconcile onto. Blank means the classify bot's canonical provider record (the swarm default). | blank |
-| `WORLD_CLASSIFY_MODEL` | The model for `WORLD_CLASSIFY_PROVIDER_ID`; read only when that is set. | blank |
+| `WORLD_CLASSIFY_PROVIDER_ID` | An explicit provider stamp for the node to reconcile onto; it must be in the admissible set (today `antigravity-cli`), anything else is refused before dispatch. Blank means the classify bot's canonical provider record (the swarm default), checked against the same set. | blank |
+| `WORLD_CLASSIFY_MODEL` | The model for `WORLD_CLASSIFY_PROVIDER_ID`; read only when that is set, and it must equal the classify bot's canonical model (an Antigravity node runs its boot model, so a different value is refused before dispatch rather than after one executed, unrecorded turn). | blank |
 | `WORLD_CLASSIFY_CALL_TIMEOUT_MS` | The ceiling for one chunk's turn; a call that outlives it is abandoned and the chunk falls back to lexicon. A value under 10000 is ignored. | `120000` |
 | `WORLD_CLASSIFY_PROVIDERS` | Retired: it selects nothing. Compose forwards it with no default only so that setting it logs one warning. | blank |
 

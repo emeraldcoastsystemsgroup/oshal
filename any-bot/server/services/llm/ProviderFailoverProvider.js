@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A nested chain attributed every recovery to the FIRST rung. An administrator-defined order folds into A->(B->(C)), and the returned providerFailover object literal overwrote the inner wrapper's record carried in by the spread - so when C answered, the record still read "A -> B". That is the number a reader uses to decide which vendor is failing and which to drop. Added `answered` (the provider that actually produced the response) and `chain` (every provider walked, in order); `primary` and `fallback` keep their per-hop meaning.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep execution-bound framework-tool bridge credentials on explicitly supporting failover rungs only.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | A protected single-shot reasoning request is exactly one provider attempt. Recoverable errors and runtime-failure banners now fail closed on the primary instead of advancing through this wrapper's configured fallback chain.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A host-tools-only turn is a single-provider attempt like protected single-shot work: a thrown recoverable error or a failure banner from the primary is surfaced, never replayed on a fallback rung. The caller chose the primary for what it does NOT hold (a tool loop of its own); on the fleet-default chain antigravity-cli -> openai-codex the rung would hold exactly that, and the world classifier sends web-fetched text on this shape.
  */
 
 'use strict';
@@ -53,7 +54,10 @@ class ProviderFailoverProvider {
     try {
       primaryResponse = await this.primary.generateResponse(messages, optionsForProvider(this.primary, options));
     } catch (primaryError) {
-      if (options.singleShotToolless === true) throw primaryError;
+      // A protected single-shot turn and a host-tools-only turn are single-provider attempts: the
+      // caller chose the primary for what it does NOT hold (a tool loop of its own), and a fallback
+      // rung may hold exactly that.
+      if (options.singleShotToolless === true || options.hostToolsOnly === true) throw primaryError;
       if (!isProviderRecoverableRuntimeFailure(primaryError)) {
         throw primaryError;
       }
@@ -67,9 +71,9 @@ class ProviderFailoverProvider {
     if (!isProviderFailureResponse(primaryResponse)) {
       return primaryResponse;
     }
-    if (options.singleShotToolless === true) {
+    if (options.singleShotToolless === true || options.hostToolsOnly === true) {
       const error = new Error(
-        `Protected single-shot provider failed without fallback: ${formatProviderFailure(primaryResponse)}`,
+        `${options.hostToolsOnly === true ? 'Host-tools-only' : 'Protected single-shot'} provider failed without fallback: ${formatProviderFailure(primaryResponse)}`,
       );
       error.code = 'DIRECT_REASONING_UNAVAILABLE';
       throw error;
@@ -78,8 +82,8 @@ class ProviderFailoverProvider {
   }
 
   async _runFallback(messages, options, primaryFailure) {
-    if (options.singleShotToolless === true) {
-      const error = new Error('Protected single-shot reasoning cannot enter provider failover.');
+    if (options.singleShotToolless === true || options.hostToolsOnly === true) {
+      const error = new Error(`${options.hostToolsOnly === true ? 'Host-tools-only' : 'Protected single-shot'} reasoning cannot enter provider failover.`);
       error.code = 'DIRECT_REASONING_UNAVAILABLE';
       throw error;
     }
