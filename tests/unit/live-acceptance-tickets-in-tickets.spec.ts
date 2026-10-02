@@ -6,6 +6,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The review fixes: the wait also covers the root's planning round; a cleanup call that throws is recorded while the rest of the cleanup still runs; the root is kept when a child could not be removed; an in-process build ticket defers the run; a filing whose reply was lost is found by its tag and cleaned up; the interrupt hook cancels the tree and names the cleanup command; a cleanup-only run removes an earlier root and refuses a root that is not this case's; a shadow left after the deletes is reported.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The box answers the cockpit hierarchy, the child detail and the code-server handoff; the PASS sequence requires them, and a hierarchy that drops the children or a handoff that does not redirect fails by name.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A 401 on the settle re-read is reported as "could not be re-checked", never as "readable again".
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The post-cleanup re-reads retry an inconclusive answer: one that times out once and then answers is clean; one that stays refused is an error naming the attempts.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
 
@@ -27,7 +28,7 @@ const ROOT = '10000000-0000-4000-8000-000000000001';
 const KIDS = ['20000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002',
   '20000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000004',
   '20000000-0000-4000-8000-000000000005', '20000000-0000-4000-8000-000000000006'];
-const BUDGETS = { claimBudgetMs: 60_000, planningBudgetMs: 120_000, childBudgetMs: 120_000, settleBudgetMs: 60_000, residueWaitMs: 1_000, pollMs: 1_000 };
+const BUDGETS = { claimBudgetMs: 60_000, planningBudgetMs: 120_000, childBudgetMs: 120_000, settleBudgetMs: 60_000, residueWaitMs: 1_000, pollMs: 1_000, recheckPauseMs: 500 };
 
 interface Ticket { ticket_id: string; parent_ticket_id: string | null; title: string; status: string; ticket_type: string; owner_sub: string; metadata: Record<string, unknown> }
 interface Item { external_id: string; unit_id: string; status: string; assigned_agent_id: string | null; provider: string | null; model: string | null }
@@ -417,9 +418,28 @@ describe('tickets-in-tickets live case', () => {
     p.api = async (method: string, route: string) => (settled && method === 'GET' && /^\/api\/tickets\/[0-9a-f-]+$/.test(route) ? { status: 401, json: {} } : api0(method, route));
     const result = await tit.run(p, { ...BUDGETS, residueWaitMs: 2_500, tag: TAG });
     expect(result.state).toBe('fail');
-    expect(result.detail).toContain(`ticket ${ROOT} could not be re-checked after the settle wait (HTTP 401)`);
+    expect(result.detail).toContain(`ticket ${ROOT} could not be re-checked after the settle wait (HTTP 401, 4 attempts)`);
     expect(result.detail).not.toContain('readable again');
     expect(box.tickets.size).toBe(0);
+  });
+
+  it('a re-read that times out once and then answers is clean', async () => {
+    const box = new Box(PASS_SCRIPT);
+    const p = ports(box);
+    let settled = false;
+    const timedOut = new Set<string>();
+    const sleep0 = p.sleep;
+    p.sleep = async (ms: number) => { if (ms === 2_500) settled = true; return sleep0(ms); };
+    const api0 = p.api;
+    p.api = async (method: string, route: string) => {
+      // After the settle wait the api is stalled: the first read of each route times out, the next answers.
+      if (settled && method === 'GET' && !timedOut.has(route)) { timedOut.add(route); throw new Error('The operation was aborted due to timeout'); }
+      return api0(method, route);
+    };
+    const result = await tit.run(p, { ...BUDGETS, residueWaitMs: 2_500, tag: TAG });
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.cleanup.errors).toEqual([]);
+    expect(timedOut.size).toBeGreaterThanOrEqual(4);
   });
 
   it('reports a shadow ticket that remains after the deletes', async () => {
