@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes before the first live run. The preflight also refuses while any build ticket is in an in-process state, not only when one is queued. A filing whose reply was lost (a timeout after the insert) is found by the title only this run minted, so it is still cleaned up. The root id and the cleanup-only command are reported as soon as the root is filed, and an interrupted run cancels its tickets through the runner's interrupt hook. A cleanup-only entry point (`cleanupRoot`) finishes an interrupted run by its root id. A cleanup that throws is recorded, not lost.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The run also judges the cockpit surfaces over the finished tree, before cleanup: the ticket hierarchy must list the root with exactly its children beneath it, each child's detail must name the root as its parent, and the code-server handoff for the root folder must redirect onto that folder. Asked by the operator after the first live pass: the pipeline was proven, the surfaces a person opens were not.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets live case: files one tagged build root as the operator and requires it to be planned in-process (in_process_discovery, then approval_required with planning_complete, IMPLEMENTATION-PLAN.md in its folder), decomposed into 2-5 owned children in planning order, each child run to completion one at a time by a build-lane bot over the signed hop, and the root assembled to customer_action, with no plan-reviewer or Phase-8 round. Cleanup cancels, waits for in-flight node calls, removes the work items and other leftovers anchored to the root, the children, the shadow tickets and the root with its folder, and proves each gone.
  */
 
@@ -317,6 +318,42 @@ function judgeFolder(listing, childListings, childIds) {
 }
 
 /**
+ * @description What is wrong with the cockpit surfaces over the tree: the hierarchy must list the
+ * root with exactly its children beneath it, each child's detail must name the root as its parent,
+ * and the code-server handoff for the root folder must redirect onto that folder (a child's
+ * artifacts tab opens its parent's folder, the shared one).
+ * @param {object} io - Ports.
+ * @param {string} rootId - The root.
+ * @param {string[]} childIds - The children, in order.
+ * @returns {Promise<{findings: string[], codeFolder: string}>} Findings and the redirect target.
+ */
+async function judgeSurfaces(io, rootId, childIds) {
+  const findings = [];
+  const hierarchy = await io.api('GET', '/api/v1/tickets/hierarchy?ticketType=build');
+  const roots = Array.isArray(hierarchy.json && hierarchy.json.tickets) ? hierarchy.json.tickets : [];
+  const node = roots.find((row) => row.id === rootId);
+  if (hierarchy.status !== 200 || !node) findings.push(`the cockpit hierarchy does not list the root (HTTP ${hierarchy.status})`);
+  else {
+    const listed = (node.children || []).map((row) => row.id);
+    if (listed.length !== childIds.length || childIds.some((id) => !listed.includes(id))) {
+      findings.push(`the cockpit hierarchy lists ${listed.length} child row(s) under the root, not its ${childIds.length} children`);
+    }
+  }
+  for (const childId of childIds) {
+    const detail = await io.api('GET', `/api/v1/tickets/${childId}`);
+    const ticket = detail.json && detail.json.ticket;
+    if (detail.status !== 200 || !ticket) findings.push(`the cockpit detail of child ${childId} answered HTTP ${detail.status}`);
+    else if (ticket.parentTicketId !== rootId) findings.push(`the cockpit detail of child ${childId} names ${ticket.parentTicketId || 'no'} parent, not the root`);
+  }
+  const code = await io.api('GET', `/code?folder=${encodeURIComponent(`/workspace/${rootId}`)}`);
+  const codeFolder = code.location ? decodeURIComponent(String(code.location)) : '';
+  if (code.status !== 302 || !/[?&]folder=/.test(codeFolder) || !codeFolder.endsWith(`/${rootId}`)) {
+    findings.push(`the code-server handoff for the root folder answered HTTP ${code.status}${codeFolder ? ` to ${codeFolder.slice(0, 120)}` : ''}, not a redirect onto the root folder`);
+  }
+  return { findings, codeFolder };
+}
+
+/**
  * @description The compact evidence of a snapshot: status moves and who ran each child.
  * @param {object} snap - A snapshot.
  * @returns {object} Evidence.
@@ -394,10 +431,11 @@ async function exercise(io, plan, ledger) {
   const childIds = run.snap.children.map((c) => c.ticket_id);
   const listing = await io.files.dir('build.root', plan.rootId);
   const childListings = await Promise.all(childIds.map((id) => io.files.dir('build.root', id)));
-  const findings = [...judgeChildrenRun(run.snap), ...judgeRounds(run.snap, plan.rootId), ...judgeFolder(listing, childListings, childIds)];
-  const evidence = { ...snapshotEvidence(run.snap), files: listing.files.length, activity: await activityTotals(io, plan.rootId) };
+  const surfaces = await judgeSurfaces(io, plan.rootId, childIds);
+  const findings = [...judgeChildrenRun(run.snap), ...judgeRounds(run.snap, plan.rootId), ...judgeFolder(listing, childListings, childIds), ...surfaces.findings];
+  const evidence = { ...snapshotEvidence(run.snap), files: listing.files.length, codeFolder: surfaces.codeFolder, activity: await activityTotals(io, plan.rootId) };
   if (findings.length) return { verdict: { state: 'fail', detail: findings.join('; '), evidence }, snap: run.snap };
-  return { verdict: { state: 'pass', detail: `${childIds.length} children planned in-process, run one at a time over the signed hop and assembled`, evidence }, snap: run.snap };
+  return { verdict: { state: 'pass', detail: `${childIds.length} children planned on the planning node, run one at a time over the signed hop and assembled; hierarchy, child detail and code-server handoff answer`, evidence }, snap: run.snap };
 }
 
 /**
@@ -485,5 +523,5 @@ async function cleanupRoot(ports, rootId, options = {}) {
 
 module.exports = {
   CASE_ID, KEY, TITLE, NEEDS, REGRESSION_TESTS, BUILD_TARGETS, DEFAULT_BUDGETS, BUSY_STATES,
-  describeBuild, preflight, earlyFailure, judgePlanning, judgeChildrenRun, judgeRounds, judgeFolder, exercise, run, cleanupRoot,
+  describeBuild, preflight, earlyFailure, judgePlanning, judgeChildrenRun, judgeRounds, judgeFolder, judgeSurfaces, exercise, run, cleanupRoot,
 };

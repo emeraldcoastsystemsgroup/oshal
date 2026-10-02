@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The review fixes: the wait also covers the root's planning round; a cleanup call that throws is recorded while the rest of the cleanup still runs; the root is kept when a child could not be removed; an in-process build ticket defers the run; a filing whose reply was lost is found by its tag and cleaned up; the interrupt hook cancels the tree and names the cleanup command; a cleanup-only run removes an earlier root and refuses a root that is not this case's; a shadow left after the deletes is reported.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The box answers the cockpit hierarchy, the child detail and the code-server handoff; the PASS sequence requires them, and a hierarchy that drops the children or a handoff that does not redirect fails by name.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
 
@@ -46,6 +47,10 @@ class Box {
   deleteStatus = new Map<string, number>();
   /** A build-ticket state the box reports busy, for the preflight. */
   busy: string | null = null;
+  /** When set, the cockpit hierarchy lists the root without its children. */
+  hideChildren = false;
+  /** When set, the code-server handoff answers 200 instead of redirecting. */
+  noCodeRedirect = false;
   workspaceName = `workspace-${`${TAG}: two-module build`.slice(0, 50).replace(/[^a-zA-Z0-9-_]/g, '-')}`;
   workspaceCreatedAt = 10;
   constructor(readonly script: Array<(box: Box) => void>, readonly whoami = { operator: true }, readonly queued = 0) {}
@@ -109,7 +114,7 @@ function ticketJson(box: Box, id: string) {
   return ticket ? { ticketId: id, title: ticket.title, createdAt: new Date(20).toISOString(), workspaceId: id === ROOT ? 'ws-1' : null, status: ticket.status } : null;
 }
 
-function api(box: Box, method: string, route: string): { status: number; json: Record<string, unknown> } {
+function api(box: Box, method: string, route: string): { status: number; json: Record<string, unknown>; location?: string } {
   const url = new URL(route, 'http://box');
   const id = url.pathname.split('/')[3];
   if (route === '/api/cli-tokens/whoami') return { status: 200, json: box.whoami };
@@ -127,7 +132,20 @@ function api(box: Box, method: string, route: string): { status: number; json: R
   if (method === 'PUT') return { status: 400, json: {} };
   if (method === 'DELETE' && id) return del(box, id);
   if (method === 'GET' && route.startsWith('/api/workspaces/')) return { status: 200, json: { name: box.workspaceName, createdAt: new Date(box.workspaceCreatedAt + 20).toISOString() } };
-  if (method === 'GET' && route.startsWith('/api/v1/tickets/')) return { status: 200, json: { usage: { totalCost: 0.25, totalTokens: 1200 } } };
+  if (method === 'GET' && route.startsWith('/api/v1/tickets/hierarchy')) {
+    if (!box.tickets.has(ROOT)) return { status: 200, json: { tickets: [] } };
+    const children = box.hideChildren ? [] : [...box.tickets.values()].filter((t) => t.parent_ticket_id === ROOT).map((t) => ({ id: t.ticket_id, parentId: ROOT, children: [] }));
+    return { status: 200, json: { tickets: [{ id: ROOT, parentId: null, children, childCount: children.length }] } };
+  }
+  if (method === 'GET' && route.startsWith('/api/v1/tickets/') && route.endsWith('/activity')) return { status: 200, json: { usage: { totalCost: 0.25, totalTokens: 1200 } } };
+  if (method === 'GET' && route.startsWith('/api/v1/tickets/')) {
+    const ticket = box.tickets.get(url.pathname.split('/')[4]);
+    return ticket ? { status: 200, json: { ticket: { ticketId: ticket.ticket_id, parentTicketId: ticket.parent_ticket_id, status: ticket.status } } } : { status: 404, json: {} };
+  }
+  if (method === 'GET' && route.startsWith('/code?folder=')) {
+    const folder = decodeURIComponent(route.slice('/code?folder='.length));
+    return box.noCodeRedirect ? { status: 200, json: {} } : { status: 302, json: {}, location: `http://code-server.invalid/?folder=${encodeURIComponent(folder)}` };
+  }
   if (method === 'GET' && id) {
     if (id.startsWith('shadow-')) return box.shadows.has(id.slice(7)) ? { status: 200, json: {} } : { status: 404, json: {} };
     const json = ticketJson(box, id);
@@ -181,6 +199,19 @@ describe('tickets-in-tickets live case', () => {
     expect(box.shadows.size).toBe(0);
     expect(box.deleted.indexOf(ROOT)).toBe(box.deleted.length - 1);
     expect((result.evidence.children as unknown[])).toHaveLength(2);
+    expect(result.evidence.codeFolder).toBe(`http://code-server.invalid/?folder=/workspace/${ROOT}`);
+  });
+
+  it.each([
+    ['a hierarchy that drops the children', (box: Box) => { box.hideChildren = true; }, 'the cockpit hierarchy lists 0 child row(s) under the root, not its 2 children'],
+    ['a code-server handoff that does not redirect', (box: Box) => { box.noCodeRedirect = true; }, 'the code-server handoff for the root folder answered HTTP 200, not a redirect onto the root folder'],
+  ])('fails by name on %s, and still cleans up', async (_label, arrange, signature) => {
+    const box = new Box(PASS_SCRIPT);
+    arrange(box);
+    const result = await runBox(box);
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(signature);
+    expect(box.tickets.size).toBe(0);
   });
 
   it.each([
