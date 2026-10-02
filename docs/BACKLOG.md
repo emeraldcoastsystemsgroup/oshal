@@ -1258,6 +1258,29 @@ from preparation or unit tests alone.
     of an idle api.
   - A spec or a retained probe receipt guards both.
 
+### A bot's boot config pull aborts during the api's post-recreate stall and the bot stays on the environment fallback
+- **Status:** OPEN — actionable
+
+- **Today (2026-10-02, main b63effdf):** after the 20:54 UTC recreate, 24 of the 36 bot nodes logged
+  `bot-node-config-bootstrap … DOMException: This operation was aborted` at 20:57:09 while the api logged
+  `config-runtime-routes: Failed to read agent runtime config — timeout exceeded when trying to connect`
+  (20:57:30, its post-boot stall). Each such node kept its environment fallback (`FORCE_LLM_PROVIDER`,
+  openai-codex / gpt-5.5) although the fleet-default switch row is antigravity-cli / gemini-3.8-flash-low
+  and `GET /api/agents/<id>/runtime` resolves it; a node's role cannot read the switch table itself
+  (contract). Two build roots then planned on codex: one escalated (`planning_decomposition_failed`), one
+  planned in 181 s. A later dispatch's carried config moved code-developer and general-bot back to the
+  fleet default; system-architect and test-engineer stayed on codex until their containers were restarted
+  (21:16 UTC). The previous deploy that day (18:57) did not hit the window.
+- **Remaining:** make the boot pull retry with backoff until the api answers, and make a dispatch's carried
+  provider config switch a node that is still on its environment fallback.
+- **Done when:** all of these hold:
+  - A node whose first boot pull times out retries and logs the pull that succeeded, shown by a spec over a
+    stalling config endpoint and by the node log after a recreate.
+  - A dispatch carrying the fleet-default provider to a node still on its environment fallback switches it
+    (the node's `/api/health` reports the carried provider afterwards), shown by a spec.
+  - After a deploy, `/api/health` of every bot reports the provider the controller resolves for it; the
+    deploy's post-verify or `deploy-parity-check.sh` reads that and fails loudly on a mismatch.
+
 ## Connectors, channels, and external systems
 
 ### Calling account and claimant setup — operator decisions and receipts

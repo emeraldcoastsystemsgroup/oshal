@@ -8,6 +8,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A 401 on the settle re-read is reported as "could not be re-checked", never as "readable again".
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The post-cleanup re-reads retry an inconclusive answer: one that times out once and then answers is clean; one that stays refused is an error naming the attempts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | A GET, PUT or DELETE that times out twice and then answers leaves the run clean; a POST that throws is never repeated.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | A truncated root-folder listing fails by name.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | A child's recorded test run must exist, have executed and be green: the passing fixture carries one; a red run and a missing run fail by name; the evidence carries each child's run.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
@@ -55,6 +56,8 @@ class Box {
   hideChildren = false;
   /** When set, the code-server handoff answers 200 instead of redirecting. */
   noCodeRedirect = false;
+  /** When set, the root folder listing reports itself truncated. */
+  truncatedListing = false;
   workspaceName = `workspace-${`${TAG}: two-module build`.slice(0, 50).replace(/[^a-zA-Z0-9-_]/g, '-')}`;
   workspaceCreatedAt = 10;
   constructor(readonly script: Array<(box: Box) => void>, readonly whoami = { operator: true }, readonly queued = 0) {}
@@ -192,7 +195,7 @@ function sql(box: Box, name: string): unknown[] {
 
 function dir(box: Box, id: string) {
   if (id !== ROOT || !box.tickets.has(ROOT) || box.files.size === 0) return { path: `/ws/${id}`, exists: false, files: [], truncated: false };
-  return { path: `/ws/${id}`, exists: true, files: [...box.files].sort(), truncated: false };
+  return { path: `/ws/${id}`, exists: true, files: [...box.files].sort(), truncated: box.truncatedListing, skipped: [] };
 }
 
 const runBox = (box: Box) => tit.run(ports(box), { ...BUDGETS, tag: TAG });
@@ -216,6 +219,7 @@ describe('tickets-in-tickets live case', () => {
   it.each([
     ['a hierarchy that drops the children', (box: Box) => { box.hideChildren = true; }, 'the cockpit hierarchy lists 0 child row(s) under the root, not its 2 children'],
     ['a code-server handoff that does not redirect', (box: Box) => { box.noCodeRedirect = true; }, 'the code-server handoff for the root folder answered HTTP 200, not a redirect onto the root folder'],
+    ['a truncated folder listing', (box: Box) => { box.truncatedListing = true; }, 'the root folder listing is truncated; the folder judges ran over a partial list'],
   ])('fails by name on %s, and still cleans up', async (_label, arrange, signature) => {
     const box = new Box(PASS_SCRIPT);
     arrange(box);
