@@ -7,6 +7,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The box answers the cockpit hierarchy, the child detail and the code-server handoff; the PASS sequence requires them, and a hierarchy that drops the children or a handoff that does not redirect fails by name.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A 401 on the settle re-read is reported as "could not be re-checked", never as "readable again".
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The post-cleanup re-reads retry an inconclusive answer: one that times out once and then answers is clean; one that stays refused is an error naming the attempts.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A GET, PUT or DELETE that times out twice and then answers leaves the run clean; a POST that throws is never repeated.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
 
@@ -440,6 +441,27 @@ describe('tickets-in-tickets live case', () => {
     expect(result.state, result.detail).toBe('pass');
     expect(result.cleanup.errors).toEqual([]);
     expect(timedOut.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('a read, cancel or delete that times out twice and then answers leaves the run clean; a POST is sent once', async () => {
+    const box = new Box([CLAIM, PLAN(2), ...RUN_CHILD(1), ...RUN_CHILD(2, TEST_ENGINEER), ASSEMBLE]);
+    const p = ports(box);
+    const failures = new Map<string, number>();
+    let posts = 0;
+    const api0 = p.api;
+    p.api = async (method: string, route: string) => {
+      if (method === 'POST') { posts += 1; }
+      const key = `${method} ${route}`;
+      const seen = failures.get(key) || 0;
+      // Every non-POST call fails twice before the api answers.
+      if (method !== 'POST' && seen < 2) { failures.set(key, seen + 1); throw new Error('The operation was aborted due to timeout'); }
+      return api0(method, route);
+    };
+    const result = await tit.run(p, { ...BUDGETS, tag: TAG });
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.cleanup.errors).toEqual([]);
+    expect(posts).toBe(1);
+    expect([...failures.values()].every((n) => n === 2)).toBe(true);
   });
 
   it('reports a shadow ticket that remains after the deletes', async () => {
