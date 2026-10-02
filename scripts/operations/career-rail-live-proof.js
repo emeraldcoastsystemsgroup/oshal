@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attribute by what the proof can know. The first live run (2026-09-28, career-hunter 1.25.1 under enforce, run 517a4078: 8 rail calls admitted) reported "no cost" although the kernel had written two oshal_cost_events rows for the Career bot under the owner: career-hunter declares a catalog, so it is a protected application, and the bot node keys a protected execution's history `protected-<sha256>::<agent>` (src/app/bot-node-execution-handler.ts:264-265 over src/app/bot-node-protected-workspace.ts:28-40, a digest over issuer, subject, application, agent, tenant, workspace and the execution id), never the `career-engine-<owner>::<agent>` id this proof derived. The digest is the isolation boundary and changes per execution, so the proof no longer predicts a task id: the verdict requires oshal_cost_events rows with agent_id = the Career bot, owner_sub = the resolved owner and ts at or after the run's start (read under the owner's RLS identity as before), no more of them than the rail calls the run itself admitted (GET /runs railCalls). The chat_tasks rollup is optional evidence: the owner's rows whose task id ends `::<Career bot>` touched since the start, whatever the workspace shape. The refusal naming and the cleanup contract are unchanged; the pre-run baseline read (only the exact rollup needed it) is gone.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Two more modes; the default is unchanged. `--complete` lets the score run FINISH: no cancellation, the run must reach `succeeded` on its own within the (longer, 30 min default) budget with at least one admitted rail call, a run someone else cancelled is red, and the same ledger attribution applies to every admitted call. `--worker-loss` (requires `--announced-window`: it takes the Career bot away from every user of the box for the length of one run failure) is the visible-termination clause: the container half (career-rail-worker-loss.js) starts a run, waits for its first admitted rail call and prints phase lines; this host half reacts by stopping `oshal-local-career-bot` through docker by name, the container half requires GET /runs to show the run failed with reason career-worker-unavailable and the run route to answer 503, the host restarts the container on the next phase line (or when the proof ends, whatever it did), and the container half waits for a heartbeat strictly newer than the record the dead bot left behind - a bot that does not come back is red. The approve-to-draft half of a complete run is NOT here: career-hunter 1.26.0 has no route that plants or removes a posting or an application row (POST /enqueue-drafts creates durable tickets and rows over the owner's real postings, career-application-routes.ts enqueueForUser/createApplication, and nothing deletes them), so a draft the proof owned and removed cannot be driven yet; it waits on that package seam.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--complete` gains its approve -> draft half (career-rail-draft.js) over career-hunter 1.27.0's Test Lab application seam: once the score run has passed, the proof borrows one untouched posting from the owner's own board, plants ONE application marked with this run's tag, approves it through the real route (the engine's `draft --job` on the Career worker rail), and requires the draft run `succeeded` in GET /runs, the application `drafted`, and the Career bot's ledger rows under the owner since the approve (no more than the calls the draft admitted). It then removes the packet and the marked application and reads the posting back as it was; an incomplete cleanup is red. The mode passes only when both halves pass: a package below 1.27.0, auto-submit on, or no untouched posting makes it unavailable, naming why, with nothing planted. The default and `--worker-loss` modes are unchanged; the draft module is staged beside the other two.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Keep watching after the held POST drops, and do not start beside the evening refresh chain. `POST /run/score` answers only when the engine run ends, and the in-container `fetch` (Node 20, bundled undici) drops a request that has had no response headers once undici's 300 s `headersTimeout` expires. On 2026-10-01 that drop hit `--complete` run c203d69e 311-314 s in. observeRun stopped watching when the POST settled, so the proof reported a run still in flight as "still running after 1800s" (its budget, not the time it had watched) and its cleanup cancelled the run. Now a POST that rejects is recorded as a dropped transport (status 0, the undici cause code, how far in it dropped), and the proof keeps polling `GET /runs` until the run is terminal or the budget is spent. Every verdict on an observed run carries the measured time the run ended within, and the timed-out verdict prints the measured time beside the budget. The container half also refuses to start (exit 2, nothing started) unless `GET /api/career-hunter/run/refresh` answers `running: false`: a manual score run holds the shared corpus-write slot and the owner's store, and on 2026-10-01 one made the evening chain's shared scrape and the owner's match fail. This covers all three modes.
  */
 
 'use strict';
@@ -22,9 +23,10 @@
 //        OSHAL_VERIFY_API_CONTAINER, OSHAL_VERIFY_CAREER_BOT_CONTAINER (worker-loss),
 //        OSHAL_CAREER_RAIL_RUN_BUDGET_MS, OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS, OSHAL_CAREER_RAIL_POLL_MS,
 //        OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS (worker-loss), OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS (complete).
-// Exit 0 pass, 1 fail, 2 not runnable (no PAT / package below 1.24.0 / caller not admitted / no
-// posting to score / worker-loss without --announced-window or with the bot container not running /
-// complete on a package below 1.27.0, with auto-submit on, or with no untouched posting to draft for).
+// Exit 0 pass, 1 fail, 2 not runnable (no PAT / package below 1.24.0 / the evening refresh chain
+// running, or its state unreadable / caller not admitted / no posting to score / worker-loss without
+// --announced-window or with the bot container not running / complete on a package below 1.27.0,
+// with auto-submit on, or with no untouched posting to draft for).
 // Spends the owner's own scoring calls on the Career bot: bounded by cancellation by default, one
 // whole score run plus one draft under --complete, up to one run failure under --worker-loss.
 
@@ -155,33 +157,94 @@ async function cancelRun(ports, runId) {
 }
 
 /**
+ * @description Whether a run record has ended (succeeded, failed or cancelled).
+ * @param {object|null} run - A record from GET /runs.
+ * @returns {boolean} True for a run that is no longer running.
+ */
+function isTerminal(run) {
+  return Boolean(run) && run.state !== 'running';
+}
+
+/**
+ * @description What the proof records for a held POST whose transport dropped before any answer. The
+ * route answers only when the engine run ends, so a drop says nothing about the run: undici's fetch
+ * gives up on a request without response headers after its 300 s `headersTimeout`.
+ * @param {unknown} error - The fetch rejection.
+ * @param {number} afterMs - How long after the POST it dropped.
+ * @returns {{status: 0, json: {error: string}, dropped: {afterMs: number, code: string, error: string}}} A status-0 answer marked dropped.
+ */
+function droppedAnswer(error, afterMs) {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error && typeof error === 'object' ? error.cause : null;
+  const code = String((cause && cause.code) || (error instanceof Error && error.name) || 'unknown');
+  return { status: 0, json: { error: message }, dropped: { afterMs, code, error: message } };
+}
+
+/**
+ * @description Whether observeRun keeps polling: until the route answers, and once its transport has
+ * dropped, until GET /runs shows the run terminal.
+ * @param {{response: object|null}} flight - The POST's state.
+ * @param {object|null} run - The last record seen.
+ * @returns {boolean} True to poll again (the budget is checked separately).
+ */
+function keepWatching(flight, run) {
+  if (!flight.response) return true;
+  return flight.response.status === 0 && !isTerminal(run);
+}
+
+/**
  * @description Post the manual run and watch the owner's run list while it is in flight. In the
  * default mode the run is cancelled as soon as its first rail call is admitted, so at most the
  * rail's concurrency ceiling of calls is ever spent; a run that ends on its own is left alone. In
- * `complete` mode nothing is cancelled here: the run must end on its own within the budget.
+ * `complete` mode nothing is cancelled here: the run must end on its own within the budget. A POST
+ * whose transport drops is recorded as dropped, and the run list stays the source of truth.
  * @param {object} ports - api, sleep, now.
  * @param {object} budgets - runBudgetMs, pollMs.
  * @param {boolean} [cancelOnFirstCall] - Cancel after the first admitted call (the default mode).
- * @returns {Promise<{run: object|null, response: object|null, cancelledByProof: boolean, timedOut: boolean}>} The observation.
+ * @returns {Promise<{run: object|null, response: object|null, cancelledByProof: boolean, timedOut: boolean, elapsedMs: number, dropped: object|null}>} The observation.
  */
 async function observeRun(ports, budgets, cancelOnFirstCall = true) {
   const startedAtMs = ports.now();
-  let response = null;
-  const posted = ports.api('POST', `/api/${PACKAGE}/run/${VERB}`, undefined, budgets.runBudgetMs + 30_000)
-    .then((value) => { response = value; }, (error) => { response = { status: 0, json: { error: error instanceof Error ? error.message : String(error) } }; });
+  const flight = { response: null };
+  ports.api('POST', `/api/${PACKAGE}/run/${VERB}`, undefined, budgets.runBudgetMs + 30_000)
+    .then((value) => { flight.response = value; }, (error) => { flight.response = droppedAnswer(error, ports.now() - startedAtMs); });
   let run = null;
   let cancelledByProof = false;
-  while (!response && ports.now() - startedAtMs < budgets.runBudgetMs) {
+  while (keepWatching(flight, run) && ports.now() - startedAtMs < budgets.runBudgetMs) {
     await ports.sleep(budgets.pollMs);
     run = (await findRun(ports, startedAtMs)) || run;
     if (cancelOnFirstCall && run && run.state === 'running' && Number(run.railCalls) >= 1 && !cancelledByProof) {
       cancelledByProof = (await cancelRun(ports, run.runId)) === 202;
     }
   }
-  const timedOut = !response;
-  if (!timedOut) await posted;
   run = (await findRun(ports, startedAtMs)) || run;
-  return { run, response, cancelledByProof, timedOut };
+  const { response } = flight;
+  const answered = Boolean(response) && response.status !== 0;
+  return { run, response, cancelledByProof, timedOut: !answered && !isTerminal(run), elapsedMs: ports.now() - startedAtMs,
+    dropped: response && response.dropped ? response.dropped : null };
+}
+
+/**
+ * @description Whole seconds for a message.
+ * @param {number} ms - Milliseconds.
+ * @returns {number} The rounded seconds.
+ */
+function seconds(ms) {
+  return Math.round(Number(ms) / 1000);
+}
+
+/**
+ * @description The measured timing every verdict on an observed run carries: when the run had ended
+ * by, and when and how the held POST dropped, so neither a drop nor the budget reads as the run's end.
+ * @param {{run: object|null, timedOut: boolean, elapsedMs: number, dropped: object|null}} observed - observeRun's outcome.
+ * @returns {string} Sentences to append ('' when there is nothing to say).
+ */
+function observationNote(observed) {
+  let note = isTerminal(observed.run) && !observed.timedOut ? ` The run had ended ${seconds(observed.elapsedMs)}s after the proof started it.` : '';
+  if (observed.dropped) {
+    note += ` The held POST /run/${VERB} dropped ${seconds(observed.dropped.afterMs)}s in with no answer (${observed.dropped.code}: ${observed.dropped.error}); the proof kept watching GET /runs.`;
+  }
+  return note;
 }
 
 /**
@@ -248,7 +311,7 @@ function attributionVerdict(run, how, attribution, budgets) {
 
 /**
  * @description Decide the verdict from the observed run, the route's answer and the attribution.
- * @param {{run: object|null, response: object|null, cancelledByProof: boolean, timedOut: boolean}} observed - observeRun's outcome.
+ * @param {{run: object|null, response: object|null, cancelledByProof: boolean, timedOut: boolean, elapsedMs: number}} observed - observeRun's outcome.
  * @param {{rollups: Array<object>, ledger: {calls: number, costUsd: number, inputTokens: number, outputTokens: number, taskIds: string[]}}|null} attribution - What the database holds, or null when never read.
  * @param {object} budgets - For the messages.
  * @param {'cancel'|'complete'} [mode] - `complete` requires the run to have finished on its own.
@@ -263,7 +326,7 @@ function decideVerdict(observed, attribution, budgets, mode = 'cancel') {
   }
   const tail = response && response.json ? String(response.json.err || '') : '';
   if (timedOut || run.state === 'running') {
-    return { state: 'fail', detail: `Run ${run.runId} was still running after ${Math.round(budgets.runBudgetMs / 1000)}s (${run.railCalls} rail calls admitted); the proof cancelled it.` };
+    return { state: 'fail', detail: `Run ${run.runId} was still running ${seconds(observed.elapsedMs)}s after the proof started it (budget ${seconds(budgets.runBudgetMs)}s; ${run.railCalls} rail calls admitted); the proof cancelled it.` };
   }
   if (run.state === 'failed') {
     const refusal = detectRailRefusal([run.reason, response && response.json && response.json.error, tail]);
@@ -354,18 +417,20 @@ async function runCareerRailAcceptance(ports, options = {}) {
   const budgets = modeBudgets(mode, options);
   const since = new Date(io.now());
   const evidence = { mode, verb: VERB, careerVersion: io.careerVersion || null, agentId: CAREER_AGENT_ID, startedAt: since.toISOString() };
-  let observed = { run: null, response: null, cancelledByProof: false, timedOut: false };
+  let observed = { run: null, response: null, cancelledByProof: false, timedOut: false, elapsedMs: 0, dropped: null };
   let verdict = { state: 'fail', detail: 'The case did not finish.' };
   try {
     observed = await observeRun(io, budgets, mode === 'cancel');
     const { run, response } = observed;
     Object.assign(evidence, { runId: run ? run.runId : null, runState: run ? run.state : null, runReason: run ? run.reason : null,
-      railCalls: run ? run.railCalls : null, cancelledByProof: observed.cancelledByProof, routeStatus: response ? response.status : null });
+      railCalls: run ? run.railCalls : null, cancelledByProof: observed.cancelledByProof, routeStatus: response ? response.status : null,
+      elapsedMs: observed.elapsedMs, postDropped: observed.dropped });
     const attributable = run && !observed.timedOut && run.state !== 'running' && run.state !== 'failed' && Number(run.railCalls) >= 1
       && (mode === 'cancel' || run.state === 'succeeded');
     const attribution = attributable ? await awaitAttribution(io, since, budgets) : null;
     if (attribution) Object.assign(evidence, { ledger: attribution.ledger, rollups: attribution.rollups });
-    verdict = decideVerdict(observed, attribution, budgets, mode);
+    const decided = decideVerdict(observed, attribution, budgets, mode);
+    verdict = { ...decided, detail: `${decided.detail}${observationNote(observed)}` };
   } catch (error) {
     verdict = { state: 'fail', detail: error instanceof Error ? error.message : String(error) };
   }
@@ -504,8 +569,25 @@ function bearerApi(base, token) {
 }
 
 /**
- * @description Resolve the caller and the installed package inside the container; every mode
- * needs both before it starts anything.
+ * @description Why the proof must not start now, if the package's evening refresh chain may be in
+ * flight. A manual score run holds the shared corpus-write slot and the owner's store; on 2026-10-01
+ * one made the chain's shared scrape and the owner's match fail. The proof starts only when the
+ * package's own state route answers `running: false`; any other answer is a refusal.
+ * @param {Function} api - The loopback HTTP port.
+ * @returns {Promise<string|null>} The refusal, or null when the chain is idle.
+ */
+async function refreshChainBlocker(api) {
+  const state = await api('GET', `/api/${PACKAGE}/run/refresh`);
+  if (state.status === 200 && state.json.running === false) return null;
+  if (state.status === 200 && state.json.running === true) {
+    return `The ${PACKAGE} evening refresh chain is running (GET /run/refresh answered running: true). A manual ${VERB} run beside it holds the shared corpus-write slot and the owner's store and fails the chain; nothing was started. Re-run once it answers running: false.`;
+  }
+  return `GET /run/refresh answered HTTP ${state.status} without a running flag, so the proof cannot tell whether the ${PACKAGE} evening refresh chain is idle; nothing was started.`;
+}
+
+/**
+ * @description Resolve the caller and the installed package inside the container, and refuse while
+ * the package's evening refresh chain runs; every mode needs all three before it starts anything.
  * @param {Function} api - The loopback HTTP port.
  * @returns {Promise<{ownerSub: string, career: object}|{unavailable: string, evidence?: object}>} The context, or why the proof cannot run.
  */
@@ -517,6 +599,8 @@ async function resolveContainerContext(api) {
   const career = (Array.isArray(apps.json.apps) ? apps.json.apps : []).find((app) => app && app.name === PACKAGE);
   if (!career) return { unavailable: `The ${PACKAGE} package is not installed and active on this box; nothing was started.` };
   if (!hasRail(career.version)) return { unavailable: `${PACKAGE} ${career.version} has no worker rail (1.24.0+); nothing was started.`, evidence: { careerVersion: career.version } };
+  const blocker = await refreshChainBlocker(api);
+  if (blocker) return { unavailable: blocker, evidence: { careerVersion: career.version } };
   return { ownerSub, career };
 }
 
@@ -591,5 +675,5 @@ if (require.main === module) {
 module.exports = {
   CASE_ID, CASE_IDS, CAREER_AGENT_ID, COMPLETE_RUN_BUDGET_MS, PACKAGE, VERB, RAIL_REFUSALS, RAIL_TASK_SUFFIX, ROLLUP_SQL, LEDGER_SQL,
   hasRail, parseArgs, detectRailRefusal, findRun, cancelRun, cleanUpRun, startVerdict, readAttribution, awaitAttribution, attributionVerdict,
-  decideVerdict, runCareerRailAcceptance, hostSpec, hostTimeoutMs,
+  decideVerdict, runCareerRailAcceptance, hostSpec, hostTimeoutMs, bearerApi, refreshChainBlocker, resolveContainerContext,
 };

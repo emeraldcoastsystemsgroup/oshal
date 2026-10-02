@@ -366,6 +366,21 @@ has three modes:
   ends, whatever happened. A failed stop or start, or a container that is not running afterwards,
   turns the verdict red. No cost table is read.
 
+Before any mode starts anything, the container half reads `GET /api/career-hunter/run/refresh`.
+It goes on only when that route answers `running: false`. While the package's evening refresh chain
+runs (`running: true`), or when the route answers without the flag, the proof exits 2 with nothing
+started. A manual score run holds the shared corpus-write slot and the owner's store. On 2026-10-01
+one made the chain's shared scrape and the owner's match fail.
+
+`POST /run/score` answers only when the engine run ends, and the in-container `fetch` drops a
+request that has had no response headers after undici's 300 s `headersTimeout`. The proof records
+such a drop as a dropped transport. The evidence carries `routeStatus: 0` and `postDropped` with the
+undici cause code and how many milliseconds in it dropped. The proof then keeps polling `GET /runs`
+until the run is terminal or the budget is spent; the run list, not the POST, decides the verdict.
+Every verdict on an observed run states the measured time by which the run had ended (`elapsedMs` in
+the evidence). A run still running at the budget is reported with the measured time beside the
+budget.
+
 Budgets: `OSHAL_CAREER_RAIL_RUN_BUDGET_MS`, `OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS`,
 `OSHAL_CAREER_RAIL_POLL_MS`, `OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS` (worker loss) and
 `OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS` (complete). The scores a run writes are the owner's own scoring
@@ -378,10 +393,15 @@ authorization: `npx vitest run tests/unit/career-rail-enforce-posture.spec.ts
 tests/unit/career-rail-live-proof.spec.ts tests/unit/career-rail-draft.spec.ts` (also in
 `npm run test:authorization`). The proof's exact ledger and rollup reads run against a disposable
 PostgreSQL with the shipped cost schema and owner RLS. The worker-loss host refusals run the real
-script as a child process. The package routes, the runtime registry and docker are doubles; the
-rows in [the real-boundary audit](governance/real-boundary-regression-audit.md) name each one. The
-default mode has passed on the box (2026-09-28). `--complete` and `--worker-loss` are tested
-locally only and have not run on the box.
+script as a child process. The dropped POST is also run over a real transport. The proof's own HTTP
+client calls a loopback server that never answers the POST, and Node's fetch drops it with
+`UND_ERR_HEADERS_TIMEOUT` (headers timeout shortened to 1 s). The package routes, the runtime
+registry and docker are doubles; the rows in
+[the real-boundary audit](governance/real-boundary-regression-audit.md) name each one. The default
+mode has passed on the box (2026-09-28). `--complete` ran on the box on 2026-10-01 and failed. Its
+held POST dropped about 311 s in, and the proof stopped watching a run that was still going (handled
+above). The cancelled run's engine also outlived the cancel, which is a career-hunter fix.
+`--complete` has not passed on the box yet. `--worker-loss` has not run on the box.
 
 ### Automated live acceptance sweep
 
