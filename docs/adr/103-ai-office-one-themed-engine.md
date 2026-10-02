@@ -84,3 +84,14 @@ look** built from a brand kit.
   renderer before this change. Only the package timestamps and pptxgenjs's process-wide chart
   numbering are normalised.
 - The engine reads no package storage and no route was added: the caller supplies the kit.
+- The caller is the presentations package (store #402, presentations 2.13.0). It sends the caller's
+  Create kit as `brand` and names the look `brand:<base>` in the record and the response.
+- Live proof:
+  - 2026-10-01, core `a6de96c5` on image `a61932b7a9cb`: the core Test Lab card `brand-look-render`
+    returned `state: pass`.
+  - 2026-10-02, core `bbf062ce` on image `9d9bbd02607c`, presentations 2.13.0:
+    `node scripts/operations/live-acceptance.js package-run` printed PASS. The package case
+    `brand-render` (`app:presentations:test:brand-render`, Lab run `0c48d3ab`) ended `passed`, with
+    5 tests executed and 0 failed. That case drives the compiled AI Office route with this engine,
+    reads the kit's colors and faces back out of a generated deck, document and workbook, and
+    requires the record to name the look `brand:<base>`.

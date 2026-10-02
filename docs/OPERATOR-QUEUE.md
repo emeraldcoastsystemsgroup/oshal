@@ -5,7 +5,7 @@
 be overwritten. An entry disappears from this file automatically once its backlog heading is gone
 or its body records that it was built.
 
-Counts are generated, never typed: **46 decisions**, **42 live proofs**.
+Counts are generated, never typed: **45 decisions**, **42 live proofs**.
 
 To comment, write under an entry in this file and tell me, or just say the entry name.
 
@@ -35,7 +35,7 @@ A lane's bad redaction printed ALPACA_SECRET, ALPACA_PAPER_SECRET_KEY and ALPACA
 
 ---
 
-## Decisions — 46
+## Decisions — 45
 
 Each of these is blocked on a judgement only you can make. No code is waiting on anything else.
 
@@ -127,8 +127,6 @@ Each of these is blocked on a judgement only you can make. No code is waiting on
   Decide (1) whether Home supersedes the cockpit Dashboard's DashboardHomeView, so it is removed, or whether it stays as the platform-ops view, and (2) whether the orphaned /user-dashboard page (src/pages/user-dashboard/) is deleted outright. Also confirm that Amendment B's areas-plus-directory layout replaces 'one card per active app', and state the page latency budget to measure against.
 - **ADR-140 local device access — acceptance and the P1 inputs** *(L, core)*
   Accept or amend ADR-140, and decide the actuate gate: should every physical action ask for confirmation each time, or may you pre-authorize an exact operation on a specific device?
-- **AI Office: draw a deck, document or workbook in a brand kit's exact colors and fonts (2026-09-14)** *(L, both)*
-  Approve widening the core presentation-generation renderers (resolveTheme/docxTheme/xlsxTheme plus a brandTheme validator) so AI Office can render a Create brand kit's exact colors and fonts. Otherwise the nearest-built-in-look approximation stays and this entry is parked.
 - **Swarm root — the three pieces ADR-148 did not build** *(S, core)*
   Decide: should a MOCK_OIDC install promote its installer-configured identity (the OSHAL_OPERATOR_EMAILS / MOCK_OIDC_SUB it writes) to swarm root at install time, or should it stay break-glass-only until someone claims root on /users? That second option should be recorded as a decision in ADR-148. Also approve deploying the /users invite/disable controls so they can be verified on the box.
 - **The node-resident printer needs installer support to work on a fresh machine** *(M, core)*
