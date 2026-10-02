@@ -3,6 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The settle re-read tells a ticket that is readable again (HTTP 200) from one that could not be re-checked (401, 403, 5xx): live run 4 hit an api-wide 401 during its settle wait and reported three deleted tickets as "readable again".
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Cleanup for the tickets-in-tickets live case, in order: cancel what is unfinished; wait until no child's unit work item is still assigned (a node call cannot be aborted, and its engine writes the root folder until it returns), keeping everything in place if the wait runs out; delete the leftovers anchored to the root (work items, their swarm runs, governance, DLQ and escalation rows); delete the children; delete the shadow tickets the pipeline upserted for the run's ids (ownerless, so through the operator's list); delete the root only when its linked workspace is the one this run created (deleting the root removes that workspace's folder); then, after a settle wait, prove every id gone, the residue zero and the folder removed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes before the first live run. The node wait also covers the root's in-process planning round, whose return writes the plan file. Every step records through the ledger, so one failed call no longer abandons the rest or hides the misses; a cancel that did not land is an error. The root, and with it the folder, is deleted only when every child was verified gone, and only when the tree read proves the root is this case's own. Shadow tickets are read in pages and re-checked after the deletes. The residue check covers only what was removed, so a deliberate keep is not also reported as a return.
  */
@@ -214,7 +215,9 @@ async function confirmGone(io, rootId, runIds, ledger) {
   for (const id of runIds.filter((candidate) => removedTicket(ledger, candidate))) {
     await ledger.attempt(`ticket ${id} residue`, async () => {
       const after = await io.api('GET', `/api/tickets/${id}`);
-      return after.status === 404 ? null : `ticket ${id} is readable again after the settle wait (HTTP ${after.status})`;
+      if (after.status === 404) return null;
+      if (after.status === 200) return `ticket ${id} is readable again after the settle wait`;
+      return `ticket ${id} could not be re-checked after the settle wait (HTTP ${after.status})`;
     });
   }
   if (!removedTicket(ledger, rootId)) return {};

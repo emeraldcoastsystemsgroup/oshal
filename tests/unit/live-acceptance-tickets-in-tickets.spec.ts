@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The review fixes: the wait also covers the root's planning round; a cleanup call that throws is recorded while the rest of the cleanup still runs; the root is kept when a child could not be removed; an in-process build ticket defers the run; a filing whose reply was lost is found by its tag and cleaned up; the interrupt hook cancels the tree and names the cleanup command; a cleanup-only run removes an earlier root and refuses a root that is not this case's; a shadow left after the deletes is reported.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The box answers the cockpit hierarchy, the child detail and the code-server handoff; the PASS sequence requires them, and a hierarchy that drops the children or a handoff that does not redirect fails by name.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A 401 on the settle re-read is reported as "could not be re-checked", never as "readable again".
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
 
@@ -403,6 +404,22 @@ describe('tickets-in-tickets live case', () => {
     const refused = await tit.cleanupRoot(ports(box), 'NOT-A-UUID', BUDGETS);
     expect(refused.state).toBe('fail');
     expect(refused.detail).toContain('is not a lower-case ticket UUID');
+  });
+
+  it('reports a settle re-read the api refused as not re-checked, never as readable again', async () => {
+    const box = new Box(PASS_SCRIPT);
+    const p = ports(box);
+    // The settle wait is the only sleep of this length; after it the api refuses every ticket read.
+    let settled = false;
+    const sleep0 = p.sleep;
+    p.sleep = async (ms: number) => { if (ms === 2_500) settled = true; return sleep0(ms); };
+    const api0 = p.api;
+    p.api = async (method: string, route: string) => (settled && method === 'GET' && /^\/api\/tickets\/[0-9a-f-]+$/.test(route) ? { status: 401, json: {} } : api0(method, route));
+    const result = await tit.run(p, { ...BUDGETS, residueWaitMs: 2_500, tag: TAG });
+    expect(result.state).toBe('fail');
+    expect(result.detail).toContain(`ticket ${ROOT} could not be re-checked after the settle wait (HTTP 401)`);
+    expect(result.detail).not.toContain('readable again');
+    expect(box.tickets.size).toBe(0);
   });
 
   it('reports a shadow ticket that remains after the deletes', async () => {
