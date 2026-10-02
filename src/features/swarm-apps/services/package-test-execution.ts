@@ -8,7 +8,9 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse a silent pass: a zero-exit run must report its TAP summary and at least one executed test, so an empty or early-exiting suite can never read as passed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Read the TAP plan and its points as well as the `node --test` summary, so a vitest run whose reporter emits no summary is still counted from what it actually reported.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Rest the verdict on the run's own evidence and publish a truncated run whose evidence is incomplete as indeterminate, so bounded output can no longer rewrite a green run into a failure.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Log why the sandbox's bounded authority check refused (denied, past its 5 s cap, or failed), and at which phase. A refusal was swallowed into `false`, so a run cancelled by a slow check left no record of the cause. The cap and the fail-closed result are unchanged.
  */
+import { createChildLogger } from '@/shared/logger';
 import type { AppSmokeResult } from './app-smoke-verifier';
 import type { PackageTestSnapshot } from './package-test-snapshot';
 import { PackageTestSandbox, type PackageTestSandboxResult } from './package-test-sandbox';
@@ -37,20 +39,36 @@ export interface PackageTestExecution {
   profile?: PackageTestSandboxProfile;
 }
 
-/** @description Bound policy reads so a failed provider cannot hold cancellation or result publication open. */
-async function currentAuthority(options: PackageTestExecution): Promise<boolean> {
+const logger = createChildLogger({ module: 'package-test-execution' });
+/** One authority check (lease pulse and resolution together) may take this long before it counts as a refusal. */
+const AUTHORITY_CAP_MS = 5000;
+/** Where in the sandbox lifecycle an authority check ran: before launch, the 1 s pulse, or before publishing. */
+type AuthorityPhase = 'before-launch' | 'pulse' | 'before-publish';
+
+/** @description Bound policy reads so a failed provider cannot hold cancellation or result publication open.
+ * Every refusal is logged with its cause; the result stays fail-closed.
+ * @param options Execution under check. @param phase Lifecycle point of this check. @returns Whether execution may continue. */
+async function currentAuthority(options: PackageTestExecution, phase: AuthorityPhase): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
+  const started = Date.now();
+  const fields = () => ({ executionId: options.executionId, test: options.name, check: 'sandbox', phase, durationMs: Date.now() - started });
   try {
-    return await Promise.race([options.current(), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 5000); })]);
-  } catch { return false; }
-  finally { if (timer) clearTimeout(timer); }
+    const verdict = await Promise.race([options.current().then(allowed => allowed ? 'allowed' : 'denied'),
+      new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), AUTHORITY_CAP_MS); })]);
+    if (verdict === 'denied') logger.warn({ ...fields(), outcome: 'denied' }, 'Package test authority check refused execution');
+    if (verdict === 'timeout') logger.error({ ...fields(), outcome: 'timeout' }, 'Package test authority check exceeded its cap; execution is refused');
+    return verdict === 'allowed';
+  } catch (error) {
+    logger.error({ ...fields(), outcome: 'error', err: error }, 'Package test authority check failed; execution is refused');
+    return false;
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 /** @description Keep one in-flight authority probe and cancel promptly on revocation or failure. */
 function watchAuthority(options: PackageTestExecution, controller: AbortController) {
   let denied = false, checking: Promise<void> | undefined;
   const verify = async (): Promise<void> => {
-    if (!await currentAuthority(options)) denied = true;
+    if (!await currentAuthority(options, 'pulse')) denied = true;
     if (denied) controller.abort();
   };
   const timer = setInterval(() => { if (!checking) checking = verify().finally(() => { checking = undefined; }); }, 1000);
@@ -140,12 +158,12 @@ export async function executePackageTest(options: PackageTestExecution): Promise
   options.signal?.addEventListener('abort', abort, { once: true });
   const watch = watchAuthority(options, controller);
   try {
-    if (!await currentAuthority(options)) return { ...refused('Current test execution authority is unavailable.'), cleanupVerified: true };
+    if (!await currentAuthority(options, 'before-launch')) return { ...refused('Current test execution authority is unavailable.'), cleanupVerified: true };
     const result = await options.sandbox.run({ files: options.snapshot.files, suiteFiles: options.suiteFiles, profile: options.profile,
       timeoutMs: options.timeoutMs, maxMemoryMb: options.maxMemoryMb, signal: controller.signal, image: options.image, executionId: options.executionId });
     const cleanup = { cleanupVerified: result.cleanupVerified, cancelled: result.cancelled, timedOut: result.timedOut };
     await watch.stop();
-    if (watch.denied() || !await currentAuthority(options)) return { ...refused('Application or execution authority changed during the test.'), ...cleanup };
+    if (watch.denied() || !await currentAuthority(options, 'before-publish')) return { ...refused('Application or execution authority changed during the test.'), ...cleanup };
     if (options.snapshotNow().revision !== options.snapshot.revision) return { ...refused('Package source changed during the test. Refresh the catalog.'), ...cleanup };
     if (options.signal?.aborted || result.cancelled) return { ...refused('Test cancelled.'), cancelled: true, cleanupVerified: result.cleanupVerified };
     if (result.exitCode === null && !result.timedOut) return { ...refused('The isolated runner is unavailable.'), ...cleanup };

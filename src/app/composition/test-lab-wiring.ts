@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Arm lazy runner verification instead of probing at boot; a restart no longer starts a browser container.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Ask the authorization readiness per run-store operation. Chaining off it once inherited a boot-time bootstrap failure permanently, so run history stayed dead after authorization itself recovered.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve issuer separation in coarse package visibility for interactive and scheduled tests.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Accept a `null` scope that resolves the caller's identity alone and decides no application, so a run read can find its owner key without walking every installed application.
  */
 import type { Request } from 'express';
 import type { AppContext } from './app-context';
@@ -20,6 +21,7 @@ import { isOperator } from '@/shared/middleware/authz';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { createRetryableReady } from '@/shared/services/database';
 import { TestLabRunService } from '../routes/test-lab-run-service';
+import type { TestLabAuthorityScope } from '../routes/test-lab-run-types';
 import { PostgresTestLabRunStore } from '../routes/test-lab-run-store';
 import { ensureTestLabRunSchema } from '../routes/test-lab-run-schema';
 import type { TestLabRouteOptions } from '../routes/test-lab-routes';
@@ -63,10 +65,11 @@ Promise<AppSmokeVerificationOptions['serviceSmokeFetch']> {
   };
 }
 
-/** @description Recompute installed package visibility from current app and authorization policy. */
-async function visibleCases(apps: SwarmAppService, access: AppAccessService, authorization: AuthorizationPorts, actor: AuthorizationActor, appName?: string) {
+/** @description Recompute installed package visibility from current app and authorization policy.
+ * @param appName Scope: one application name decides that application alone, `null` decides none, omitted decides all. */
+async function visibleCases(apps: SwarmAppService, access: AppAccessService, authorization: AuthorizationPorts, actor: AuthorizationActor, appName?: TestLabAuthorityScope) {
   const result = new Map<string, string>();
-  if (!actor.isActive) return result;
+  if (!actor.isActive || appName === null) return result;
   const visible = new Set((await apps.listApps('active', { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin })).map(record => record.name));
   for (const manifest of await apps.getActiveManifests()) {
     if (!visible.has(manifest.name) || (appName !== undefined && manifest.name !== appName)) continue;
@@ -88,7 +91,7 @@ export function createTestLabWiring(ctx: AppContext, apps: SwarmAppService, acce
   void ready().catch(() => undefined);
   const executionAuth = (req: Request) => ({ serviceSecret: isOperator(req) ? process.env.SWARM_SERVICE_SECRET : undefined,
     authorization: req.headers.authorization, canRunSuites: isOperator(req) });
-  const runContext = async (req: Request, appName?: string) => {
+  const runContext = async (req: Request, appName?: TestLabAuthorityScope) => {
     const actor = await authorization.resolveActor(req);
     if (!actor.isActive) throw Object.assign(new Error('An active verified identity is required.'), { status: 401 });
     return { actor: { issuer: actor.issuer, sub: actor.sub }, visibleApps: await visibleCases(apps, access, authorization, actor, appName),

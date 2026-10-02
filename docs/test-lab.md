@@ -985,6 +985,13 @@ forged look and produced no file."
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for
 supported prerequisites, current-user authorization, isolation and local regression commands.
+Every authority check on a run decides only that run's application: the start, a read or
+cancellation, and the checks made while it runs. A slow check over the other installed
+applications therefore no longer cancels a healthy run. A denial, a 5 s timeout or an error for
+the run's own application still cancels it and withholds its output, and so do losing access to
+that application and a changed installed test. The controller logs which check refused a run and
+why. The regression cases are in `tests/unit/test-lab-run-history.spec.ts`, on the disposable
+PostgreSQL run store.
 Unsupported runners remain pending; further runner fixtures and remaining package adoption are in
 the [application registration backlog](backlog/app-test-lab-registration.md).
 Source registration and fixture tests do not establish deployed provider or production results.
