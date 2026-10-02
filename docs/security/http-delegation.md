@@ -308,6 +308,23 @@ The remaining swarm rounds have no signed transport, so while signing is configu
   rounds before, and the controller then waited 600 s for that same structural result. Guard:
   `tests/unit/swarm-verification-enforced-fallback.spec.ts`.
 
+**Executed tests do cross the hop (2026-10-02).** After the structural result, code work
+(implementation and testing units) has its tests run where the deliverables live: verification
+sends the `workspace-tests/run` deterministic provider intent over this same signed route to its
+fixed owner, test-engineer's node, as the ticket's owner with its persisted verified issuer. The
+intent carries only the root workspace id (a lower-case UUID, signed with the body): no command,
+argument or path. The node runs the workspace's own `npm test` (or vitest directly, the image's
+global vitest linked in when `npm install --ignore-scripts` cannot run) with a process environment
+built from scratch (no node secret, `CI=1`, a private HOME), bounded in time and output, and
+answers the exit code, the counts, the failing test names and the output tail. The run decides:
+a red run, or one that could not happen (no tests declared, no toolchain, the node unreachable,
+a timeout), fails the child with regression to build and names the failing tests in the retry
+feedback; a green run's counts join the findings and the run is recorded on the child ticket's
+metadata (`verificationTests`). The agent rounds above still do not run. Guards:
+`tests/unit/swarm-verification-runs-tests.spec.ts`, `tests/unit/bot-node-workspace-test-run.spec.ts`
+(with its real-spawn companion `bot-node-workspace-test-run-real.spec.ts`) and
+`tests/unit/node-workspace-test-runner.spec.ts`.
+
 (The `task` lane's call-out was the other refusal this page tracked; it is closed above under
 [The `task` call-out](#the-task-call-out-may-not-hand-a-queued-ticket-to-an-unreachable-owner).)
 Carrying these rounds over the signed hop is tracked in [the backlog](../BACKLOG.md).

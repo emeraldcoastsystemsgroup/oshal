@@ -113,22 +113,36 @@ Verification is policy-aware and supports retries, regression accounting, escala
 
 ## Live proof: tickets in tickets (2026-10-02)
 
-`node scripts/operations/live-acceptance.js tickets-in-tickets` printed `PASS tickets-in-tickets` four
-times on 2026-10-02, the first at 01:31 UTC on the preview deploy of `4d244b8a` and the latest on `main`
-`1848fb4f` (image `051aa9f82c5b`, delegation signing configured) at 19:11 UTC:
+`node scripts/operations/live-acceptance.js tickets-in-tickets` printed `PASS tickets-in-tickets` five
+times on 2026-10-02, the first at 01:31 UTC on the preview deploy of `4d244b8a` and the latest at 21:33 UTC
+on the image of `main` `b63effdf` (verification runs the tests, #1020) with the case's probe fix `f9c4ba67`
+(delegation signing configured):
 
-- Root `ee42ab93` filed 19:07:26 as the operator, claimed 19:07:56, planned on system-architect's node
-  (`antigravity-cli / gemini-3.8-flash-low`, the installed fleet default) in 61 s and parked at
-  `approval_required` (`planning_complete`) at 19:08:57 with two owned children in planning order.
-- Child 1 (code-developer, "Build the Slugify Module with Word Hyphenation and Lower-Casing") ran from
-  19:09:26; child 2 (test-engineer, "Build the Slugify Test Suite with Vitest") only after child 1 was
-  complete; each over the signed hop, on the same configured engine, with its unit work item completed
-  and its handover and deliverables in the root folder (159 files). The root assembled to
-  `customer_action` at 19:11:25. Activity: 3 requests, 322,939 input tokens, cost 0 on the subscription.
+- Root `e0e8a4d7` filed 21:25:36 as the operator, planned on system-architect's node
+  (`antigravity-cli / gemini-3.8-flash-low`, the installed fleet default) in 77 s and parked at
+  `approval_required` (`planning_complete`) with two owned children in planning order.
+- Child 1 (code-developer, "Build the Slugify Utility Function with Token Splitting…") and then child 2
+  (test-engineer, "Implement the Comprehensive Slugify Test Suite…"), one at a time over the signed hop
+  on the same configured engine; after each, verification ran the workspace's tests on test-engineer's
+  node as the `workspace-tests/run` deterministic intent and recorded the run on the child
+  (`metadata.verificationTests`): `npm test` exit 0, 6 passed; then exit 0, 14 passed. The root assembled
+  to `customer_action` with 40 files in its folder. Activity: 3 requests, 403,064 input tokens, cost 0 on
+  the subscription.
 - Before cleanup the cockpit hierarchy listed the root with exactly its children, each child detail
   named the root as its parent, and `/code?folder=/workspace/<root>` redirected onto the root folder.
 - Cleanup receipt: removed 7 (the root, both children, the root folder, three shadow tickets), kept 1
   (cost rows), outstanding 0, errors 0; residue 0 in every table the run touches; the folder gone.
+
+The pass before it (19:11 UTC, `main` `1848fb4f`, root `ee42ab93`) had the same shape without the test
+gate: 159 files, 322,939 input tokens, cost 0.
+
+Two review build tickets filed outside the case that evening showed what the case had not judged: one
+reached `customer_action` with a failing test in its deliverables (verification was structural), the next
+had a test-engineer that never ran its suite. Those became the test-engineer persona's execution contract
+(#1018), the executed test gate (#1020), the case's per-child test-run judge, and two fixes the gate's
+first live runs found: the probe's 400-entry listing truncating inside a `node_modules` (#1021) and
+vitest's upward config search reaching the image's own `vite.config.ts` from a config-less workspace
+(#1022).
 
 The runs between those passes each failed on a box condition the case names, and each became a fix the
 same day: a re-read answered during a database lock (#1004), a planning reply without its decomposition

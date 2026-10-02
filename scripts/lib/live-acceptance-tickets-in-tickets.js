@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes before the first live run. The preflight also refuses while any build ticket is in an in-process state, not only when one is queued. A filing whose reply was lost (a timeout after the insert) is found by the title only this run minted, so it is still cleaned up. The root id and the cleanup-only command are reported as soon as the root is filed, and an interrupted run cancels its tickets through the runner's interrupt hook. A cleanup-only entry point (`cleanupRoot`) finishes an interrupted run by its root id. A cleanup that throws is recorded, not lost.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The run also judges the cockpit surfaces over the finished tree, before cleanup: the ticket hierarchy must list the root with exactly its children beneath it, each child's detail must name the root as its parent, and the code-server handoff for the root folder must redirect onto that folder. Asked by the operator after the first live pass: the pipeline was proven, the surfaces a person opens were not.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A truncated root-folder listing is a finding of its own, so the folder judges never fail a tree as empty over a partial list; the probe now skips node_modules and the like, which is what filled the 400 entries on 2026-10-02.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Each child's recorded test run (metadata.verificationTests, written by verification after it ran the workspace's tests on the node) must exist, have executed and be green; a missing, unrun or red run fails the case by name with the failing tests. The run travels in the receipt's evidence per child. A review build ticket had reached customer_action with a failing test in its deliverables while this case judged only that files existed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The api port the case runs on retries a call that threw (a 30 s timeout while the api is stalled by its own background jobs) up to three times, a pause apart, for GET, PUT and DELETE; a POST is never repeated (a filing whose reply was lost is found by its tag). Runs 4 and 6 passed every check and lost their verdict to one such timeout each; the stalls are a backlog entry for the jobs' owners.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets live case: files one tagged build root as the operator and requires it to be planned in-process (in_process_discovery, then approval_required with planning_complete, IMPLEMENTATION-PLAN.md in its folder), decomposed into 2-5 owned children in planning order, each child run to completion one at a time by a build-lane bot over the signed hop, and the root assembled to customer_action, with no plan-reviewer or Phase-8 round. Cleanup cancels, waits for in-flight node calls, removes the work items and other leftovers anchored to the root, the children, the shadow tickets and the root with its folder, and proves each gone.
  */
@@ -30,6 +32,7 @@ const REGRESSION_TESTS = Object.freeze([
   'controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
   'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback',
   'internal-machinery-scoping', 'bot-node-workspace-owner-binding', 'queue-manager-claim-reentrancy',
+  'swarm-verification-runs-tests', 'bot-node-workspace-test-run', 'node-workspace-test-runner',
 ].map((name) => Object.freeze({ level: 'unit', path: `tests/unit/${name}.spec.ts` })));
 const DEFAULT_BUDGETS = Object.freeze({
   claimBudgetMs: 180_000, planningBudgetMs: 1_200_000, childBudgetMs: 1_500_000,
@@ -294,6 +297,7 @@ function judgeChildrenRun(snap) {
     else if (unit.status !== 'completed') findings.push(`${label} unit-1 is ${unit.status}`);
     else if (!BUILD_TARGETS.has(unit.assigned_agent_id)) findings.push(`${label} unit-1 was completed by ${unit.assigned_agent_id}, which is not a build-lane target`);
     else if (!unit.provider || !unit.model) findings.push(`${label} unit-1 records no node provider and model`);
+    findings.push(...judgeTestRun(label, child));
     if (index === 0) continue;
     const started = firstEntry(snap.history, child.ticket_id, 'in_process_build');
     const previousDone = firstEntry(snap.history, snap.children[index - 1].ticket_id, RELEASES_NEXT);
@@ -301,6 +305,24 @@ function judgeChildrenRun(snap) {
   }
   if (snap.root.status !== 'customer_action') findings.push(`the root ended ${snap.root.status}, not customer_action`);
   return findings;
+}
+
+/**
+ * @description What is wrong with a child's recorded test run: verification must have run the
+ * workspace's tests on the node and recorded a green run on the child.
+ * @param {string} label - The child's label.
+ * @param {{metadata?: object}} child - The child row.
+ * @returns {string[]} Findings.
+ */
+function judgeTestRun(label, child) {
+  const run = child.metadata && child.metadata.verificationTests;
+  if (!run || typeof run !== 'object') return [`${label} records no test run (metadata.verificationTests)`];
+  if (run.ran !== true) return [`${label} tests were not run: ${run.reason || 'no reason recorded'}`];
+  if (run.exitCode !== 0 || Number(run.failed) > 0) {
+    const named = Array.isArray(run.failedTests) && run.failedTests.length ? ` (${run.failedTests.join('; ')})` : '';
+    return [`${label} test run is red: ${run.failed} failed, exit ${run.exitCode}${named}`];
+  }
+  return [];
 }
 
 /**
@@ -334,6 +356,7 @@ function judgeRounds(snap, rootId) {
 function judgeFolder(listing, childListings, childIds) {
   if (!listing.exists) return ['the root folder does not exist'];
   const findings = [];
+  if (listing.truncated) findings.push('the root folder listing is truncated; the folder judges ran over a partial list');
   if (!listing.files.includes('IMPLEMENTATION-PLAN.md')) findings.push('IMPLEMENTATION-PLAN.md is not in the root folder');
   if (!listing.files.some((file) => file.startsWith('deliverables/'))) findings.push('the root folder holds no deliverable');
   for (const [index, childId] of childIds.entries()) {
@@ -392,8 +415,10 @@ function snapshotEvidence(snap) {
     statusMoves: snap.history.map((h) => ({ ticket: label.get(h.ticket_id) || h.ticket_id, to: h.to_status, reason: h.reason || null, at: h.created_at })),
     children: snap.children.map((child) => {
       const unit = snap.items.find((item) => item.unit_id === `${child.ticket_id}-unit-1`) || {};
+      const run = child.metadata && child.metadata.verificationTests;
       return { id: child.ticket_id, title: child.title, subtaskIndex: subtaskIndex(child), status: child.status,
-        agentId: unit.assigned_agent_id || null, provider: unit.provider || null, model: unit.model || null };
+        agentId: unit.assigned_agent_id || null, provider: unit.provider || null, model: unit.model || null,
+        tests: run && typeof run === 'object' ? { ran: run.ran, command: run.command || null, exitCode: run.exitCode, passed: run.passed, failed: run.failed, failedTests: run.failedTests || [], reason: run.reason || null } : null };
     }),
   };
 }
@@ -462,7 +487,7 @@ async function exercise(io, plan, ledger) {
   const findings = [...judgeChildrenRun(run.snap), ...judgeRounds(run.snap, plan.rootId), ...judgeFolder(listing, childListings, childIds), ...surfaces.findings];
   const evidence = { ...snapshotEvidence(run.snap), files: listing.files.length, codeFolder: surfaces.codeFolder, activity: await activityTotals(io, plan.rootId) };
   if (findings.length) return { verdict: { state: 'fail', detail: findings.join('; '), evidence }, snap: run.snap };
-  return { verdict: { state: 'pass', detail: `${childIds.length} children planned on the planning node, run one at a time over the signed hop and assembled; hierarchy, child detail and code-server handoff answer`, evidence }, snap: run.snap };
+  return { verdict: { state: 'pass', detail: `${childIds.length} children planned on the planning node, run one at a time over the signed hop, each with its tests run green on the node, and assembled; hierarchy, child detail and code-server handoff answer`, evidence }, snap: run.snap };
 }
 
 /**

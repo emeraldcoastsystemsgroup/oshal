@@ -8,6 +8,8 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | A 401 on the settle re-read is reported as "could not be re-checked", never as "readable again".
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The post-cleanup re-reads retry an inconclusive answer: one that times out once and then answers is clean; one that stays refused is an error naming the attempts.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | A GET, PUT or DELETE that times out twice and then answers leaves the run clean; a POST that throws is never repeated.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | A truncated root-folder listing fails by name.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | A child's recorded test run must exist, have executed and be green: the passing fixture carries one; a red run and a missing run fail by name; the evidence carries each child's run.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit spec for the tickets-in-tickets live case over a scripted box double (api, named SQL, directory probe, virtual clock). Pins the PASS sequence and each named failure signature (one child titled like the root, a root complete before any child, an escalated child, too many children, children out of order, a missing handover), and the cleanup rules: children before the root, a foreign workspace never cascaded, the wait for in-flight node calls, everything kept in place when that wait runs out, and an unavailable preflight that writes nothing.
  */
 
@@ -54,6 +56,8 @@ class Box {
   hideChildren = false;
   /** When set, the code-server handoff answers 200 instead of redirecting. */
   noCodeRedirect = false;
+  /** When set, the root folder listing reports itself truncated. */
+  truncatedListing = false;
   workspaceName = `workspace-${`${TAG}: two-module build`.slice(0, 50).replace(/[^a-zA-Z0-9-_]/g, '-')}`;
   workspaceCreatedAt = 10;
   constructor(readonly script: Array<(box: Box) => void>, readonly whoami = { operator: true }, readonly queued = 0) {}
@@ -69,10 +73,11 @@ class Box {
     this.items.push({ external_id: id, unit_id: `${id}-unit-1`, status: 'pending', assigned_agent_id: null, provider: null, model: null });
     this.shadows.add(id);
   }
-  completeChild(index: number, agent = CODE_DEVELOPER, handover = true) {
+  completeChild(index: number, agent = CODE_DEVELOPER, handover = true, tests: Record<string, unknown> | null = GREEN_RUN) {
     const id = KIDS[index - 1];
     const unit = this.items.find((i) => i.unit_id === `${id}-unit-1`)!;
     Object.assign(unit, { status: 'completed', assigned_agent_id: agent, provider: 'antigravity-cli', model: 'node-model' });
+    if (tests) this.tickets.get(id)!.metadata = { ...this.tickets.get(id)!.metadata, verificationTests: tests };
     if (handover) this.files.add(`developer-handovers/${id}--${agent}_PHASE_1_ROUND_1.md`);
     this.files.add(`deliverables/src/step-${index}.ts`);
     this.move(id, 'complete');
@@ -81,6 +86,10 @@ class Box {
     if (this.step < this.script.length) this.script[this.step++](this);
   }
 }
+
+/** The run verification records on a child whose tests ran green on the node. */
+const GREEN_RUN = { ran: true, command: 'npm test', exitCode: 0, passed: 3, failed: 0, failedTests: [] };
+const RED_RUN = { ran: true, command: 'npm test', exitCode: 1, passed: 2, failed: 1, failedTests: ['deliverables/tests/slugify.test.ts > slugify > keeps underscores'] };
 
 const CLAIM = (box: Box) => box.move(ROOT, 'in_process_discovery');
 const PLAN = (n: number) => (box: Box) => {
@@ -186,7 +195,7 @@ function sql(box: Box, name: string): unknown[] {
 
 function dir(box: Box, id: string) {
   if (id !== ROOT || !box.tickets.has(ROOT) || box.files.size === 0) return { path: `/ws/${id}`, exists: false, files: [], truncated: false };
-  return { path: `/ws/${id}`, exists: true, files: [...box.files].sort(), truncated: false };
+  return { path: `/ws/${id}`, exists: true, files: [...box.files].sort(), truncated: box.truncatedListing, skipped: [] };
 }
 
 const runBox = (box: Box) => tit.run(ports(box), { ...BUDGETS, tag: TAG });
@@ -202,12 +211,15 @@ describe('tickets-in-tickets live case', () => {
     expect(box.shadows.size).toBe(0);
     expect(box.deleted.indexOf(ROOT)).toBe(box.deleted.length - 1);
     expect((result.evidence.children as unknown[])).toHaveLength(2);
+    expect((result.evidence.children as Array<{ tests: unknown }>).map((c) => c.tests)).toEqual([expect.objectContaining({ ran: true, passed: 3, failed: 0 }), expect.objectContaining({ ran: true, passed: 3, failed: 0 })]);
+    expect(result.detail).toContain('each with its tests run green on the node');
     expect(result.evidence.codeFolder).toBe(`http://code-server.invalid/?folder=/workspace/${ROOT}`);
   });
 
   it.each([
     ['a hierarchy that drops the children', (box: Box) => { box.hideChildren = true; }, 'the cockpit hierarchy lists 0 child row(s) under the root, not its 2 children'],
     ['a code-server handoff that does not redirect', (box: Box) => { box.noCodeRedirect = true; }, 'the code-server handoff for the root folder answered HTTP 200, not a redirect onto the root folder'],
+    ['a truncated folder listing', (box: Box) => { box.truncatedListing = true; }, 'the root folder listing is truncated; the folder judges ran over a partial list'],
   ])('fails by name on %s, and still cleans up', async (_label, arrange, signature) => {
     const box = new Box(PASS_SCRIPT);
     arrange(box);
@@ -224,6 +236,9 @@ describe('tickets-in-tickets live case', () => {
     ['too many children', [CLAIM, PLAN(6)], 'planning produced 6 children (expected 2-5)'],
     ['children out of order', [CLAIM, PLAN(2), (box: Box) => box.move(KIDS[1], 'in_process_build'), (box: Box) => box.completeChild(2), ...RUN_CHILD(1), ASSEMBLE], 'entered in_process_build before child'],
     ['a missing handover', [CLAIM, PLAN(2), ...RUN_CHILD(1), ...RUN_CHILD(2, TEST_ENGINEER, false), ASSEMBLE], `no developer handover starts with ${KIDS[1]}--`],
+    ['a red test run', [CLAIM, PLAN(2), ...RUN_CHILD(1), (box: Box) => box.move(KIDS[1], 'in_process_build'), (box: Box) => box.completeChild(2, TEST_ENGINEER, true, RED_RUN), ASSEMBLE], `child ${KIDS[1]} test run is red: 1 failed, exit 1 (deliverables/tests/slugify.test.ts > slugify > keeps underscores)`],
+    ['no recorded test run', [CLAIM, PLAN(2), (box: Box) => box.move(KIDS[0], 'in_process_build'), (box: Box) => box.completeChild(1, CODE_DEVELOPER, true, null), ...RUN_CHILD(2, TEST_ENGINEER), ASSEMBLE], `child ${KIDS[0]} records no test run (metadata.verificationTests)`],
+    ['tests that were not run', [CLAIM, PLAN(2), (box: Box) => box.move(KIDS[0], 'in_process_build'), (box: Box) => box.completeChild(1, CODE_DEVELOPER, true, { ran: false, reason: 'no-toolchain: npm install exited 1; image vitest absent' }), ...RUN_CHILD(2, TEST_ENGINEER), ASSEMBLE], `child ${KIDS[0]} tests were not run: no-toolchain: npm install exited 1; image vitest absent`],
   ])('fails by name on %s, and still cleans up', async (_label, script, signature) => {
     const box = new Box(script as Array<(box: Box) => void>);
     const result = await runBox(box);
