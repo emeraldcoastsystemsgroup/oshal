@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets card: its key in the registered order, its REGRESSION_TESTS on the card, and the Lab's new `files.dir` port listing a build root folder by name only, refusing an unknown probe and a non-UUID id.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run under the owner's identity without operator rights, as the host runner's container helper runs them.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the package-run case (explicit-only: it starts a package sandbox run and keeps its run-history row).
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | The registration list ends with storyboard-agy (the storyboard render on the render bot's own antigravity harness, ADR-130 amendment 2026-10-02).
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -107,7 +108,7 @@ describe('live-acceptance Test Lab cards', () => {
 
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit', 'tickets-in-tickets', 'package-run']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit', 'tickets-in-tickets', 'package-run', 'storyboard-agy']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);

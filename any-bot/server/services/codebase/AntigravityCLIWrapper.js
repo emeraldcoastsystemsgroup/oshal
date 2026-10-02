@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Auto-approve only the invocation-local oshal-tools MCP server. Headless mode cannot answer Antigravity's default MCP confirmation; the controller still lists and executes only exact AUTO grants and revalidates protected actions per call.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Give every invocation a private Antigravity HOME and approve terminal commands only there. agy's --sandbox restricts terminal access but does not answer headless confirmations, so command execution was still soft-denied; the ephemeral command(regex:.*) grant now operates only with --sandbox and the exact --add-dir task boundary, never through the persistent host config or --dangerously-skip-permissions.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Host-tools-only turns. A Jarvis ask on the Antigravity brain ran 10 min 45 s and died with `jetski: no output produced - a tool required the "read_file" permission`. The recall tools reach a CLI turn only through the host loop's XML contract (AgenticController parses the reply and runs the bot-node tool), but agy answered that prompt with its OWN tools - a local repro with this wrapper's argv showed its first step was a native run_command, and a native view_file outside --add-dir produces exactly the live error. hostToolsOnly now runs agy as an invocation-local custom agent (`--agent oshal-host-tools`, excludeDefaultComponents) that holds no native tools, with an empty permission allow list and no --mode accept-edits; --sandbox and the single --add-dir stay. It narrows the grant: nothing outside the host's brokered tools is callable. Also: a failed turn's diagnostic now names each denied tool and its target from the stream-json events, which the wrapper used to discard, so the next denial is not a guess.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Image turns (ADR-130 amendment 2026-10-02: storyboard images render on the render bot's own harness). An imageTurn runs exactly the proven shape - the unbridged workspace task turn (accept-edits, --sandbox, one --add-dir, private HOME) - and refuses to combine with hostToolsOnly or a tool bridge. When the turn succeeds, the image agy's generate_image wrote into the private HOME is collected into the task workspace (agy-image-turn.js: output.png or output.jpg by its real bytes, plus a receipt) BEFORE the HOME is removed; Guard A refuses the turn unless the stream shows a generate_image tool step that reached DONE and that tool's own file is found. The result reports the collected image (file, real mime type, bytes, sha256, locator).
  */
 
 'use strict';
@@ -22,6 +23,7 @@ const path = require('path');
 const { acquireUserScoping } = require('./user-scoping');
 const { buildCliDiagnosticEnv } = require('./cli-diagnostic-env');
 const { assertCliToolBoundary } = require('../llm/assert-cli-tool-boundary');
+const { collectImageTurnOutput } = require('./agy-image-turn');
 
 const DEFAULT_IDLE_MS = 600000;
 const DEFAULT_MAX_DURATION_MS = 7200000;
@@ -228,6 +230,21 @@ function deniedStepNote(event) {
   return compactDiagnostic(`${tool}: ${message.split('\n')[0]}`).slice(0, MAX_DENIAL_CHARS);
 }
 
+/**
+ * @description An image turn runs only as the shape proven headless on 2026-10-02: the unbridged
+ * workspace task turn. The host-tools-only agent holds no generate_image, and a protected tool
+ * bridge has no business in a render, so either combination is refused before anything spawns.
+ * @param {{imageTurn?: boolean, hostToolsOnly?: boolean, toolBridge?: object}} options - The turn options.
+ * @returns {boolean} True for an image turn.
+ */
+function assertImageTurnShape(options) {
+  if (options.imageTurn !== true) return false;
+  if (options.hostToolsOnly === true || options.toolBridge) {
+    throw new Error('Antigravity image turns run only as an unbridged workspace task turn');
+  }
+  return true;
+}
+
 class AntigravityCLIWrapper {
   /**
    * @param {{agyCommand?: string, model?: string, effort?: string, timeoutMs?: number, maxDurationMs?: number, spawnImpl?: Function}} options
@@ -245,11 +262,13 @@ class AntigravityCLIWrapper {
    * @description Executes one stateless headless turn through the documented stream-json stdin protocol.
    * @param {string} taskDescription
    * @param {string} workspaceDir
-   * @param {{model?: string, effort?: string, timeout?: number, extraEnv?: object, toolBridge?: object, hostToolsOnly?: boolean}} [options]
+   * @param {{model?: string, effort?: string, timeout?: number, extraEnv?: object, toolBridge?: object, hostToolsOnly?: boolean, imageTurn?: boolean}} [options]
    *   hostToolsOnly: the caller's own loop brokers every tool, so agy runs with no native tools.
+   *   imageTurn: collect the image generate_image wrote into the task workspace before the HOME is removed.
    */
   async executeTask(taskDescription, workspaceDir, options = {}) {
     assertCliToolBoundary(options, 'antigravity-cli');
+    const imageTurn = assertImageTurnShape(options);
     fs.mkdirSync(workspaceDir, { recursive: true });
     const idleMs = positiveMs(options.timeout, this.timeoutMs);
     const start = Date.now();
@@ -290,23 +309,11 @@ class AntigravityCLIWrapper {
         clearTimeout(durationTimer);
         resolve(result);
       };
-      child.on('close', (code) => {
-        const parsed = this._parse(stdout);
-        const denials = parsed.denials.length ? `denied tool calls: ${parsed.denials.join('; ')}` : '';
-        // Denials last: compactDiagnostic keeps the tail, and the target is the part a reader needs.
-        const diagnostic = compactDiagnostic([killReason, stderr, parsed.error, denials].filter(Boolean).join('\n'));
-        const success = code === 0 && parsed.status === 'SUCCESS' && parsed.text.length > 0;
-        finish({
-          success,
-          text: parsed.text,
-          result: parsed.text,
-          costUSD: 0,
-          usage: parsed.usage,
-          durationMs: Date.now() - start,
-          exitCode: code,
-          stderr: success ? compactDiagnostic(stderr) : diagnostic || `Antigravity ended with status ${parsed.status || 'missing'}`,
-        });
-      });
+      // The close handler runs before the promise settles, so an image turn's collection reads the
+      // private HOME before the .finally() below removes it.
+      child.on('close', (code) => finish(this._closeResult({
+        code, stdout, stderr, killReason, start, imageTurn, home: toolBridge.env.HOME, workspaceDir,
+      })));
       child.on('error', (error) => finish({
         success: false, text: '', result: '', costUSD: 0, usage: {},
         durationMs: Date.now() - start, exitCode: -1, stderr: compactDiagnostic(error && error.message || error),
@@ -321,6 +328,38 @@ class AntigravityCLIWrapper {
         });
       }
     }).finally(() => { toolBridge.release(); userScope.release(); });
+  }
+
+  /**
+   * @description The turn's result once agy has exited. A successful image turn also collects the
+   * generate_image output (Guard A); a refused collection fails the turn with its reason.
+   * @param {{code: number, stdout: string, stderr: string, killReason: string, start: number, imageTurn: boolean, home: string, workspaceDir: string}} turn - The finished turn.
+   * @returns {object} The wrapper result.
+   */
+  _closeResult({ code, stdout, stderr, killReason, start, imageTurn, home, workspaceDir }) {
+    const parsed = this._parse(stdout);
+    const denials = parsed.denials.length ? `denied tool calls: ${parsed.denials.join('; ')}` : '';
+    // Denials last: compactDiagnostic keeps the tail, and the target is the part a reader needs.
+    const diagnostic = compactDiagnostic([killReason, stderr, parsed.error, denials].filter(Boolean).join('\n'));
+    let success = code === 0 && parsed.status === 'SUCCESS' && parsed.text.length > 0;
+    let image;
+    let refusal = '';
+    if (success && imageTurn) {
+      const collected = collectImageTurnOutput({ home, workspaceDir, stdout, startedAtMs: start });
+      if (collected.ok) image = { file: collected.file, mimeType: collected.mimeType, bytes: collected.bytes, sha256: collected.sha256, locator: collected.locator };
+      else { success = false; refusal = collected.reason; }
+    }
+    return {
+      success,
+      text: parsed.text,
+      result: parsed.text,
+      costUSD: 0,
+      usage: parsed.usage,
+      durationMs: Date.now() - start,
+      exitCode: code,
+      ...(image ? { image } : {}),
+      stderr: refusal || (success ? compactDiagnostic(stderr) : diagnostic || `Antigravity ended with status ${parsed.status || 'missing'}`),
+    };
   }
 
   /**
@@ -380,5 +419,6 @@ class AntigravityCLIWrapper {
 AntigravityCLIWrapper.provisionToolBridge = provisionToolBridge;
 AntigravityCLIWrapper.buildAgyArgs = buildAgyArgs;
 AntigravityCLIWrapper.permissionAllowList = permissionAllowList;
+AntigravityCLIWrapper.assertImageTurnShape = assertImageTurnShape;
 AntigravityCLIWrapper.HOST_TOOLS_AGENT = HOST_TOOLS_AGENT;
 module.exports = AntigravityCLIWrapper;

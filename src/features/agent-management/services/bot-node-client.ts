@@ -32,6 +32,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Preserve trusted in-process RefusalError results through protected send sanitization so exact persistence/owner refusals reach the manifest terminal sink; ambiguous remote failures remain generic.
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): add fallbackOrder to BotNodeRequest so dispatch carries the accepted fallback chain.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Export postJsonNoUndiciCeiling (+ RawHttpResponse) so the Token Chase tail-replay client (bot-node-tail-replay-client.ts) shares the one node:http POST instead of re-deriving the undici header-ceiling workaround. No behaviour change in this file.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.imageTurn (ADR-130 amendment 2026-10-02): the storyboard render executor marks its dispatch as an image turn so a render on the Antigravity harness hands back the image generate_image wrote. Optional; absent means an ordinary turn.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -275,6 +276,12 @@ export interface BotNodeRequest {
   providerConfigRequired?: boolean;
   /** Configured fallback providers accepted when failover executes instead of the primary provider. */
   fallbackOrder?: readonly string[] | null;
+  /**
+   * ADR-130: this dispatch is a storyboard image render. On the Antigravity harness the bot collects
+   * the image its generate_image tool wrote into the task workspace (output.png or output.jpg plus a
+   * receipt) before the CLI's private HOME is removed; other harnesses ignore it.
+   */
+  imageTurn?: boolean;
 }
 
 /**

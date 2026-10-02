@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Forward the trusted call-time framework-tool bridge binding to the native CLI wrapper.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Advertise explicit support for the execution-bound framework-tool bridge so routers can keep its credential away from unrelated providers.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Forward hostToolsOnly to the wrapper. The agentic host loop sets it for an interactive (direct) turn, whose tools the loop itself brokers; the wrapper then runs agy with no native tools instead of letting it chase the answer with file reads and commands a headless run cannot be granted.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Forward imageTurn to the wrapper (ADR-130 amendment 2026-10-02): a storyboard render dispatched onto the Antigravity harness is an image turn, so the wrapper collects generate_image's output into the task workspace before the private HOME is removed. The collected image's metadata (file, real mime type, bytes, sha256, locator) rides on antigravityMetadata.image.
  */
 
 'use strict';
@@ -52,6 +53,7 @@ class AntigravityProvider {
       extraEnv: options.extraEnv,
       toolBridge: options.toolBridge,
       hostToolsOnly: options.hostToolsOnly === true,
+      imageTurn: options.imageTurn === true,
     });
     if (!result.success) {
       const error = new Error(`Antigravity CLI error: ${result.stderr || result.text || 'no output'}`);
@@ -89,7 +91,7 @@ class AntigravityProvider {
       provider: 'antigravity-cli',
       providerRecords: [],
       providerRecordCapture: 'antigravity-command-events-v1',
-      antigravityMetadata: { durationMs: result.durationMs, exitCode: result.exitCode, success: result.success },
+      antigravityMetadata: { durationMs: result.durationMs, exitCode: result.exitCode, success: result.success, ...(result.image ? { image: result.image } : {}) },
     };
   }
 

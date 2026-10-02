@@ -1,0 +1,188 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Image-turn collection for the Antigravity storyboard rail (ADR-130 amendment 2026-10-02). agy's generate_image tool writes its image into the invocation's private HOME (`.gemini/antigravity-cli/brain/<conversation>/<name>_<epoch-ms>.jpg`, proven headless on 2026-10-02 with agy 1.2.8), and the wrapper deletes that HOME when the turn ends. Before the cleanup, an image turn copies that one image into the task workspace as output.png or output.jpg (named by its real format) with a receipt beside it, the way the codex-cli rail leaves output.png. Guard A: nothing is collected unless the turn's stream-json shows a generate_image tool step that reached DONE, the file sits inside the private brain directory, is a regular file written during the turn, and is a PNG or JPEG by its bytes. The workspace must not already hold an output or a receipt, so a file the model drew with code or wrote itself can never be passed off as the tool's.
+ */
+
+'use strict';
+
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const logger = require('../../utils/logger').child({ module: 'agy-image-turn' });
+
+/** The agy tool whose output an image turn hands back. */
+const IMAGE_TOOL = 'generate_image';
+/** The line generate_image writes into its step output (brain/<id>/.system_generated/steps/<n>/output.txt). */
+const SAVED_AT = /Generated image is saved at\s+(\S+)/;
+/** generate_image's own file naming: the ImageName with underscores, then `_<epoch-ms>`. */
+const GENERATED_NAME = /_\d{13}\.(?:png|jpe?g)$/i;
+/** The deliverable name per real format; the extension never lies about the bytes. */
+const OUTPUT_NAMES = Object.freeze({ 'image/png': 'output.png', 'image/jpeg': 'output.jpg' });
+/** The receipt the controller-side provider verifies against the output it reads. */
+const RECEIPT_NAME = 'output.image-turn.json';
+/** File times are coarse on some filesystems; a file this close to the turn start still counts as the turn's. */
+const MTIME_SLACK_MS = 2000;
+
+/**
+ * @description The real image format of a buffer, by its leading bytes.
+ * @param {Buffer} head - The first bytes of the file.
+ * @returns {'image/png'|'image/jpeg'|null} The format, or null when it is neither.
+ */
+function sniffImageMime(head) {
+  if (head.length >= 8 && head.readUInt32BE(0) === 0x89504e47 && head.readUInt32BE(4) === 0x0d0a1a0a) return 'image/png';
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg';
+  return null;
+}
+
+/**
+ * @description Guard A's first half: did this turn's stream-json show a generate_image tool step reach DONE?
+ * A stream with only run_command (or any other tool), or a generate_image that ended in ERROR, answers false.
+ * @param {string} stdout - The turn's stream-json output.
+ * @returns {boolean} True only for a DONE generate_image tool step.
+ */
+function imageToolReachedDone(stdout) {
+  for (const line of String(stdout || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    let event;
+    try { event = JSON.parse(trimmed); } catch { continue; } // progress noise can never prove a tool step
+    const step = event && event.event === 'step_update' ? event.step_update : null;
+    if (step && step.step_type === 'tool' && step.tool_name === IMAGE_TOOL && step.state === 'DONE') return true;
+  }
+  return false;
+}
+
+/** The real path of a directory, or null when it cannot be resolved. */
+function realDir(dir) {
+  // An absent path is an expected answer here (no brain folder, a reported path that is gone).
+  try { return fs.realpathSync(dir); } catch { return null; }
+}
+
+/** Directories directly under `dir`, symlinks excluded. */
+function childDirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(dir, e.name));
+  } catch { return []; } // an absent folder simply has no children
+}
+
+/**
+ * @description Accept one candidate only when it is a regular file inside the private brain
+ * directory, written during this turn, whose bytes are a PNG or a JPEG.
+ * @param {string} file - The candidate path.
+ * @param {string} brainReal - The real path of the brain directory.
+ * @param {number} startedAtMs - When the turn started.
+ * @returns {{file: string, mimeType: string, mtimeMs: number}|null} The accepted image, or null.
+ */
+function acceptCandidate(file, brainReal, startedAtMs) {
+  let stat;
+  try { stat = fs.lstatSync(file); } catch { return null; } // a reported path that does not exist is no image
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.mtimeMs < startedAtMs - MTIME_SLACK_MS) return null;
+  const real = realDir(file);
+  if (!real || !real.startsWith(brainReal + path.sep)) return null;
+  const head = Buffer.alloc(16);
+  const fd = fs.openSync(real, 'r');
+  try { fs.readSync(fd, head, 0, head.length, 0); } finally { fs.closeSync(fd); }
+  const mimeType = sniffImageMime(head);
+  return mimeType ? { file: real, mimeType, mtimeMs: stat.mtimeMs } : null;
+}
+
+/**
+ * @description Primary locator: the path generate_image reported in its own step output.
+ * @param {string} brain - The brain directory.
+ * @param {string} brainReal - Its real path.
+ * @param {number} startedAtMs - When the turn started.
+ * @returns {{file: string, mimeType: string, locator: string}|null} The image, or null.
+ */
+function locateFromStepOutput(brain, brainReal, startedAtMs) {
+  for (const conversation of childDirs(brain)) {
+    for (const stepDir of childDirs(path.join(conversation, '.system_generated', 'steps'))) {
+      let text = '';
+      try { text = fs.readFileSync(path.join(stepDir, 'output.txt'), 'utf8'); } catch { continue; } // most steps write none
+      const match = SAVED_AT.exec(text);
+      if (!match) continue;
+      const reported = match[1].replace(/[.,;:)\]"'`]+$/, '');
+      const found = acceptCandidate(reported, brainReal, startedAtMs);
+      if (found) return { ...found, locator: 'step-output' };
+    }
+  }
+  return null;
+}
+
+/**
+ * @description Fallback locator: the newest file generate_image's naming produced during the turn,
+ * directly inside a conversation folder of the private brain directory.
+ * @param {string} brain - The brain directory.
+ * @param {string} brainReal - Its real path.
+ * @param {number} startedAtMs - When the turn started.
+ * @returns {{file: string, mimeType: string, locator: string}|null} The image, or null.
+ */
+function locateByScan(brain, brainReal, startedAtMs) {
+  let newest = null;
+  for (const conversation of childDirs(brain)) {
+    let names = [];
+    try { names = fs.readdirSync(conversation); } catch { continue; } // vanished between listing and reading
+    for (const name of names.filter((n) => GENERATED_NAME.test(n))) {
+      const found = acceptCandidate(path.join(conversation, name), brainReal, startedAtMs);
+      if (found && (!newest || found.mtimeMs > newest.mtimeMs)) newest = found;
+    }
+  }
+  return newest ? { ...newest, locator: 'brain-scan' } : null;
+}
+
+/** A refusal: the turn fails with this reason and nothing is written to the workspace. */
+function refused(reason) {
+  return { ok: false, reason: `image turn refused: ${reason}` };
+}
+
+/**
+ * @description Copy the image into the task workspace and write its receipt. Both are created
+ * exclusively: a workspace that already holds either output name or the receipt is refused, so a
+ * file the model wrote itself is never mistaken for the one the tool produced.
+ * @param {{file: string, mimeType: string, locator: string}} found - The located image.
+ * @param {string} workspaceDir - The task workspace.
+ * @returns {{ok: true, file: string, mimeType: string, bytes: number, sha256: string, locator: string}|{ok: false, reason: string}} The handed-back image.
+ */
+function handBack(found, workspaceDir) {
+  const present = [...Object.values(OUTPUT_NAMES), RECEIPT_NAME].filter((name) => fs.existsSync(path.join(workspaceDir, name)));
+  if (present.length) return refused(`the task workspace already holds ${present.join(', ')}, which this turn did not collect`);
+  const bytes = fs.readFileSync(found.file);
+  const name = OUTPUT_NAMES[found.mimeType];
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  fs.writeFileSync(path.join(workspaceDir, name), bytes, { flag: 'wx' });
+  const receipt = { tool: IMAGE_TOOL, toolState: 'DONE', file: name, mimeType: found.mimeType, bytes: bytes.length, sha256, locator: found.locator };
+  fs.writeFileSync(path.join(workspaceDir, RECEIPT_NAME), JSON.stringify(receipt), { flag: 'wx' });
+  return { ok: true, file: name, mimeType: found.mimeType, bytes: bytes.length, sha256, locator: found.locator };
+}
+
+/**
+ * @description Collect the image a generate_image call wrote during one agy turn and hand it back
+ * through the task workspace. Must run BEFORE the private HOME is removed.
+ * @param {{home: string, workspaceDir: string, stdout: string, startedAtMs: number}} turn - The finished turn.
+ * @returns {{ok: true, file: string, mimeType: string, bytes: number, sha256: string, locator: string}|{ok: false, reason: string}} The result.
+ */
+function collectImageTurnOutput({ home, workspaceDir, stdout, startedAtMs }) {
+  if (!imageToolReachedDone(stdout)) return refused(`the event stream shows no ${IMAGE_TOOL} tool step that reached DONE`);
+  const brain = path.join(home, '.gemini', 'antigravity-cli', 'brain');
+  const brainReal = realDir(brain);
+  if (!brainReal) return refused(`${IMAGE_TOOL} reached DONE but the private HOME holds no brain directory`);
+  const found = locateFromStepOutput(brain, brainReal, startedAtMs) || locateByScan(brain, brainReal, startedAtMs);
+  if (!found) return refused(`${IMAGE_TOOL} reached DONE but no PNG or JPEG it wrote during this turn was found in the private brain directory`);
+  try {
+    return handBack(found, workspaceDir);
+  } catch (error) {
+    logger.error({ err: error, workspaceDir }, 'image turn: the generate_image output could not be handed back to the task workspace');
+    return refused(`the image could not be handed back to the task workspace (${error && error.code || error && error.message || error})`);
+  }
+}
+
+module.exports = {
+  IMAGE_TOOL,
+  OUTPUT_NAMES,
+  RECEIPT_NAME,
+  collectImageTurnOutput,
+  imageToolReachedDone,
+  sniffImageMime,
+};
