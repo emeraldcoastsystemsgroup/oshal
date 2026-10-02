@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Worker loop: this node pulls tasks the swarm assigned (GET /tasks/next), runs them locally via the allowlisted tool registry, and reports back (POST /tasks/:id/complete|fail). This is the "push in, pull out" half — the machine materially participates in the swarm.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Events for the task that runs this node's own chat turn (input.origin 'node-chat') carry quiet: true, so the chat view shows the answer instead of listing the run as a task note.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a task is quiet in the chat only when it is a node-chat run of a chat executor (origin alone is not enough); the complete/fail report is retried up to five times with a growing pause, so one failed request (api restarting, network blip) does not strand the claim that blocks this node's queue.
  */
 
 import { basename } from 'path';
@@ -31,6 +33,16 @@ export interface WorkerEvent {
   phase: 'claimed' | 'completed' | 'failed';
   text?: string;
   error?: string;
+  /** The swarm ran this node's OWN chat turn here (input.origin 'node-chat'): the chat shows the answer, not a task note. */
+  quiet?: boolean;
+}
+
+/** The CLI executors a node chat turn may run; only THESE are quiet in the chat, never another tool wearing the origin. */
+const CHAT_EXECUTORS = new Set(['antigravity.exec', 'codex.exec', 'claude.exec']);
+
+/** True for the task the swarm hands back to run this node's own chat turn locally: the origin AND a chat executor. */
+function isNodeChatTask(task: ClaimedTask): boolean {
+  return task.input?.origin === 'node-chat' && task.intent === 'mcp.call-tool' && CHAT_EXECUTORS.has(String(task.input?.name || ''));
 }
 
 /** A short label for the activity log — the tool name for a call, else the intent. */
@@ -103,7 +115,7 @@ export class TaskWorker {
       const task = await this.claim();
       if (!task) return;
       const label = taskLabel(task);
-      this.handlers.onEvent({ taskId: task.taskId, intent: label, phase: 'claimed' });
+      this.handlers.onEvent({ taskId: task.taskId, intent: label, phase: 'claimed', quiet: isNodeChatTask(task) });
 
       // If the swarm assigned a shared task folder, pull ONLY that folder into a
       // local mirror and run the work there (so the node is a co-worker in the
@@ -148,13 +160,19 @@ export class TaskWorker {
       output: outcome.output,
       error: outcome.success ? undefined : outcome.error,
     };
-    await this.fetch(path, 'POST', body).catch(() => undefined);
+    // A claim the swarm never hears about blocks this node's queue, so the settle is retried (with a pause) before giving up.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const res = await this.fetch(path, 'POST', body).catch(() => null);
+      if (res && (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 404 && res.status !== 429))) break;
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * (attempt + 1)));
+    }
     this.handlers.onEvent({
       taskId: task.taskId,
       intent: label,
       phase: outcome.success ? 'completed' : 'failed',
       text: outcome.text,
       error: outcome.success ? undefined : outcome.error,
+      quiet: isNodeChatTask(task),
     });
   }
 

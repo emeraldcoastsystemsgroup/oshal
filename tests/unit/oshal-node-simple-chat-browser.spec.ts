@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | OSHAL Node Simple chat (docs/architecture/simple-chat.md): the node's REAL renderer files in headless Chromium (served over loopback so the page's own CSP applies) with only the desktop bridge stubbed. Proves the orb stays the default and unchanged, Simple chat shows the plain chat with first-run help and the box at the bottom, turns go over the bridge and replies land above the box without speech, history stays on this computer across a reload, failures are rows, worker events are notes, the Config setting swaps the window, and the node's kit copy is byte-identical to the shared kit. No window opens on the desktop.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Log lines on the worker channel and the quiet run of this node's own chat turn never appear in the chat as failed tasks (operator screenshot 2026-10-01: "Failed: a task"); log lines show in the activity log as log lines.
  */
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
@@ -146,6 +147,21 @@ describe('OSHAL Node: Simple chat window', () => {
     expect(await page.locator('#chatView .sc-note .sc-bubble').allInnerTexts()).toEqual([
       'Running a swarm task on this computer: Print the weekly report', 'Finished: Print the weekly report', 'Failed: Open the drawing (App not installed)']);
     expect(await page.locator('#worklog .work-row').count()).toBe(3);
+  });
+
+  it('log lines and this node\'s own chat runs never appear as failed tasks in the chat (the "Failed: a task" report)', async () => {
+    await openNode({ viewMode: 'chat' });
+    await page.waitForSelector('#node-chat-input:not([disabled])');
+    await workerEvent({ type: 'log', message: 'Codex CLI found at C:\\tools\\codex.cmd' });
+    await workerEvent({ type: 'log', message: 'Print service listening on 631' });
+    await workerEvent({ taskId: 'n1', phase: 'claimed', intent: 'antigravity.exec', quiet: true });
+    await workerEvent({ taskId: 'n1', phase: 'completed', intent: 'antigravity.exec', text: 'the answer', quiet: true });
+    await workerEvent({ taskId: 't1', phase: 'failed', intent: 'shell.exec', error: 'denied' });
+    expect(await page.locator('#chatView .sc-note .sc-bubble').allInnerTexts()).toEqual(['Failed: shell.exec (denied)']);
+    const rows = await page.locator('#worklog .work-row').evaluateAll(els => els.map(e => e.className + ' | ' + (e.textContent || '').trim()));
+    expect(rows.filter(r => r.includes(' log |'))).toEqual(['work-row log | Print service listening on 631', 'work-row log | Codex CLI found at C:\\tools\\codex.cmd']);
+    expect(rows.filter(r => r.includes(' log |') && r.includes('failed'))).toEqual([]);
+    expect(errors).toEqual([]);
   });
 
   it('the Window setting in Config swaps the window without a restart and is saved', async () => {

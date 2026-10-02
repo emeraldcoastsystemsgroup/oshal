@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added chat-reply bridge so A2A remote clients get a bot-reasoned conversational reply (ADR-036: the bot owns reasoning + cost)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A turn the orchestrator fails WITHOUT throwing (it returns { success: false, error }) now carries that error text in the chat.reply. Only the catch block set it before, so the OSHAL Node showed "The bot returned an empty reply." instead of the reason (operator report 2026-10-01: the controller refusing the fleet-default antigravity-cli harness).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A turn may carry turnProvider (the requesting node's own executor), passed to the orchestrator unchanged (OSHAL Node runs its own chat turns locally (operator, 2026-10-01)).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -24,6 +25,8 @@ export interface RemoteChatProcessOptions {
   source: string;
   agentId?: string;
   userSub?: string;
+  /** A provider the route resolved for this turn (the requesting node's own executor). */
+  turnProvider?: object;
 }
 
 export interface RemoteChatOrchestrator {
@@ -50,6 +53,8 @@ export interface RemoteChatTurnInput {
   correlationId: string;
   /** Optional OIDC sub to scope per-user connector tokens (ADR-042). */
   userSub?: string;
+  /** When set, the turn's model call runs on this provider (the requesting node's own executor). */
+  turnProvider?: object;
 }
 
 /**
@@ -95,6 +100,7 @@ export async function runRemoteChatTurn(
       source: 'remote-client',
       agentId: input.agentId,
       userSub: input.userSub,
+      ...(input.turnProvider ? { turnProvider: input.turnProvider } : {}),
     });
 
     logger.info(

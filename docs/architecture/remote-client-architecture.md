@@ -117,6 +117,17 @@ The remote client can publish outbound swarm messages through:
 
 This is the reverse direction that makes the channel fully bidirectional.
 
+### 7. The node's own chat runs on the node
+
+`POST /api/remote-clients/:clientId/chat` runs a node's chat turn through the controller's `TaskOrchestrator`, which keeps the
+conversation (history, persistence, usage). When the bot behind that chat resolves to a CLI harness the controller refuses to run
+unattended (`harness:antigravity-cli`, `codex-cli` or `claude-code`), and the requesting node advertises the matching local
+executor (`antigravity.exec`, `codex.exec`, `claude.exec`), only the model call is handed back to that node: one `mcp.call-tool`
+task with `input.origin: "node-chat"` is queued on the node's own durable task queue, the node runs it with the person's own CLI
+sign-in, and its `output.response` becomes the reply (`src/app/routes/remote-client-node-chat.ts`). No other node is ever asked. A
+node without the executor, or a bot on a hosted provider, keeps the controller path unchanged. A failed or late node run is said in
+the reply's `error`.
+
 ## Security Model
 
 The remote client is intentionally not a blind open relay.

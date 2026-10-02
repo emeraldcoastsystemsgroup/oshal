@@ -6,12 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Allowlisted local tool registry: the node exposes these as MCP tools the swarm invokes via `mcp.call-tool`. NOT arbitrary shell — only the named tools below can run, so a confused/compromised swarm can't run anything it likes on the user's machine. `swarm.exec` auto-picks whichever local CLI is signed in.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added GATED system-control tools (screen.capture / shell.exec / desktop.control / app.open). These refuse unless config.allowSystemControl is on (off by default); the gate is threaded through runLocalTool + localCapabilities.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Coordinate-space contract: screen.capture now reports physicalWidth/physicalHeight/scaleFactor alongside the (downscaled) width/height, and desktop.control threads an optional coordinateSpace arg ('screenshot' default | 'physical') through to controlInput so screenshot-derived clicks are rescaled to physical pixels.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | antigravity.exec runs a prompt through the Antigravity CLI (agy) on this machine, and swarm.exec falls back to it after codex and claude. Each CLI executor is advertised only when its CLI is installed and signed in here, which is what the swarm checks before handing this node its own chat turn.
  */
 
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { runCodex, runClaude, type ExecResult } from './executors';
+import { antigravityInstalled, runAntigravity } from './antigravity-executor';
 import { captureScreen, runShell, controlInput, type InputAction } from './system-tools';
 
 /** Outcome the worker turns into an A2A task result. */
@@ -71,14 +73,24 @@ const TOOLS: LocalTool[] = [
     },
   },
   {
+    name: 'antigravity.exec',
+    description: 'Run a prompt through the Antigravity CLI (agy) on this machine.',
+    run: async (args, gate) => {
+      const prompt = readPrompt(args);
+      if (!prompt) return { success: false, text: '', output: {}, error: 'antigravity.exec requires a prompt' };
+      return toOutcome(await runAntigravity(prompt, { model: typeof args.model === 'string' ? args.model : undefined, cwd: gate.workspaceDir }), 'antigravity-cli');
+    },
+  },
+  {
     name: 'swarm.exec',
-    description: 'Run a prompt with whichever local CLI is signed in (codex preferred, else claude).',
+    description: 'Run a prompt with whichever local CLI is signed in (codex preferred, else claude, else Antigravity).',
     run: async (args, gate) => {
       const prompt = readPrompt(args);
       if (!prompt) return { success: false, text: '', output: {}, error: 'swarm.exec requires a prompt' };
       if (codexAuthed()) return toOutcome(await runCodex(prompt, { cwd: gate.workspaceDir }), 'openai-codex');
       if (claudeAuthed()) return toOutcome(await runClaude(prompt, { cwd: gate.workspaceDir }), 'claude-code');
-      return { success: false, text: '', output: {}, error: 'No local CLI is signed in (codex/claude). Open Config → Accounts to log in.' };
+      if (antigravityInstalled()) return toOutcome(await runAntigravity(prompt, { cwd: gate.workspaceDir }), 'antigravity-cli');
+      return { success: false, text: '', output: {}, error: 'No local CLI is signed in (codex/claude/Antigravity). Open Config → Accounts to log in.' };
     },
   },
 ];
@@ -150,15 +162,22 @@ export interface ToolGate {
   workspaceDir?: string;
 }
 
+/** The base tools this machine can run NOW: each CLI executor only when its CLI is installed and signed in here. The swarm
+ *  hands a node chat turn only to a node that advertises the matching executor, so an executor that would fail is not offered. */
+function availableTools(): LocalTool[] {
+  const runnable: Record<string, () => boolean> = { 'antigravity.exec': antigravityInstalled, 'codex.exec': codexAuthed, 'claude.exec': claudeAuthed };
+  return TOOLS.filter((t) => !(t.name in runnable) || runnable[t.name]());
+}
+
 /** Capability ids this node advertises (base tools + system tools when allowed). */
 export function localCapabilities(gate: ToolGate = {}): string[] {
-  const base = TOOLS.map((t) => t.name);
+  const base = availableTools().map((t) => t.name);
   return gate.allowSystemControl ? [...base, ...SYSTEM_TOOLS.map((t) => t.name)] : base;
 }
 
 /** Tool descriptors — for `mcp.list-tools` and the config screen. */
 export function localToolList(gate: ToolGate = {}): Array<{ name: string; description: string }> {
-  const list = TOOLS.map((t) => ({ name: t.name, description: t.description }));
+  const list = availableTools().map((t) => ({ name: t.name, description: t.description }));
   return gate.allowSystemControl ? [...list, ...SYSTEM_TOOLS.map((t) => ({ name: t.name, description: t.description }))] : list;
 }
 

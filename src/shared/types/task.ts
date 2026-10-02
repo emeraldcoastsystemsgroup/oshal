@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain: typed byoLlmConnection on ProcessMessageOptions (baseUrl+apiKey+model — the user-brain ladder result) so the orchestrator can honor a caller-resolved hosted endpoint instead of the callers smuggling it through an `as any` cast the orchestrator never read.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ProcessResult carries a tier-aware tool trace (toolRuns) beside the flat toolsUsed names, so a finished run says which tier owned each tool and which provider operation an embedded tool actually ran. Optional, so every existing ProcessResult literal stays valid.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ProcessMessageOptions gains byoLlmRetry: the entry point that resolved an EXPLICITLY chosen BYO endpoint asks the orchestrator to replay a retryable wall against that same endpoint at the model call (operator decision 2026-09-22). Optional and default-off, so a threaded resolver-owned lane keeps its single attempt and rotates instead. Also byoLlmFallback: the READY hosted rungs of the operator's configured hot-fallback chain, resolved and gated by the entry point, which the provider switches to at the model call once the chosen endpoint is exhausted — inside the same turn, so the user message is saved once. ProcessResult.brainFallback is the marker such a turn carries (BrainFallbackMarkerSchema, shared here because the node client, the orchestrator and the routes all speak it).
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | ProcessMessageOptions gains turnProvider: a provider the entry point resolved for one turn, set server-side only (OSHAL Node runs its own chat turns locally (operator, 2026-10-01): the node chat route hands the model call to the requesting node).
  */
 
 import { z } from 'zod';
@@ -209,6 +210,11 @@ export const ProcessMessageOptionsSchema = z.object({
       model: z.string().min(1),
     }),
   })).optional(),
+  /** A provider the entry point resolved for THIS turn, never read from an HTTP body. The OSHAL Node chat route sets it
+   *  when the controller refuses the bot's CLI harness and the requesting node runs that CLI itself: the orchestrator keeps
+   *  the conversation (history, persistence, usage) and only the model call runs on the node. TaskOrchestrator accepts it
+   *  only when it is an LLMService instance. */
+  turnProvider: z.custom<object>((value) => value == null || typeof value === 'object').optional(),
 });
 
 /**

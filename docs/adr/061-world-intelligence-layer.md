@@ -325,3 +325,12 @@ source's items are contradicted or vanish. Nothing stored records either (an ite
 feed pull is ordinary rotation, not a retraction), so reliability is consensus agreement only. Guards:
 `tests/unit/world-outlet-ratings.spec.ts` (the pure arithmetic and minimums) and
 `tests/unit/world-outlet-ratings-postgres.spec.ts` (the aggregate on TimescaleDB with a real daily head).
+
+**Live on the box (2026-10-01, core `a6de96c5`, world 1.3.0).** The Test Lab card `world-outlet-ratings`
+passed all three steps: 3052 sources rated and 23568 insufficient under `consensus-divergence-v1` over 90 days,
+and the most-covered subject (`world:ticker:aapl`, 1828 sources) read with no seeded axis. `POST
+/api/world/seed-outlets` wrote the 37 known outlet identity nodes (`{"nodes":37,"edges":0,"facts":0}`); a
+read-only read-back of the shared graph on 2026-10-02 00:10 UTC found all 37 present and none carrying a
+non-null retired rating prop. The seed-era graph the new seed neither writes nor removes (9 nodes under
+`world:bias:*` and `world:outlet-kind:*`, with 37 `leans` and 37 `is_kind` edges) was removed once, after a
+backup, in one ArangoDB stream transaction, and a re-check finds none.

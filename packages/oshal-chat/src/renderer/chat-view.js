@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | Simple chat window (Config -> Window: Simple chat, docs/architecture/simple-chat.md): the shared simple chat kit over the node's existing chat bridge (oshal.sendChat, the reply on oshal.onReply). History stays on this computer because the node's chat route has no history read. Swarm tasks this machine runs appear in the history as short notes. The orb window is untouched.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Notes come only from real task lifecycle events: plain log lines and the quiet run of this node's own chat turn are skipped (they showed as "Failed: a task").
  * -----------------------------------------------------------------------------
  */
 
@@ -57,6 +58,8 @@
     };
   }
 
+  var TASK_PHASES = { claimed: true, completed: true, failed: true };
+
   function workNote(ev) {
     var intent = String((ev && ev.intent) || 'a task');
     if (ev && ev.phase === 'claimed') return 'Running a swarm task on this computer: ' + intent;
@@ -105,6 +108,9 @@
      * @returns {void}
      */
     work: function (ev) {
+      // Only real task lifecycle events become notes: never a plain log line, and never the run of this
+      // node's own chat turn (quiet), whose answer is already the reply above.
+      if (!ev || !TASK_PHASES[ev.phase] || ev.quiet) return;
       var note = workNote(ev);
       remember('note', note);
       if (chat) chat.addTurn('note', note);
