@@ -982,5 +982,11 @@
     "title": "CI secret-scanner remote mutation proof",
     "pr": "975",
     "evidence": "Closed on the operator's 2026-09-20 re-scope to the local secret-scan gate. docs/security/secret-scan-planted-fixture-proof.md records the 2026-10-01 re-run (core #975, ce998b00) of tests/unit/ci-local-secret-scan-planted-fixture.spec.ts against the real zricethezav/gitleaks:latest image: clean PASS, planted FAIL scanner rc=1 (leaks found: 1), allowlisted control PASS, fixture removed PASS. The guard now sources scripts/ci/ci-export.sh, and tests/unit/real-boundary-doctrine.spec.ts requires it to source every helper the gate calls. The planted value is synthetic, lives only in a temporary repository that is never pushed, and is redacted from every output."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
+    "pr": "986",
+    "evidence": "Live run 3 on the preview deploy of 4d244b8a: PASS tickets-in-tickets at 01:31 UTC (root d81ef2e5 planned on system-architect's node under the installed fleet default, two children run one at a time over the signed hop by code-developer and test-engineer, root assembled to customer_action; cleanup removed 7, outstanding 0, errors 0, residue 0). Recorded in src/features/swarm-orchestration/README.md (\"Live proof: tickets in tickets\"). Guards: controller-pm-planning-node-postgres, planning-output-source, child-ticket-owner-inheritance-postgres, build-child-dispatch-gate, signed-swarm-child-dispatch, swarm-verification-enforced-fallback, live-acceptance-tickets-in-tickets."
   }
 ]

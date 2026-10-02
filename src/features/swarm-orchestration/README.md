@@ -111,6 +111,24 @@ Current operational limitation:
 
 Verification is policy-aware and supports retries, regression accounting, escalation metadata, work-type-aware structural checks for testing/docs/review/integration/analysis outputs, and more specific retry/escalation reasons when those evidence classes are missing. Consensus review now emits normalized evidence-gap findings too, but the overall system is still not yet equivalent to full domain/business acceptance testing.
 
+## Live proof: tickets in tickets (2026-10-02)
+
+`node scripts/operations/live-acceptance.js tickets-in-tickets` on the preview deploy of `4d244b8a`
+(image `4d143ab0355d`, delegation signing configured) printed `PASS tickets-in-tickets` at 01:31 UTC:
+
+- Root `d81ef2e5` filed 01:24:51 as the operator, claimed 01:25:15, planned on system-architect's node
+  (`antigravity-cli / gemini-3.8-flash-low`, the installed fleet default) and parked at
+  `approval_required` (`planning_complete`) at 01:26:59 with two owned children in planning order.
+- Child 1 (code-developer) ran 01:27:15 to 01:28:06; child 2 (test-engineer) ran 01:28:15 to 01:30:42,
+  only after child 1 was complete; each over the signed hop, on the same configured engine, with its
+  unit work item completed and its handover and deliverables in the root folder. The root assembled to
+  `customer_action` at 01:30:42. Activity: 3 requests, 432,472 input tokens, cost 0 on the subscription.
+- Cleanup receipt: removed 7 (the root, both children, the root folder, three shadow tickets), kept 1
+  (cost rows), outstanding 0, errors 0; residue 0 in every table the run touches; the folder gone.
+
+Two earlier runs that day failed at planning while the round still used a hosted API key (503, then a
+429 request quota); that path is gone (`controller-pm-round-executor.ts`).
+
 ## Design Alignment Summary
 
 Currently true:
