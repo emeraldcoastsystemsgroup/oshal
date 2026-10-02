@@ -36,6 +36,7 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com | The owner-store binding comment now states the opt-in: readOwnerStoreConfig binds the snapshotter only when TOKEN_CHASE_OWNER_STORE_SNAPSHOT is on, so a node holding a vault (PI_STORE_ROOT / JOBHUNTER_STORE_ROOT) no longer copies it on every captured turn by default. Wiring unchanged.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Validate and forward fallbackOrder with the rest of the signed provider authority on /api/swarm-execute so configured fallback chains survive the HTTP hop intact.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward imageTurn from /api/swarm-execute into the execution envelope, only when it is a literal true (ADR-130 amendment 2026-10-02: the storyboard render executor marks its dispatch so the Antigravity wrapper hands back generate_image's output).
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | Document the renderInstruction carrier field on the swarm-execute body (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02). It is validated and forwarded by parseBotNodePromptCarrier like app/capability/pattern, so the existing promptCarrier spread places it in the envelope; the handler files it under TRUSTED CONFIGURATION on an image turn only. The brief remains body.text.
  */
 
 /**
@@ -374,6 +375,9 @@ async function start(): Promise<void> {
       app?: unknown;
       capability?: unknown;
       pattern?: unknown;
+      // ADR-130 image turns: the server-authored render instruction, accepted only with imageTurn
+      // (parseBotNodePromptCarrier); the brief stays `text`, the untrusted body.
+      renderInstruction?: unknown;
     };
     if (!body || typeof body.text !== 'string'
       || typeof body.taskId !== 'string'

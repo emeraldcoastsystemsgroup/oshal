@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the antigravity-cli storyboard image rail (ADR-130 amendment 2026-10-02), across the real filesystem and a real child process. The render chain is real end to end except the HTTP hop: the antigravity-cli provider stages the anchor and builds the prompt, the boot-seam executor hands the envelope to the REAL bot-node execution handler, which runs the REAL TaskController message path, the REAL AgenticController, the REAL AntigravityProvider and the REAL AntigravityCLIWrapper, which spawns tests/fixtures/fake-agy-image.cjs with its own argv, cwd and private HOME; the stand-in writes the image into that HOME the way agy 1.2.8 did in the headless proof. Pins: the image comes back to the provider (JPEG converted to a real PNG, source format reported, receipt says generate_image DONE) and the private HOME is gone afterwards; the prompt names generate_image, passes the anchor's absolute path in ImagePaths and forbids code, commands and additions, and it reaches agy verbatim inside the handler's SEC-05 data record, without the ticket/handover scaffolding. Guard A: no generate_image step (image in the brain anyway), a run_command-only stream (image drawn into the workspace), a generate_image that ended in ERROR, an image older than the turn, a step output naming a file outside the private brain, and a workspace that already holds an output are all refused with nothing collected, and the HOME is still removed. An ordinary (non-image) turn collects nothing, and an image turn cannot combine with host-tools-only or a tool bridge. The only doubles are outside the boundary: the two any-bot sqlite stores (in memory) and the HTTP hop between the executor and the handler.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The bot-level rule end to end (ADR-130 amendment 2026-10-02): one render crosses the REAL boot wiring (wireCliStoryboardImageExecutor) over the canonical runtime-params resolver and the REAL switch snapshot (fleet default antigravity-cli), a BotNodeClient double that does only what the /api/swarm-execute route does with the body (the REAL parseBotNodeProviderAuthority onto the envelope, the REAL buildBotNodeHttpResponse back), and the REAL bot-node handler with its ADR-034 dispatchConfigRuntime seam reporting the bot on antigravity-cli. The bot's reconcile is a 'match', setActiveProvider is never called, the provider reports the turn ran on antigravity-cli, and the image still comes back. The case fails if the wiring stamps anything but the bot's own record (a rail harness, a fallback chain the real post-execution check would accept).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the render instruction now reaches agy as the TRUSTED CONFIGURATION section (source image-render-instruction), the brief as the one data record, and the dispatch body carries the brief as `text` and the instruction as `renderInstruction`; the route double runs the REAL parseBotNodePromptCarrier so the carrier is validated the way /api/swarm-execute validates it. The exact text agy receives, the rebind's tools and the unchanged non-image turns are pinned in tests/unit/image-turn-prompt-framing.spec.ts.
  */
 
 import { spawn } from 'node:child_process';
@@ -14,8 +15,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 
-import { createBotNodeExecutionHandler } from '../../src/app/bot-node-execution-handler';
-import { createAntigravityCliImageProvider } from '../../src/features/video-generation/services/storyboard-antigravity-image-provider';
+import { createBotNodeExecutionHandler, IMAGE_RENDER_INSTRUCTION_SOURCE } from '../../src/app/bot-node-execution-handler';
+import { parseBotNodePromptCarrier } from '../../src/app/bot-node-request-scope';
+import { buildAntigravityRenderPrompt, createAntigravityCliImageProvider } from '../../src/features/video-generation/services/storyboard-antigravity-image-provider';
 import { registerCliStoryboardImageExecutor } from '../../src/features/video-generation/services/storyboard-cli-image-executor';
 import { registerStoryboardRenderBotReader } from '../../src/features/video-generation/services/storyboard-image-default';
 import { wireCliStoryboardImageExecutor } from '../../src/app/storyboard-cli-image-wiring';
@@ -139,7 +141,8 @@ function wireRealBot(): void {
   registerCliStoryboardImageExecutor(async (request) => {
     const outcome = await handler({ correlationId: `http-${request.taskId}`, fromAgentId: 'swarm-controller', toAgentId: RENDER_BOT,
       channel: `agent.${RENDER_BOT}`, messageType: 'request' as const, payload: {
-        text: request.prompt, workspaceTaskId: request.workspaceFolderId, workspaceFolderId: request.workspaceFolderId,
+        // As the wiring sends it: the brief is the untrusted text, the instruction its own carrier.
+        text: request.brief, renderInstruction: request.prompt, workspaceTaskId: request.workspaceFolderId, workspaceFolderId: request.workspaceFolderId,
         externalId: request.taskId, agenticMode: true, direct: false, userSub: request.userSub, imageTurn: true,
       } });
     const output = (outcome.output ?? {}) as { response?: string; model?: string };
@@ -149,11 +152,19 @@ function wireRealBot(): void {
 
 const anchor = (): Promise<Buffer> => sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer();
 
-/** The render prompt as the handler's trust-separated builder carries it: the content of the first data record. */
-function renderRecord(prompt: string): string {
+/** The brief as the handler's trust-separated builder carries it: the content of the one data record. */
+function briefRecord(prompt: string): string {
   const record = /<UNTRUSTED_CONTENT>(\{.*?\})<\/UNTRUSTED_CONTENT>/.exec(prompt);
-  expect(record, 'the render prompt reaches agy as the SEC-05 data record').not.toBeNull();
+  expect(record, 'the brief reaches agy as the SEC-05 data record').not.toBeNull();
   return String(JSON.parse(record![1]).content);
+}
+
+/** The server-authored render instruction as the handler files it: the TRUSTED CONFIGURATION section's one fragment. */
+function renderInstruction(prompt: string): string {
+  const section = /## TRUSTED CONFIGURATION\n\[trusted-config source="([^"]+)"\]\n([\s\S]*?)\n\n## UNTRUSTED CONTENT/.exec(prompt);
+  expect(section, 'the render instruction reaches agy as trusted configuration').not.toBeNull();
+  expect(section![1]).toBe(IMAGE_RENDER_INSTRUCTION_SOURCE);
+  return section![2];
 }
 
 function renderWorkspaces(): string[] {
@@ -183,13 +194,17 @@ describe('antigravity-cli storyboard rail, through the real bot-node chain and a
     expect(turn.argv.slice(0, 2)).toEqual(['--mode', 'accept-edits']);
     expect(turn.argv).toContain('--sandbox');
     expect(turn.argv).not.toContain('--dangerously-skip-permissions');
-    // The handler hands the render prompt over as the SEC-05 data record, verbatim: no ticket scaffolding.
-    const render = renderRecord(turn.prompt);
+    // The handler files the server-authored instruction as trusted configuration and the brief as the
+    // SEC-05 data record (the carve for image turns): no ticket scaffolding, and the brief never in the instruction.
+    const render = renderInstruction(turn.prompt);
+    expect(render).toBe(buildAntigravityRenderPrompt(path.join(workspace, 'anchor.png')));
     expect(render).toContain('Call your generate_image tool exactly once');
     expect(render).toContain(`ImagePaths = ${JSON.stringify([path.join(workspace, 'anchor.png')])}`);
-    expect(render).toContain('Prompt = "make the circle blue, keep everything else"');
+    expect(render).toContain('Prompt = the brief');
     expect(render).toContain('Do not write code, do not run terminal commands');
     expect(render).toContain('add nothing it does not ask for');
+    expect(render).not.toContain('make the circle blue');
+    expect(briefRecord(turn.prompt)).toBe('make the circle blue, keep everything else');
     expect(turn.prompt).not.toContain('== WORKSPACE RULES');
     expect(turn.prompt).not.toContain('DEVELOPER HANDOVER');
   }, 60_000);
@@ -201,7 +216,8 @@ describe('antigravity-cli storyboard rail, through the real bot-node chain and a
     expect(result.sourceMimeType).toBe('image/png');
     expect((await sharp(result.image).metadata()).format).toBe('png');
     expect(fs.readdirSync(renderWorkspaces()[0])).toContain('output.png');
-    expect(renderRecord(observations()[0].prompt)).not.toContain('ImagePaths');
+    expect(renderInstruction(observations()[0].prompt)).not.toContain('ImagePaths');
+    expect(briefRecord(observations()[0].prompt)).toBe('a blue circle on white');
   }, 60_000);
 
   it.each([
@@ -241,6 +257,8 @@ describe('the bot-level rule end to end: the real wiring, the route\'s mapping a
         messageType: 'request' as const, payload: {
           text: body.text, workspaceTaskId: body.workspaceFolderId, workspaceFolderId: body.workspaceFolderId, externalId: body.taskId,
           agenticMode: body.agenticMode ?? true, direct: body.direct === true, userSub: body.userSub,
+          // The route's REAL carrier parse: the render instruction is validated and promoted the way pattern is.
+          ...parseBotNodePromptCarrier(body),
           ...parseBotNodeProviderAuthority(body), ...(body.imageTurn === true ? { imageTurn: true } : {}),
         } };
       return buildBotNodeHttpResponse(await handler(envelope), { durationMs: 0, taskId: String(body.taskId), defaultModel: 'gemini-3.8-flash-low', defaultProvider: 'antigravity-cli' });
@@ -260,7 +278,8 @@ describe('the bot-level rule end to end: the real wiring, the route\'s mapping a
     const result = await createAntigravityCliImageProvider(OWNER).generateWithMeta!('make the circle blue', await anchor());
 
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', fallbackOrder: [], providerConfigRequired: true, imageTurn: true });
+    expect(bodies[0]).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', fallbackOrder: [], providerConfigRequired: true, imageTurn: true,
+      text: 'make the circle blue', renderInstruction: expect.stringContaining('Call your generate_image tool exactly once') });
     expect(result.cliRender).toMatchObject({ tool: 'generate_image', toolState: 'DONE', ranOn: 'antigravity-cli', providerConfigAction: 'match' });
     expect(runtime.switches, 'the render never changes the render bot\'s provider').toEqual([]);
     expect((await sharp(result.image).metadata()).format).toBe('png');

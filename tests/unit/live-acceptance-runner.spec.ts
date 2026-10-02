@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The `second` port. OSHAL_VERIFY_SECOND_PAT is read by name from the environment or a real .env file on disk (quoted, CRLF), the same read as the operator token, and a name that is not a plain variable name is refused. bindPorts binds `second` only when that token is present: its requests carry the second token and never the operator's, the operator's ports keep the operator's, it carries the subject its own whoami resolved, and a second token that resolves to nobody still binds (the case reports the refusal). Without the token there is no port and no extra request. The runner's own entry, given a .env with both tokens, resolves both callers before the case runs and prints neither token nor either subject. Fetch is a recording double; the real companion is the host run with both tokens on the box.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | For the create-region-edit case: `--allow-paid` parses into the `allowPaid` option every selected case receives, false unless typed; every reply carries its raw body as `bytes` (a binary body with bytes that are not valid UTF-8 comes back exact); the multipart port names its file part `file.field` when given (`image`, which Create's upload route reads) and `file` otherwise.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the shipping HTTP ports against a real loopback Express/multer server: exact PNG bytes and digest, the single image part Create accepts, a refused default part there, legacy file-part compatibility, bearer isolation and anonymous reads.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | A case may bound ONE api call with its own `timeoutMs` (the storyboard-agy render blocks for the whole render): a never-answering fetch is aborted by the runner's own signal at the case's budget, while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it (the 30 s default applies).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -206,6 +207,23 @@ describe('the host runner', () => {
     expect(seen[0].init.headers).toEqual({});
     expect(JSON.stringify(seen[0].init)).not.toContain(TOKEN);
     expect(seen[1].init.headers).toEqual({ authorization: `Bearer ${TOKEN}` });
+  });
+
+  it('bounds one api call by the case\'s own timeoutMs and every other call by the default', async () => {
+    // A fetch that never answers: it settles only when the runner's own signal aborts it.
+    const fetchImpl = (_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const signal = init.signal as AbortSignal;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    const ports = runner.httpPorts('http://127.0.0.1:35457', TOKEN, fetchImpl);
+    const started = Date.now();
+    await expect(ports.api('POST', '/api/test-lab/run', { scenarioId: 'storyboard-antigravity-render' }, { timeoutMs: 80 })).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    // Without the option, and with a budget that is not a positive number, the 30 s default applies: still pending well past 80 ms.
+    const stillPending = (call: Promise<unknown>) => Promise.race([call.then(() => 'answered', () => 'aborted'), new Promise((resolve) => setTimeout(() => resolve('still pending'), 400))]);
+    expect(await stillPending(ports.api('POST', '/api/test-lab/run', { scenarioId: 'storyboard-antigravity-render' }))).toBe('still pending');
+    expect(await stillPending(ports.api('GET', '/api/version', undefined, { timeoutMs: -5 }))).toBe('still pending');
+    expect(await stillPending(ports.api('GET', '/api/version', undefined, { timeoutMs: 'soon' }))).toBe('still pending');
   });
 
   it('sends exact bytes under one content type on the raw port, with the token', async () => {

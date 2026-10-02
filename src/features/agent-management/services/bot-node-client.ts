@@ -33,6 +33,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Retain completed work from configured failover (BACKLOG #1660): add fallbackOrder to BotNodeRequest so dispatch carries the accepted fallback chain.
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Export postJsonNoUndiciCeiling (+ RawHttpResponse) so the Token Chase tail-replay client (bot-node-tail-replay-client.ts) shares the one node:http POST instead of re-deriving the undici header-ceiling workaround. No behaviour change in this file.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.imageTurn (ADR-130 amendment 2026-10-02): the storyboard render executor marks its dispatch as an image turn so a render on the Antigravity harness hands back the image generate_image wrote. Optional; absent means an ordinary turn.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.renderInstruction (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02): the server-authored render instruction an image turn carries beside `text`, which on that turn is the user's brief and stays untrusted data. Written only by the storyboard render executor; the bot files it under TRUSTED CONFIGURATION and names the harness's image tool in the rebind.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -282,6 +283,13 @@ export interface BotNodeRequest {
    * receipt) before the CLI's private HOME is removed; other harnesses ignore it.
    */
   imageTurn?: boolean;
+  /**
+   * The server-authored render instruction of an image turn (ADR-130; the SEC-05 carve for image
+   * turns). Sent only with `imageTurn: true`, beside `text`, which on that turn is the user's brief
+   * and remains untrusted data. The bot files this under TRUSTED CONFIGURATION and names the
+   * harness's own image tool in the authority rebind. Never set on any other turn.
+   */
+  renderInstruction?: string;
 }
 
 /**

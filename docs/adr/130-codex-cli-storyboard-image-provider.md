@@ -1,6 +1,6 @@
 # ADR-130 — codex-cli storyboard image provider (demo-mode rendering on the swarm's own harness)
 
-**Status:** Accepted; amended 2026-10-02 (the render bot's own harness picks the image rail; antigravity-cli rail; phase 2 not built)
+**Status:** Accepted; amended 2026-10-02 (the render bot's own harness picks the image rail; antigravity-cli rail; phase 2 not built; amendment (b): the image-turn prompt framing, the SEC-05 carve for image turns)
 **Date:** 2026-08-22
 **Extends:** ADR-082 (storyboard provider family), ADR-127 (demo-mode CLI carve), ADR-036 (bot-owned execution)
 
@@ -201,3 +201,43 @@ CLI image dispatch is also not built.
   storyboard-agy` (Lab card `storyboard-antigravity-render`): one frame on the render bot's
   antigravity rail, `generate_image` DONE, a real PNG, the bot's report that it ran
   `antigravity-cli` with a `match` reconcile, its workspace removed. It has not run on the box yet.
+
+**Amendment (b), 2026-10-02 — the image-turn prompt framing (SEC-05 carve, server-authored
+instruction only).** The first live render on the box (main `1848fb4f`, 19:00 UTC) was refused by
+Guard A with no `generate_image` step, and the diagnosis showed why: the bot received the persona
+prefix and the full Cline system prompt ("1 tools: attempt_completion") in front of the handler's
+SEC-05 prompt, in which the whole render instruction sat inside the data-only `UNTRUSTED_CONTENT`
+record under an authority rebind of `["attempt_completion"]`; the model's own reasoning named the
+contradiction and refused, while the same text rendered in a reproduction after three turns of
+deliberation. Operator decision: on image turns the SERVER-authored render instruction is carried as
+trusted configuration and the image tool is on that turn's allowed list; user-originated content
+stays untrusted; Guard A stays. Built once at the shared choke points, so every caller of the rail
+(Video Studio storyboards, the Test Lab render card, Create's region edit, Portrait Studio, and the
+Switchboard and D&D surfaces once they pass a `userSub`) is framed the same way:
+
+- The render request separates the server template from the user field: `prompt` is the
+  server-authored instruction (tool, inputs, output contract) and `brief` is the user-originated
+  text. Both CLI rails' instructions name the brief by reference as the `content` value of the
+  `UNTRUSTED_CONTENT` record whose source is `ticket-or-user-body`, to be used as data.
+- The dispatch sends `brief` as `text` and `prompt` as `renderInstruction`; `/api/swarm-execute`
+  validates `renderInstruction` like `pattern` and accepts it only beside a literal
+  `imageTurn: true`.
+- The bot-node handler files the instruction under `TRUSTED CONFIGURATION`
+  (`[trusted-config source="image-render-instruction"]`), keeps the brief in the data-only record,
+  and widens the rebind by the harness's own image tool with its scope: `generate_image` and
+  `tool:generate_image` on `antigravity-cli`. The codex CLI's native image tool name was never
+  recorded (the 2026-08-22 proof captured images, not the tool), so a codex image turn keeps the
+  completion floor alone until it is. An image turn without the carrier is refused before a task
+  exists; no other turn reads either field.
+- The any-bot agentic loop prepends nothing to an image turn: no persona prefix, no Cline or
+  minimal system prompt. Every other turn is framed exactly as before.
+- Guard A is unchanged, and the live case `storyboard-agy` now bounds its one blocking call by the
+  render dispatch budget (`STORYBOARD_CLI_IMAGE_TIMEOUT_MS`, 420 s) plus 60 s, through the runner's
+  new per-call `timeoutMs`; under the 30 s default it crashed before the 19:00 render answered.
+
+Guards: `tests/unit/image-turn-prompt-framing.spec.ts` (the exact text agy receives on an image turn
+through the real handler, loop, provider, wrapper and a stand-in `agy` child, and that a direct and
+a ticket turn are unchanged), plus the updated `storyboard-antigravity-image-turn`,
+`storyboard-cli-image-wiring`, `storyboard-codex-cli-provider`, `bot-node-prompt-carrier`,
+`live-acceptance-runner` and `live-acceptance-storyboard-agy` suites. The live proof on the box is
+still the `storyboard-agy` case after a deploy of this change.

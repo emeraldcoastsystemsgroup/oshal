@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Preserve exact bot-node owner subjects and reject invalid supplied assertions instead of trimming, truncating, or collapsing them into ownerless execution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove Twilio from bot-node credential materialization; SMS credentials are confined to fixed controller operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Validate the trusted app/capability/pattern carrier at the bot-node HTTP boundary before promoting it into an execution envelope.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The image-turn render instruction joins the trusted carrier (ADR-130 amendment 2026-10-02, SEC-05 carve for image turns): `renderInstruction` is the server-authored render text the storyboard providers write in the api process; it is bounded exactly as `pattern` is and accepted only beside a literal `imageTurn: true`, so a stray instruction on an ordinary turn is refused at the boundary rather than ignored. The brief stays `text`.
  */
 
 import crypto from 'crypto';
@@ -38,6 +39,30 @@ export interface BotNodePromptCarrier {
   app?: string;
   capability?: SkillCapabilityId;
   pattern?: string;
+  /** The server-authored render instruction of an image turn (ADR-130); accepted only with imageTurn. */
+  renderInstruction?: string;
+}
+
+/**
+ * @description One bounded trusted prompt text: non-empty, at most MAX_TRUSTED_PATTERN_BYTES of
+ * valid UTF-8, no non-text control characters. Preserved exactly otherwise.
+ * @param value - The candidate text.
+ * @param field - The carrier field name, for the refusal.
+ * @returns The exact text.
+ */
+function boundedTrustedPromptText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new TypeError(`bot prompt carrier ${field} is invalid`);
+  }
+  const bytes = Buffer.from(value, 'utf8');
+  if (
+    bytes.length > MAX_TRUSTED_PATTERN_BYTES
+    || bytes.toString('utf8') !== value
+    || DISALLOWED_PROMPT_CONTROLS.test(value)
+  ) {
+    throw new TypeError(`bot prompt carrier ${field} is invalid`);
+  }
+  return value;
 }
 
 /**
@@ -104,18 +129,16 @@ export function parseBotNodePromptCarrier(value: unknown): BotNodePromptCarrier 
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'pattern')) {
-    if (typeof body.pattern !== 'string' || !body.pattern.trim()) {
-      throw new TypeError('bot prompt carrier pattern is invalid');
+    carrier.pattern = boundedTrustedPromptText(body.pattern, 'pattern');
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'renderInstruction')) {
+    // The SEC-05 carve for image turns: server text that becomes trusted configuration only on an
+    // image turn, so it is refused outright beside anything but a literal imageTurn: true.
+    if (body.imageTurn !== true) {
+      throw new TypeError('bot prompt carrier renderInstruction requires an image turn');
     }
-    const patternBytes = Buffer.from(body.pattern, 'utf8');
-    if (
-      patternBytes.length > MAX_TRUSTED_PATTERN_BYTES
-      || patternBytes.toString('utf8') !== body.pattern
-      || DISALLOWED_PROMPT_CONTROLS.test(body.pattern)
-    ) {
-      throw new TypeError('bot prompt carrier pattern is invalid');
-    }
-    carrier.pattern = body.pattern;
+    carrier.renderInstruction = boundedTrustedPromptText(body.renderInstruction, 'renderInstruction');
   }
 
   return carrier;
