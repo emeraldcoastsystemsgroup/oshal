@@ -39,7 +39,7 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 
 ## Per-app folders
 
-- [bot-forge-edit-in-place.md](./bot-forge-edit-in-place.md) — **BUILT; live run owed:** what the
+- [bot-forge-edit-in-place.md](./bot-forge-edit-in-place.md) — **BUILT; proven live 2026-10-01:** what the
   Bot Forge does when a deployed pack is edited and deployed again (same agentIds and ticketType, one
   patch up, one manifest, "Updated in place"), the guard spec with a recorded run and its mutation
   check, and the automated live case `node scripts/operations/live-acceptance.js forge-edit`.

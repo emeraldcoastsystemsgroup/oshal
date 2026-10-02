@@ -988,5 +988,11 @@
     "title": "CI secret-scanner remote mutation proof",
     "pr": "975",
     "evidence": "Closed on the operator's 2026-09-20 re-scope to the local secret-scan gate. docs/security/secret-scan-planted-fixture-proof.md records the 2026-10-01 re-run (core #975, ce998b00) of tests/unit/ci-local-secret-scan-planted-fixture.spec.ts against the real zricethezav/gitleaks:latest image: clean PASS, planted FAIL scanner rc=1 (leaks found: 1), allowlisted control PASS, fixture removed PASS. The guard now sources scripts/ci/ci-export.sh, and tests/unit/real-boundary-doctrine.spec.ts requires it to source every helper the gate calls. The planted value is synthetic, lives only in a temporary repository that is never pushed, and is redacted from every output."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06",
+    "pr": "979",
+    "evidence": "Studio half proven live 2026-09-06 (docs/apps/trading/studio-parity-proof.md). Forge half: node scripts/operations/live-acceptance.js forge-edit PASSED on the box on 2026-10-01, core a6de96c5 (carries #979, 0a5786cf) on image a61932b7a9cb: the edit of pack testlab-live-forge-edit-466f0790 kept both agentIds and its ticket type, moved the version 1.0.0 -> 1.0.1 with edited: true, left one manifest loaded from the same path with one app, and the Packs panel said \"Updated in place\"; cleanup removed 8, kept 2 (the authorization posture row and catalog snapshot, tracked by \"Authorization posture rows and catalog snapshots for a removed app are never deleted\"), outstanding 0, errors 0. Recorded in docs/apps/bot-forge-edit-in-place.md."
   }
 ]

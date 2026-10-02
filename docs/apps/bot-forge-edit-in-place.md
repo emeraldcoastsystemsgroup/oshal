@@ -1,13 +1,14 @@
 # Bot Forge edit-in-place
 
-This is the Forge half of the backlog entry "Strategy Studio and Bot Forge conversational parity".
+This is the Forge half of the backlog entry "Strategy Studio and Bot Forge conversational parity",
+closed on 2026-10-01 (recorded in [the closed ledger](../backlog/closed-ledger.json)).
 The Studio half was proven live on 2026-09-06; see
 [trading/studio-parity-proof.md](trading/studio-parity-proof.md). This page records what the Forge
 does when a pack is edited, the guard that holds it, a recorded run of that guard, and the automated
 live case that checks it on an installed box.
 
-**Status:** built and guarded. The automated live case is built and unit-tested. It has **not** been
-run against an installed box yet.
+**Status:** built, guarded, and proven live on an installed box on 2026-10-01 (see
+[Live receipt](#live-receipt-2026-10-01)).
 
 ## What happens when a pack is edited
 
@@ -121,7 +122,22 @@ loopback HTTP; the case holds there, and goes red when the edit loses its prior 
 already holds a pack, a manifest, a persona and an app is refused, and every one of them survives.
 Each of sixteen mutations to the case, the fixture port and the runner's port turns that spec red.
 
-## Still owed
+## Live receipt (2026-10-01)
 
-A run of `node scripts/operations/live-acceptance.js forge-edit` against an installed box, with its
-receipt (`outstanding 0; errors 0`) recorded here.
+Run on the box after core `main` `a6de96c5` (which carries #979) was deployed on image `a61932b7a9cb`
+(`scripts/oshal-deploy.sh`, 22:38 UTC), as part of `node scripts/operations/live-acceptance.js all`:
+
+```
+PASS forge-edit (forge-edit-in-place-live): The edit of pack testlab-live-forge-edit-466f0790 kept both
+agentIds and ticket type testlab-live-forge-edit-466f0790, moved the version 1.0.0 -> 1.0.1, and left one
+manifest (testlab-live-forge-edit-466f0790.yaml, loaded from the same path, one app); the Packs panel said
+"✓ Updated in place — 2 bots, ticket type "testlab-live-forge-edit-466f0790" · v1.0.1. Open app →".
+  cleanup: removed 8 (packs-owner-dir; forge-pack; forge-manifest; two personas; swarm-app; two agents);
+  kept 2 (authorization-posture; authorization-catalog); outstanding 0; errors 0
+```
+
+The evidence block records the first deploy (`status 200`, `edited: false`, `1.0.0`) and the edit
+(`status 200`, `edited: true`, `1.0.1`) with the same two agentIds, `manifests` holding exactly the
+tag's one file, and `appsForPack` holding one app. The two kept items are the authorization rows
+described above; their removal is the backlog entry "Authorization posture rows and catalog snapshots
+for a removed app are never deleted".

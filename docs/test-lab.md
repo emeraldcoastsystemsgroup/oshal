@@ -189,6 +189,13 @@ aggregate, the window, the minimums and that a rating changes only when stored r
 the real fetch and XML parser. That is local evidence; only passes of the live steps show the installed
 store and build behave the same.
 
+Live, 2026-10-01 (core `a6de96c5`, world 1.3.0): `POST /api/test-lab/run {"scenarioId":"world-outlet-ratings"}`
+as the operator returned `state: pass` on all three steps. `live-ratings`: "3052 source(s) rated, 23568
+insufficient, consensus-divergence-v1 over 90 days (minimums: 20 compared subject-days, 3 subjects)", computed
+2026-10-01T22:44:48Z. `live-breakdown`: `world:ticker:aapl` over 90 days reads 1828 sources (1116 rated, 712
+insufficient) "and no seeded axis". `classify-containment`: "The deployed classifier dropped the hidden payload
+and carried the visible text in one UNTRUSTED_CONTENT record."
+
 ### Token Chase checkpoint and tail replay
 
 **Token Chase checkpoint and tail replay** (`token-chase-checkpoint-replay`, Tools) runs one read-only
@@ -534,7 +541,11 @@ in [Bot Forge edit-in-place](apps/bot-forge-edit-in-place.md).
 The live half is the `forge-edit` case in the table above:
 `node scripts/operations/live-acceptance.js forge-edit`. `tests/unit/live-acceptance-forge-edit.spec.ts`
 proves its logic over a doubled route, swarm and panel, and over the real pack router with real
-fixture files. The case has not been run against an installed box.
+fixture files. On the box, 2026-10-01 (core `a6de96c5`), the case printed `PASS forge-edit
+(forge-edit-in-place-live)`: both agentIds and the ticket type kept, version `1.0.0 -> 1.0.1`, one
+manifest loaded from the same path, one app, the panel saying "Updated in place"; cleanup `removed 8;
+kept 2; outstanding 0; errors 0` (the two kept items are the authorization posture and catalog rows).
+The receipt is in [Bot Forge edit-in-place](apps/bot-forge-edit-in-place.md#live-receipt-2026-10-01).
 
 ### Messaging channels
 
@@ -945,7 +956,10 @@ workbook in memory, reads the kit's primary color, text color and body face back
 then hands each renderer a forged look and requires a refusal. A missing value or a drawn forged look
 fails the step and names the format. It writes nothing, calls no route and spends nothing. Its linked
 suites also compare every part of the ten built-in looks with digests generated before brand looks
-existed. Run them with the command in [tests/README.md](../tests/README.md).
+existed. Run them with the command in [tests/README.md](../tests/README.md). Live, 2026-10-01 (core
+`a6de96c5`): `POST /api/test-lab/run {"scenarioId":"brand-look-render"}` returned `state: pass` with "A deck, a
+document and a workbook drawn in a synthetic brand look carry its colors and body face; each renderer refused a
+forged look and produced no file."
 
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for
