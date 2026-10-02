@@ -113,6 +113,7 @@
  * 61 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis "where am I" card (LOCATION_WHERE_SCENARIOS, test-lab-location-where-scenarios.ts): on the running build's database two synthetic people show that no position points to Settings, Location, a fix inside a saved place names that place, an old fix leads with its age, the other person sees no position, and no answer carries a coordinate; all rows are erased with a zero-row check. The intent, real-Postgres, reporter and registration suites are attached as regressionTests.
  * 62 | maintainer@emeraldcoastsystemsgroup.com   | Registered the deck engine brand-look card (BRAND_LOOK_SCENARIOS, test-lab-brand-look-scenarios.ts): on the installed engine, a synthetic brand look renders a deck, a document and a workbook whose colors and body face are read back, and each renderer refuses a forged look. In memory only; it writes nothing, calls no route and spends nothing.
  * 63 | maintainer@emeraldcoastsystemsgroup.com   | Registered the world outlet-rating card (WORLD_OUTLET_RATING_SCENARIOS, test-lab-world-outlet-rating-scenarios.ts): two read-only live steps (the observed rating set the installed world store yields, checked against its stated minimums, and the most-covered subject read through it with no seeded axis) and one in-build step that classifies a seeded hostile item through the deployed classifier with a capturing provider and a private budget, so no model is called and nothing is fetched or written. The rating, filter and ingress suites are attached as regressionTests. Guard: tests/unit/world-outlet-rating-test-lab.spec.ts.
+ * 64 | maintainer@emeraldcoastsystemsgroup.com   | jarvis-routing attaches tests/unit/jarvis-haven-learn-brain.spec.ts: the turn's passive-learning step rides executeBotOrInline with the brain the turn ran on (CLI stamp, hosted trio, or the retry's endpoint), never the controller's in-process CLI harness (live 2026-10-02 08:13 UTC: every haven-learn task on the operator's CLI brain was refused UNBROKERED_AUTONOMOUS_PROVIDER).
  * @module test-lab-scenarios
  */
 
@@ -543,6 +544,8 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/antigravity-bot-runtime.spec.ts' },
       // A bare number or true/false answer is stored and delivered as the text the model wrote.
       { level: 'unit', path: 'tests/unit/completion-result-text.spec.ts' },
+      // The turn's passive-learning step rides the same chokepoint and brain as the turn (never the controller's CLI harness).
+      { level: 'unit', path: 'tests/unit/jarvis-haven-learn-brain.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },
