@@ -49,6 +49,7 @@
 # 41 | maintainer@emeraldcoastsystemsgroup.com | Forward WORLD_POLITICAL_TOKEN to the api only: the congress disclosure feed (Quiver beta/live/congresstrading, political-trades.ts) answered HTTP 401 without a credential on 2026-09-28, so the collector sends this token as a Bearer header. Blank by default (the collector then logs a refusal naming the setting); kept off x-bot-env so no bot container carries it. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 42 | maintainer@emeraldcoastsystemsgroup.com | Forward OSHAL_DEV_WORKSPACE_INDEX_ENABLED beside the ADR-077 dev-console gates it sits behind. The dev-workspace-index store package's route and Jarvis tool read it from process.env in the api, and compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS, so setting it in .env could not enable the package (found by the deploy lane 2026-09-28). Default false, so an untouched box is unchanged. Guard: tests/unit/compose-env-passthrough.spec.ts.
 # 43 | maintainer@emeraldcoastsystemsgroup.com   | World classify on the swarm's accounted rail (operator decisions 2026-09-21 and 2026-10-02). WORLD_CLASSIFY_PROVIDERS (an in-process claude/codex CLI list the controller refused unattended, so no item was model-classified from 2026-08-06) selects nothing now; it is forwarded with no default only so news-fetcher can warn an operator who still sets it. Forwarded for the rail: WORLD_CLASSIFY_BOT (the classify bot, default general-bot), WORLD_CLASSIFY_OWNER_SUB (the accountable owner every call carries; blank on a DEMO box with exactly one operator means that operator), WORLD_CLASSIFY_OWNER_ISSUER (that owner's verified issuer, needed when the bot-node hop is signed; blank = the single active verified-principal record for the subject), the optional WORLD_CLASSIFY_PROVIDER_ID / WORLD_CLASSIFY_MODEL stamp (blank = the classify bot's canonical provider record, the swarm default) and WORLD_CLASSIFY_CALL_TIMEOUT_MS (one chunk's ceiling, default 120000). WORLD_CLASSIFY_CODEX_MODEL is no longer forwarded: nothing reads it. Guard for the rail knobs: tests/unit/compose-env-passthrough.spec.ts.
+# 44 | maintainer@emeraldcoastsystemsgroup.com   | WORLD_CLASSIFY_BUDGET_PER_PULSE (default 4): the per-fire slice of the classify budget, so one pulse cannot spend the hour's calls and overrun its dispatch budget.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1242,6 +1243,11 @@ services:
       # 50 tasks an hour per agent): each classify call is one task row for the classify bot.
       WORLD_CLASSIFY_BUDGET_PER_HOUR: ${WORLD_CLASSIFY_BUDGET_PER_HOUR:-40}
       WORLD_CLASSIFY_BUDGET_PER_DAY: ${WORLD_CLASSIFY_BUDGET_PER_DAY:-400}
+      # The per-fire slice of the same bucket: how many classify calls ONE world fire (ticker pulse or depth
+      # refresh, firehose deep dive included) may make before its remaining chunks fall back to lexicon. On
+      # the bot rail a call takes ~10 s; on 2026-10-02 the first pulse of the hour spent all 40 hourly calls
+      # and overran the scheduler's 240 s dispatch budget. Four calls ≈ 40 s of model wall per pulse.
+      WORLD_CLASSIFY_BUDGET_PER_PULSE: ${WORLD_CLASSIFY_BUDGET_PER_PULSE:-4}
       # Forward market-events calendar (earnings via Nasdaq, FOMC schedule, jobs report) on the 6h depth cycle.
       WORLD_EVENTS_ENABLED: ${WORLD_EVENTS_ENABLED:-true}
       WORLD_EARNINGS_DAYS: ${WORLD_EARNINGS_DAYS:-14}
