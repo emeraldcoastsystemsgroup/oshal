@@ -1,12 +1,13 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the Home plan admits an installed application only through current application policy, converging with workspace discovery across grant, revocation and explicit coarse deny.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin the guest outcome: a guest session keeps the unprotected framework application and never receives the protected one, even while a current grant on it exists. Red without the degrade - the route answers 401 and Home renders its read-failure copy.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Use the issuer-qualified coarse-access port in the Home and workspace fixture.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Give every surfaced Home fixture a canonical concierge so P8 enforcement does not mask the authorization behavior under test.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify actual app-list policy filtering, guest degradation, operator visibility and logged identity failures.
  */
 /** Real Express, package loading and authorization; only persistence, identity and coarse access are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -27,7 +28,8 @@ import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/fea
 import { SwarmAppService, type SwarmAppManifest, type SwarmApplicationRecord, type AppAccessService } from '@/features/swarm-apps';
 import type { AuthorizationActor, AuthorizationCatalog, AuthorizationChange } from '@/shared/application-authorization';
 
-vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+const routeLogger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
+vi.mock('@/shared/logger', () => ({ createChildLogger: () => routeLogger }));
 
 const APP = 'home-plan-app', FRAMEWORK = 'home-plan-framework', ISSUER = 'https://home-plan-identity.fixture.test';
 const alice: AuthorizationActor = { sub: 'alice', issuer: ISSUER, isActive: true, isSwarmAdmin: false };
@@ -108,6 +110,9 @@ function memoryRepository() {
 }
 
 beforeEach(async () => {
+  vi.clearAllMocks();
+  vi.stubEnv('OSHAL_OPERATOR_SUBS', 'administrator');
+  vi.stubEnv('OSHAL_OPERATOR_EMAILS', '');
   vi.stubEnv('APP_PACKAGE_DYNAMIC_ROUTES', 'true'); vi.stubEnv('APP_ACCESS_ENFORCEMENT', 'enforce');
   vi.stubEnv('APP_PACKAGE_MIGRATIONS', 'false');
   root = mkdtempSync(join(tmpdir(), 'oshal-home-plan-')); now = Date.now();
@@ -231,4 +236,36 @@ it('refuses a Home plan to a caller with no current verified identity', async ()
   expect((await call(null)).status).toBe(401);
   expect(await call('inactive')).toMatchObject({ status: 401, body: { error: 'authorization_identity_required' } });
   expect(await call('unknown')).toMatchObject({ status: 401, body: { error: 'authorization_identity_required' } });
+});
+
+/** @description Exercise the actual app-list route with installed framework and policy-protected packages. */
+it('filters nonoperator app lists through current policy, preserves guest degradation and lists all apps for operators', async () => {
+  await install({ name: FRAMEWORK, theme: undefined, uses: undefined, routes: undefined, authorization: undefined,
+    ui: { static: [{ toolName: 'home', label: 'Home', icon: 'codicon codicon-home', iframeUrl: `/api/${FRAMEWORK}/app` }] } },
+  'framework.yaml');
+  await install();
+  async function list(user: string, guest = false) {
+    const headers: Record<string, string> = { 'x-fixture-user': user };
+    if (guest) headers['x-fixture-guest'] = 'yes';
+    const response = await fetch(`${base}/api/swarm/apps`, { headers });
+    expect(response.status).toBe(200);
+    return (await response.json()).apps.map((entry: { name: string }) => entry.name).sort();
+  }
+  expect(await list('alice')).toEqual([FRAMEWORK]);
+  expect(await list('administrator')).toEqual([APP, FRAMEWORK].sort());
+  await change();
+  expect(await list('alice')).toEqual([APP, FRAMEWORK].sort());
+  expect(await list('guest-fixture', true)).toEqual([FRAMEWORK]);
+  await change('revoke');
+  expect(await list('alice')).toEqual([FRAMEWORK]);
+});
+
+it('refuses and logs inactive or failed identity resolution before listing nonoperator applications', async () => {
+  await install(); await change();
+  for (const user of ['inactive', 'unknown']) {
+    routeLogger.error.mockClear();
+    const response = await fetch(`${base}/api/swarm/apps`, { headers: { 'x-fixture-user': user } });
+    expect(response.status).toBe(401);
+    expect(routeLogger.error).toHaveBeenCalled();
+  }
 });

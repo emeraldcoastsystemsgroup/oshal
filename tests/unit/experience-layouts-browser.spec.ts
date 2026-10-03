@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the real experience shells in headless Chromium through the real static route registration over an isolated synthetic swarm: auth gating, live catalog and work rendering, directory/pins/app panel, the Jarvis ask flow with thread roll and refusal, room-scoped Commons threads, the three homebase presets (list, money, calendar, roster, role-driven views, honest finance states), the central assistant, the portal chooser and per-layout skins.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Home and Business host their application assemblies: per-host sidebar sections and tile groups, hosted pages opened with the preset audience view (`?view=`), hidden tool prefixes honoured, and a refused tool is a notice never a fetch
@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Homebase cases follow the home build lane: Home names the missing household group, and a caller Finance does not admit gets no money module at all: a teacher keeps the teaching card, anyone else gets their personal workspace (ADR-164 D10).
  * 8 | maintainer@emeraldcoastsystemsgroup.com | A ticked shopping item leaves the Purchasing list and stays struck through for the visit (the design study's checked state).
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The central assistant's readback keeps its outcome on the status line after Stop (STOPPED · READY WHEN YOU ARE, the demo's rule) instead of returning to the resting prompt; the ask-flow case asserts that outcome.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Verify authorized package cards and package chooser values instead of retired static portal entries.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -381,10 +382,10 @@ describe('experience shells over the real routes', () => {
     expect(errors).toEqual([]);
   });
 
-  it('the portal lists eight experiences, the chooser navigates, and skins are remembered per layout', async () => {
-    await open('/portal', '.experience-cards');
-    expect(await page.locator('.experience-card').count()).toBe(8);
-    expect(await bodyText()).toContain('19 installed applications');
+  it('the portal lists discovered packages, the chooser checks opening, and skins are remembered per layout', async () => {
+    await open('/portal', '[data-experience-package]');
+    expect(await page.locator('[data-experience-package]').count()).toBe(7);
+    expect(await page.locator('[data-experience-package="orbit-experience"]').getAttribute('href')).toBe('/api/ui/experiences/orbit-experience/open');
     await open('/studio', '#universal-skin-picker');
     await page.selectOption('#universal-skin-picker', 'ocean');
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('ocean');
@@ -392,10 +393,9 @@ describe('experience shells over the real routes', () => {
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('ocean');
     await open('/jarvis', '.full-jarvis');
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('jarvis');
-    await page.selectOption('[data-role="experience-picker"]', 'orbit');
-    await page.waitForURL(/\/orbit$/);
-    await page.waitForSelector('.full-orbit');
-    expect(await page.locator('.full-orbit').count()).toBe(1);
+    await page.selectOption('[data-role="experience-picker"]', 'orbit-experience');
+    await page.waitForURL(/\/fixture\/experience\/orbit\.html$/);
+    expect(await bodyText()).toContain('orbit.html');
   });
 
   it('tells an unauthenticated session to sign in instead of rendering anything', async () => {

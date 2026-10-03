@@ -1,11 +1,11 @@
 /**
  * CHANGE LOG
- * 3 | maintainer@emeraldcoastsystemsgroup.com | Operational chooser from installed authorized experience packages; preserve preview studies in docs/assets/experience-shells.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Experience portal: the chooser for the eight experiences, rendered over the signed-in swarm (installed applications by suite, the caller's recent work) instead of the design gallery's screenshots and catalog snapshot. Selecting an experience only navigates; nothing here changes a server setting.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Experience portal: the chooser for the eight experiences, rendered over the signed-in swarm (installed applications by suite, the caller's recent work) instead of the design gallery's screenshots and catalog snapshot. Selecting an experience only navigates; nothing here changes a server setting.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The demo gallery's sections over the live swarm: the suite inventory under the introduction, the central assistant as a feature (a drawn core, not a screenshot, with the assistants online and the open work), the three homebases grouped as "One swarm. Three ways to belong." (each with a drawn preview in its palette and one real fact: its home applications, Little Monsters' availability to the caller, its office applications), and the four full-swarm layouts as numbered concept cards with drawn layout previews, tags and a live fact each. The eight experience cards stay the chooser; recent work and the searchable directory follow.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Operational chooser from installed authorized experience packages; preserve preview studies in docs/assets/experience-shells.
  */
 (() => {
   'use strict';

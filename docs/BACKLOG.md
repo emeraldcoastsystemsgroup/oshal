@@ -96,8 +96,9 @@ from preparation or unit tests alone.
 
 **Approved continuation (2026-10-03):** [Experience application integration](architecture/experience-application-integration.md)
 records the seven-experience source inventory and E1–E6 delivery contract. Reuse Finance/Education
-package-owned screens and manifest navigation. Declaration validation is implemented; hosting,
-discovery and composite-role assignment are still pending. Keep this item open. Work packets:
+package-owned screens and manifest navigation. Declaration validation and package hosting/discovery
+are implemented in source. Composite-role lifecycle and all seven extracted package sources have
+local checks; release and installed acceptance remain pending. Keep this item open. Work packets:
 E2 hosting/skins/authorized discovery; E3 exact-role preview, provenance, overlap-safe revocation,
 expiry and reviewed upgrades; E4 Home pilot; E5 Business, Classroom, Studio, Jarvis, Orbit and
 Commons; E6 installed Test Lab/browser/API/database acceptance. Home uses a distinct package ID;
@@ -105,8 +106,9 @@ Smart Home remains `home`. Nexus is outside this approved seven-experience migra
 
 An experience is an application a developer installs: its own screens, skin and member
 dependencies, exposed through an `experience:` manifest block behind the `experience` kernel
-skill (ADR-164 D11–D13). Today the Experiences menu and the shells are core-resident and offered
-to every signed-in person on every deployment.
+skill (ADR-164 D11–D13). E2 replaces the static Experiences menu with installed, authorized
+discovery. The live cockpit document remains aligned with the older deployed backend until the
+build owner coordinates rollout; that temporary state does not count as installed acceptance.
 
 **Done when:**
 - Slice 2 — a package declaring only `uses: [application-authorization, experience]` and an

@@ -1,12 +1,12 @@
 /**
  * CHANGE LOG
- * 4 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Skin switcher shared by every experience page: eight experience skins plus the twelve canonical cockpit themes, remembered per layout on this device only (a skin chosen for Studio never repaints Jarvis), applied through the same data-skin/data-theme hooks the cockpit themes use. Appearance never carries identity, access or installation authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Skin switcher shared by every experience page: eight experience skins plus the twelve canonical cockpit themes, remembered per layout on this device only (a skin chosen for Studio never repaints Jarvis), applied through the same data-skin/data-theme hooks the cockpit themes use. Appearance never carries identity, access or installation authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | An explicit skin choice also writes the saved cockpit appearance (`cockpit-theme`), so opening an application in the cockpit or standalone continues in the chosen skin; layout defaults still never write it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Skin colours match the aligned tokens in skins.css (playful violet, professional teal) so the switcher swatches show the palette the page paints
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 (() => {
   'use strict';

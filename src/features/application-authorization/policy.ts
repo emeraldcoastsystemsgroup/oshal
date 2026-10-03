@@ -3,14 +3,15 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep reserved management roles outside business-role and grant evaluation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: a non-deny assignment naming ONE catalog permission grants exactly that permission at the narrowest scope, raising the tier only to what the permission itself declares. The management API cannot create such a row (parseAuthorizationChange refuses grant+permission), so this is inert for every assignment an administrator made; the only writer is an ADR-157 service activation, and revoking the activation removes the row.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Export the canonical key-sorted serialization so the AUTH-07 catalog diff compares declarations with exactly the encoding the catalog revision hashes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Move the pure operation binding resolver into the shared authorization contract, preserving its feature re-export.
  */
 /** Shared deterministic permission semantics; business adapters remain authoritative over records. */
 import { createHash } from 'node:crypto';
-import { applicationManagementRole, type AuthorizationActor, type AuthorizationAppRegistration, type AuthorizationGrant, type AuthorizationOperation, type AuthorizationTier } from '@/shared/application-authorization';
+import { applicationManagementRole, type AuthorizationActor, type AuthorizationAppRegistration, type AuthorizationGrant, type AuthorizationTier } from '@/shared/application-authorization';
 import type { AuthorizationAssignment, AuthorizationState } from './types';
 import { ApplicationAuthorizationError } from './types';
 export const TIER_ORDER: AuthorizationTier[] = ['deny', 'viewer', 'editor', 'admin'];
@@ -100,18 +101,4 @@ function directPermissionGrants(app: RegisteredAuthorizationApp, rows: Authoriza
     && Object.prototype.hasOwnProperty.call(catalog.permissions, row.permission));
 }
 
-export function resolveOperationPermissions(app: RegisteredAuthorizationApp, input: AuthorizationOperation): string[] | null {
-  if (!app.catalog) return [];
-  if (input.permission) return Object.prototype.hasOwnProperty.call(app.catalog.permissions, input.permission) ? [input.permission] : null;
-  const kind = input.kind ?? 'http'; const bindings = app.catalog.bindings[kind] ?? [];
-  if (kind !== 'http') return bindings.find(binding => binding.id === input.operation)?.allOf ?? null;
-  const pathname = input.path;
-  if (!pathname || pathname.includes('?') || pathname.includes('#') || /[%\\]/.test(pathname) || pathname.includes('//')) return null;
-  const paths = [pathname, ...(app.mountPaths ?? []).filter(mount => pathname.startsWith(`${mount}/`) || pathname === mount).map(mount => pathname.slice(mount.length) || '/')];
-  const method = (input.method ?? '').toUpperCase();
-  const matches = bindings.filter(binding => binding.method === method && paths.some(candidate => {
-    const expected = binding.path!.split('/'); const actual = candidate.split('/');
-    return actual.length === expected.length && expected.every((part, i) => part === actual[i] || (part.startsWith(':') && Boolean(actual[i]) && actual[i] !== '.' && actual[i] !== '..'));
-  }));
-  return matches.length === 1 ? matches[0].allOf : null;
-}
+export { resolveOperationPermissions } from '@/shared/application-authorization';

@@ -1,16 +1,15 @@
 /**
  * CHANGE LOG
- * 15 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085/ADR-090 D8: the kernel-skills build anchor. Replaces the package-feature-anchors.ts stopgap (deleted) with the full contract: one re-export per module declared in @/shared/kernel-skills, guarded by scripts/check-kernel-skills.js. Each re-export is what physically pins the feature into dist/ — tsconfig.server.json excludes src/features/**, so the import graph is the ONLY thing that carries a feature into the built image.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5: pin @/features/payments (11th skill) — the finance carve removes its last core import, and both the finance + payments store packages resolve it from dist.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 spaces carve: pin @/features/spatial-mapping (12th skill) — the spaces surface carve removes its last core import (spaces-routes.ts), and spaces-operator (inline, no node-server) has no other anchor; the installed spaces package resolves it from dist.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-085/ADR-090 D8: the kernel-skills build anchor. Replaces the package-feature-anchors.ts stopgap (deleted) with the full contract: one re-export per module declared in @/shared/kernel-skills, guarded by scripts/check-kernel-skills.js. Each re-export is what physically pins the feature into dist/ — tsconfig.server.json excludes src/features/**, so the import graph is the ONLY thing that carries a feature into the built image.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 Wave 1 carve #5: pin @/features/payments (11th skill) — the finance carve removes its last core import, and both the finance + payments store packages resolve it from dist.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 spaces carve: pin @/features/spatial-mapping (12th skill) — the spaces surface carve removes its last core import (spaces-routes.ts), and spaces-operator (inline, no node-server) has no other anchor; the installed spaces package resolves it from dist.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated artifact relay and activation-scoped package tools in the executable core build.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin @/shared/app-dependencies, the module behind the app-dependencies compatibility floor.
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrects this file's own contract text, which the same branch falsified. It stated that tsconfig.server.json "excludes src/features/**" and that an explicit include of a feature is "silently a no-op" - both true until that blanket exclude was removed here to carry google-calendar into dist. This file exists to stop exactly that drift, so leaving its explanation describing a build it no longer has would have been the failure it guards against. The re-export is still the durable pin, and the text now says why.
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | Pin @/features/google-calendar into the build anchor as contracted kernel skill 'google-calendar'.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Corrects this file's own contract text, which the same branch falsified. It stated that tsconfig.server.json "excludes src/features/**" and that an explicit include of a feature is "silently a no-op" - both true until that blanket exclude was removed here to carry google-calendar into dist. This file exists to stop exactly that drift, so leaving its explanation describing a build it no longer has would have been the failure it guards against. The re-export is still the durable pin, and the text now says why.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Pin @/features/google-calendar into the build anchor as contracted kernel skill 'google-calendar'.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Pin the versioned bound-workflow-results contract into the executable build.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Pin the Futures forward receipt ledger and its bounded worker into the runtime build.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Pin confirmed Futures archive import and worker boundaries into deployable artifacts.
@@ -18,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin @/features/fantasy-leagues, the ESPN fantasy read client moved out of sports-edge. No core module imports it, so this re-export is the only thing carrying it into dist for the packages that resolve it at mount.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin @/features/location, the location kernel skill. Core routes import it too (the two account-erasure routes), but the package-facing contract must not depend on that: this re-export keeps it in dist for every package that declares uses: location.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Pin the anonymous-route validation contract into the runtime build.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 
 /**

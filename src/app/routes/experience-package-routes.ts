@@ -1,6 +1,8 @@
 /**
  * CHANGE LOG
- * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | List installed authorized experiences and recheck their actual named entry operation before opening a page or focused rail.
  */
 import { Router } from 'express';
@@ -11,6 +13,7 @@ import type { ApplicationAuthorizationRuntime } from '@/app/composition/applicat
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'experience-package-routes' });
+/** @description Existing application and request-authorization ports required by experience discovery and navigation. */
 export interface ExperiencePackagePorts {
   apps?: Pick<SwarmAppService, 'listExperiences' | 'getAppForViewer'>;
   authorization?: {
@@ -19,7 +22,11 @@ export interface ExperiencePackagePorts {
   };
 }
 
-/** These routes are mounted behind the UI router's existing authentication middleware. */
+/**
+ * @description Create installed experience discovery and checked navigation routes behind the UI router authentication middleware.
+ * @param ports Existing application repository and current authorization boundary.
+ * @returns Express router that refuses missing authority ports, denied entries and stale installations.
+ */
 export function createExperiencePackageRoutes(ports: ExperiencePackagePorts): Router {
   const router = Router();
   router.use('/experiences', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });

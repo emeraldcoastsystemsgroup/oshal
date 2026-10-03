@@ -1,6 +1,8 @@
 /**
  * CHANGE LOG
- * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-164: validate experience declarations before installation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve named member surfaces against active manifests without coupling packages to member URLs or markup.
  */
@@ -53,9 +55,11 @@ function canonicalPath(value: unknown): value is string {
 }
 
 /**
- * Validate the package declaration without granting access or resolving member catalogs.
+ * @description Validate the package declaration without granting access or resolving member catalogs.
  * Cross-package surface existence is checked at activation, against active member manifests.
  * The loader independently checks that the hosting skill is implemented on this core.
+ * @param manifest Untrusted structural manifest input.
+ * @returns Nothing; invalid declarations throw before installation.
  */
 export function validateExperienceDeclaration(manifest: ExperienceManifestSource): void {
   if (manifest.experience === undefined) return;
@@ -106,7 +110,12 @@ export function validateExperienceDeclaration(manifest: ExperienceManifestSource
   }
 }
 
-/** Resolve the member's current declared surface, preserving its supported query and fragment. */
+/**
+ * @description Resolve current named member surfaces, preserving supported query, fragment and original visibility identity.
+ * @param manifest Validated experience package declaration.
+ * @param members Currently active member manifests.
+ * @returns Resolved supported surfaces and optional unavailability reasons; missing required surfaces throw.
+ */
 export function resolveExperienceSurfaces<T extends { toolName: string; iframeUrl: string }>(
   manifest: ExperienceManifestSource,
   members: ReadonlyMap<string, { ui?: { static?: T[] } }>,

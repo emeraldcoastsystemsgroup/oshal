@@ -1,10 +1,10 @@
 /**
  * CHANGE LOG
- * 2 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Per-caller visibility for the static rail: the profile route passes synthesised `tool-*` items through the app's manifest-declared visibility rule with the caller's session (cookie or Authorization header), keeps framework items and unmatched tools, and fails closed when the app cannot answer.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Per-caller visibility for the static rail: the profile route passes synthesised `tool-*` items through the app's manifest-declared visibility rule with the caller's session (cookie or Authorization header), keeps framework items and unmatched tools, and fails closed when the app cannot answer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 /** Real Express and the real profile route; the swarm-app service is a double that returns one synthesised profile. */
 import express from 'express';

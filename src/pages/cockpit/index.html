@@ -1,33 +1,33 @@
 <!DOCTYPE html>
 <!--
   CHANGE LOG
-  24 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
   -----------------------------------------------------------------------------
   SEQ                 | AUTHOR                      | DESCRIPTION
   -----------------------------------------------------------------------------
-  1 | maintainer@emeraldcoastsystemsgroup.com   | Added a direct native bot-config entry point from the cockpit right-side chat toolbar
-  2 | maintainer@emeraldcoastsystemsgroup.com   | Replaced the cockpit right-side placeholder chat body with an embedded native /chat workspace so the rail exposes the real OSHAL chat surface
-  3 | maintainer@emeraldcoastsystemsgroup.com   | Added explicit cockpit right-rail workspace actions so settings, switch framework, RAG, and Presentron are reachable without hunting inside the embedded iframe
-  4 | maintainer@emeraldcoastsystemsgroup.com   | Defaulted the cockpit bot selector to the persisted personal-assistant UUID so the embedded native chat boots against a real bot instead of the legacy assistant placeholder
-  5 | maintainer@emeraldcoastsystemsgroup.com   | Converted right-rail workspace controls to icon-first actions and tightened bot-config deep links to bot-scoped settings anchors
-  6 | maintainer@emeraldcoastsystemsgroup.com   | Removed the unwired header search field during the header-audit pass so the top bar only exposes working controls
-  7 | maintainer@emeraldcoastsystemsgroup.com   | Clarified the header gear action as Quick Settings so operators can distinguish it from the fuller ribbon Settings screen
-  8 | maintainer@emeraldcoastsystemsgroup.com   | Added cockpit workspace-focus mode so header RAG and Presentron actions can expand the bot workspace instead of being trapped in the narrow right rail
-  9 | maintainer@emeraldcoastsystemsgroup.com   | Added workspace-focus width toggle so operators can widen heavyweight tool launches without leaving cockpit
-  10 | maintainer@emeraldcoastsystemsgroup.com   | Added draggable workspace-focus edge resizing so heavy header tools can be manually resized inside cockpit
-  11 | maintainer@emeraldcoastsystemsgroup.com   | Removed duplicate header history/settings buttons and converted login into a single profile-access control
-  12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-044 Phase 1: made the cockpit an installable PWA — manifest, theme-color + Apple meta, touch icons, and service-worker registration (offline app shell)
-  13 | maintainer@emeraldcoastsystemsgroup.com   | Removed the right-edge chat-expand tab — the Jarvis orb is the single assistant affordance; the rail now only opens contextually
-  14 | maintainer@emeraldcoastsystemsgroup.com   | Load the surface-bridge relay (js/surface-bridge-relay.js) — the shell-mediated postMessage relay between the focused app's surface iframe and the chat rail (the browser wiring over features/surface-bridge). Additive alongside the app-navigate + oshal-cockpit-* dialects.
-  15 | maintainer@emeraldcoastsystemsgroup.com   | Leave embedded chat unloaded until an enabled profile restores it, preventing hidden task creation for immersive apps.
-  16 | maintainer@emeraldcoastsystemsgroup.com   | Login double-refresh fix: the service-worker controllerchange reload also fired on the FIRST claim of a fresh page (everything had just come from the network — the reload repainted identical bytes). Now reload only when an UPDATED worker replaces one that was already controlling the page. Also: zen (full-window focus) mode — header arrows-out button + floating exit button hide all cockpit chrome so the active surface gets the whole window (Esc restores).
-  17 | maintainer@emeraldcoastsystemsgroup.com   | Stop loading the unreachable legacy workboard stylesheet so mobile layout support covers only rendered surfaces
-  18 | maintainer@emeraldcoastsystemsgroup.com   | Render the generic chat rail collapsed at first paint so its full-screen phone sheet cannot cover the primary surface during asynchronous cockpit startup
+  1 | maintainer@emeraldcoastsystemsgroup.com | Added a direct native bot-config entry point from the cockpit right-side chat toolbar
+  2 | maintainer@emeraldcoastsystemsgroup.com | Replaced the cockpit right-side placeholder chat body with an embedded native /chat workspace so the rail exposes the real OSHAL chat surface
+  3 | maintainer@emeraldcoastsystemsgroup.com | Added explicit cockpit right-rail workspace actions so settings, switch framework, RAG, and Presentron are reachable without hunting inside the embedded iframe
+  4 | maintainer@emeraldcoastsystemsgroup.com | Defaulted the cockpit bot selector to the persisted personal-assistant UUID so the embedded native chat boots against a real bot instead of the legacy assistant placeholder
+  5 | maintainer@emeraldcoastsystemsgroup.com | Converted right-rail workspace controls to icon-first actions and tightened bot-config deep links to bot-scoped settings anchors
+  6 | maintainer@emeraldcoastsystemsgroup.com | Removed the unwired header search field during the header-audit pass so the top bar only exposes working controls
+  7 | maintainer@emeraldcoastsystemsgroup.com | Clarified the header gear action as Quick Settings so operators can distinguish it from the fuller ribbon Settings screen
+  8 | maintainer@emeraldcoastsystemsgroup.com | Added cockpit workspace-focus mode so header RAG and Presentron actions can expand the bot workspace instead of being trapped in the narrow right rail
+  9 | maintainer@emeraldcoastsystemsgroup.com | Added workspace-focus width toggle so operators can widen heavyweight tool launches without leaving cockpit
+  10 | maintainer@emeraldcoastsystemsgroup.com | Added draggable workspace-focus edge resizing so heavy header tools can be manually resized inside cockpit
+  11 | maintainer@emeraldcoastsystemsgroup.com | Removed duplicate header history/settings buttons and converted login into a single profile-access control
+  12 | maintainer@emeraldcoastsystemsgroup.com | ADR-044 Phase 1: made the cockpit an installable PWA — manifest, theme-color + Apple meta, touch icons, and service-worker registration (offline app shell)
+  13 | maintainer@emeraldcoastsystemsgroup.com | Removed the right-edge chat-expand tab — the Jarvis orb is the single assistant affordance; the rail now only opens contextually
+  14 | maintainer@emeraldcoastsystemsgroup.com | Load the surface-bridge relay (js/surface-bridge-relay.js) — the shell-mediated postMessage relay between the focused app's surface iframe and the chat rail (the browser wiring over features/surface-bridge). Additive alongside the app-navigate + oshal-cockpit-* dialects.
+  15 | maintainer@emeraldcoastsystemsgroup.com | Leave embedded chat unloaded until an enabled profile restores it, preventing hidden task creation for immersive apps.
+  16 | maintainer@emeraldcoastsystemsgroup.com | Login double-refresh fix: the service-worker controllerchange reload also fired on the FIRST claim of a fresh page (everything had just come from the network — the reload repainted identical bytes). Now reload only when an UPDATED worker replaces one that was already controlling the page. Also: zen (full-window focus) mode — header arrows-out button + floating exit button hide all cockpit chrome so the active surface gets the whole window (Esc restores).
+  17 | maintainer@emeraldcoastsystemsgroup.com | Stop loading the unreachable legacy workboard stylesheet so mobile layout support covers only rendered surfaces
+  18 | maintainer@emeraldcoastsystemsgroup.com | Render the generic chat rail collapsed at first paint so its full-screen phone sheet cannot cover the primary surface during asynchronous cockpit startup
   19 | maintainer@emeraldcoastsystemsgroup.com | Load Workspace and resolve the saved-or-default skin before paint without changing application layout.
   20 | maintainer@emeraldcoastsystemsgroup.com | Load optional top workspace navigation styling independently from the selected color skin.
   21 | maintainer@emeraldcoastsystemsgroup.com | Keep one Home destination and group labeled secondary controls outside the top workspace row.
   22 | maintainer@emeraldcoastsystemsgroup.com | Load locked local Markdown and icon assets so external CDNs cannot block shell parsing; remove the unused parent graph preload.
   23 | maintainer@emeraldcoastsystemsgroup.com | Added the status-bar durable-storage indicator, hidden until a store advertised as durable is serving from memory or readiness cannot be read.
+  24 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
 -->
 <html lang="en" data-theme="workspace">
 <head>

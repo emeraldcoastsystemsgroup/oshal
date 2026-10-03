@@ -1,6 +1,8 @@
 /**
  * CHANGE LOG
- * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise authorized experience discovery and entry redirects, including fail-closed outages and concurrent package changes.
  */
 import express from 'express';

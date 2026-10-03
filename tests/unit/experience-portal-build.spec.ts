@@ -1,8 +1,7 @@
 /**
  * CHANGE LOG
- * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the full-swarm build in headless Chromium through the real static route registration over the isolated synthetic swarm: tickets in every canonical state land on the Commons board and in the Jarvis briefing where the shared status groups put them.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Work panels: a ticket's recorded workflow (stages, step progress, gates, history, children) and its full view, Approve for an approval gate that waits on a person with the route's refusal shown, Cancel behind a confirmation with its refusal, the indeterminate bar on Working items only, and the not-visible / unreadable states.
@@ -15,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The demo's six-width layout check over the four layouts (home, directory, application panel with its package facts, work panel with its workflow) and the portal at four widths; the provenance panel's on-demand reads before and after they are made; the other games in a game's panel.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Markup the caller types renders as text in the Jarvis thread (the demo's "input remains text" check).
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The demo's remaining interactions end to end: the directory's empty state, Studio's use-as-context, Commons drafts per room, keyboard tabs (arrows, Home, End), an application leading to its room, Room details and the private space opening (they opened nothing before), Orbit's hub ask and its way back, a fresh conversation and the phone-width menu.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';

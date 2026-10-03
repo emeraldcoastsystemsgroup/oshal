@@ -605,8 +605,9 @@ amendment, as the ADR states.
 
 ## Delivery amendment — seven application experiences (operator, 2026-10-03)
 
-**Status:** Approved delivery direction; declaration validation implemented; package hosting,
-discovery, composite-role assignment and installed migration acceptance remain pending.
+**Status:** Approved delivery direction; declaration validation and E2 package hosting/discovery
+are implemented in source. Release verification and installed migration acceptance remain pending.
+Composite roles and package extraction are separate delivery gates.
 
 Scope is Studio, Jarvis, Orbit, Commons, Home/Family, Classroom and Business. Nexus and Simple
 chat are preserved outside this migration. The Finance and Education packages are the hosting
@@ -621,8 +622,8 @@ in their owning packages. Home uses a distinct `home-experience` package; `home`
 
 The manifest loader now validates declared experience shape, owned authenticated entry paths,
 authorization-catalog declaration and explicit member references. The `experience` compatibility
-floor is deliberately not registered until hosting/discovery exist; these checks must not be
-misreported as runnable experience packages. Packaged-skin registration remains an E2b deliverable.
+floor is registered with the E2 hosting/discovery implementation. Named member surfaces and
+packaged-skin registration are implemented; deployed package availability remains a release gate.
 
 Composite-role lifecycle follows the corresponding ADR-149 delivery amendment. The approved
 work may extend assignment persistence for provenance and reviewed template upgrades, but does
@@ -640,5 +641,5 @@ The installed experience list and open route use current authorization, require 
 `app.open` entry binding and refuse policy outages or a changed installation. Portal and cockpit
 choices consume discovery; package palettes use the existing theme hooks. Local tests cover two
 packages, distinct callers, denied entry and private installation scope; the full-swarm browser
-suite passes 36 cases. Deployed acceptance, composite assignments and the seven package releases
-remain separate open gates in the integration contract.
+suite has local browser coverage. Deployed acceptance, release of composite assignments and
+the seven package releases remain separate open gates in the integration contract.

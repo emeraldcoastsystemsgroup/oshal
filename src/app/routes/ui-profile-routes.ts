@@ -1,15 +1,16 @@
 /**
  * CHANGE LOG
- * 7 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial UI profile routes — /api/ui/profile, /api/ui/profiles
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve swarm-app manifests first, then fall back to on-disk profile JSONs
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | WARN when an explicitly requested ?name= profile falls back to disk — the silent fallback served a stale pre-carve-out little-monsters.json (4 ribbon items, no Record, no theme) whenever RLS hid the app row, masquerading as the app for days.
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | Shell lock (ADR-164 amendment, 2026-10-02): the profile response carries `landingApp` (the deployment's focused landing, or null) and `operator` (the server's verdict for this caller) so the ribbon withholds the operator doors with the same inputs the cockpit document route redirects on.
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | Per-caller visibility for the static rail: synthesised ribbon items that name a registered tool pass through the app's manifest-declared visibility rule with the caller's session, so a surface the app does not admit for this person (a teacher-only tab for a learner) is not offered anywhere the profile is rendered.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability: the route has the request, so it resolves the verified actor and binds synthesiseProfile's discovery port to it (runtime.canDiscover + the role-guidance link the 403 page offers). A tile that opens ANOTHER package this person cannot discover now comes back locked instead of a dead frame. An actor that cannot be resolved is logged and the manifest-static rail is served as before — discovery hides, it never authorises; the mount guard stays the authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial UI profile routes — /api/ui/profile, /api/ui/profiles
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve swarm-app manifests first, then fall back to on-disk profile JSONs
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | WARN when an explicitly requested ?name= profile falls back to disk — the silent fallback served a stale pre-carve-out little-monsters.json (4 ribbon items, no Record, no theme) whenever RLS hid the app row, masquerading as the app for days.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability: the route has the request, so it resolves the verified actor and binds synthesiseProfile's discovery port to it (runtime.canDiscover + the role-guidance link the 403 page offers). A tile that opens ANOTHER package this person cannot discover now comes back locked instead of a dead frame. An actor that cannot be resolved is logged and the manifest-static rail is served as before — discovery hides, it never authorises; the mount guard stays the authority.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Per-caller visibility for the static rail: synthesised ribbon items that name a registered tool pass through the app's manifest-declared visibility rule with the caller's session, so a surface the app does not admit for this person (a teacher-only tab for a learner) is not offered anywhere the profile is rendered.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): the profile response carries `landingApp` (the deployment's focused landing, or null) and `operator` (the server's verdict for this caller) so the ribbon withholds the operator doors with the same inputs the cockpit document route redirects on.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Enforce the named app.open operation before serving a directly focused experience profile.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -122,6 +123,10 @@ export function createUiProfileRoutes(service: UIProfileService, swarmApps?: Swa
             const record = await swarmApps.getAppForViewer(selected, { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin });
             if (!record || record.status !== 'active' || !actor.isActive || !(await discovery.runtime.canDiscover(selected, actor))) {
               res.status(404).json({ error: 'experience_unavailable' }); return;
+            }
+            if (!discovery.runtime.canNavigateHttpPath) { res.status(503).json({ error: 'experience_navigation_unavailable' }); return; }
+            if (!(await discovery.runtime.canNavigateHttpPath(actor, record.manifest.experience!.entry))) {
+              res.status(403).json({ error: 'experience_navigation_refused' }); return;
             }
           }
         }
