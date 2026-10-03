@@ -195,7 +195,8 @@ Each fact below is cited to the file and line at the commits above.
   (`user-brain-resolution.ts:54`); a missing or unknown value means `auto` (`:355-370`).
 - `oshal_bot_provider_switch` holds the reserved `fleet-default` row and per-bot rows, plus an administrator-written
   `fallback_order` (migrations `147` and `148`, `provider-switch-store.ts:48-135`). Every identity reads it; the table's
-  own policy lets only an operator write. A write refreshes the snapshot, so no restart is needed
+  own policy lets only the operator identity, or server work running under the system identity, write it
+  (`147-bot-provider-switch.sql:63-73`). A write refreshes the snapshot, so no restart is needed
   (`provider-switch-routes.ts:154-160`); the routes admit operator browser sessions and refuse a service secret
   (`provider-switch-routes.ts:206-216`, `:229-231`).
 - Per-user credentials live in `oshal_connections`, encrypted under each user's own data key
@@ -592,8 +593,9 @@ quota wall surfaces as a failed transcription and the key stays load-bearing for
   - For LLM, the user's general preference moves below an administrator's per-bot row (D11, S3): where an operator has
     written a per-bot row, users on `auto` follow it and users with a named preference are pinned by an equal user
     per-bot row; the operator's box held no per-bot rows on 2026-10-03.
-- **What does not change.** The ADR-127 carve for command-line harnesses, ADR-162's administrator rows and `fallback_order`,
-  the rule that no row means today's behaviour (ADR-162 §4), and the rule that no credential is stored in these tables.
+- **What does not change.** The ADR-127 carve for command-line harnesses, ADR-162's administrator rows and migration
+  `148`'s `fallback_order`, the rule that no row means today's behaviour (ADR-162 §4), and the rule that no credential is
+  stored in these tables.
 - **Cost of building.** Four tables with migrations and real-role security specs; a registry and an availability function
   for each capability, and one resolver shared by the four; a user card, a config-admin card and per-bot panels; one store
   pull request per package that calls a media capability (application code lives in the store, CLAUDE.md Rule 0c); a
