@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the antigravity-cli render retry (operator decision 2026-10-03: "Retry, max 3, fresh turns"; the 04:41-04:47 UTC measured run rendered the storyboard card 4 of 10 times, every failure Guard A's "generate_image ran and ended in ERROR"). The provider, its receipt check and JPEG conversion run for real on a temporary shared workspace root; every refusal the bot double answers with is written by the REAL Guard A (any-bot's agy-image-turn.js, collectImageTurnOutput over a stream-json built here) and handed back as the node's handler and client leave it ("Bot node execution failed: Antigravity CLI error: <refusal>"), so the wording the provider matches is the bot's own. The executor is the double (the bot node, outside the boundary); the real chain with a real agy child is crossed in storyboard-antigravity-image-turn.spec.ts. Fake timers (setTimeout and Date only) measure every wait exactly. Pins: a Guard A ERROR is retried as a fresh turn (own task id <id>-a2/-a3, own workspace, anchor staged again) after about 3 s then 8 s, at most three attempts; Guard A's [backoff] category waits about 20 s then 45 s; jitter adds at most 20 %; never-ran, did-not-finish, DONE with no brain, a missing output, a refusal before dispatch, a dispatch timeout and Guard A's words anywhere but the end of the bot's own words are never retried and keep their error exactly; the untrusted diagnostic decides nothing (a never-ran refusal whose reply spells the ERROR words and [backoff] is not retried; an ERROR whose reply carries throttle words keeps the short waits); no attempt starts that cannot finish in the render's deadline (120 s by default, the caller's deadlineMs when given) and each request carries that start-by time; a render the bot never started is "image renders are busy"; every attempt is logged with attempt n/3, its category, its wait and its outcome.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Verifier finding on core PR #1033: retries stacked. A retry attempt that failed with something other than Guard A's ERROR (a bot-node 500, a dispatch timeout) led the thrown message with its own words, so the storyboard frame stage and Portrait Studio re-ran the whole render: the verifier's probe (Guard A's ERROR, then a bot-node 500, alternating) made one frame run 10 image turns through the REAL generateStoryboardFrame. The probe is now a regression, with fake timers carrying the stage's own 8 s backoff: once a render has retried, one frame makes at most three turns and the stage never backs off; the stage still retries a first attempt that failed transiently, as before. Every stop message the provider throws (retries exhausted, the deadline, a retry that failed in a way never retried, renders busy; plain and [backoff]; failing retries whose own text carries every transient word) is driven out of the real provider and checked against the frame stage's REAL pattern (STORYBOARD_FRAME_TRANSIENT_ERROR, imported) and Portrait Studio's isTransientVendorError (store code, not importable from core: a verbatim copy pinned by the sha256 of the store source, from which its patterns are read). Stop messages are now Guard A's fixed words plus the provider's note. The default deadline is 90 s (the callers' 120 s less one attempt): a render whose every attempt starts as late as it may and runs twice its reserve still ends before 120 s.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The true bound per frame (coordinator decision on core PR #1033: accept it, state it and pin it; neither the frame stage's retry nor what the provider retries changes). The frame stage still retries a first attempt that failed transiently, and each such retry is one turn, so a frame makes its stage retries plus at most three turns. Swept through the REAL generateStoryboardFrame: k = 0 to 4 transient first attempts (a bot-node 500) then Guard A's ERRORs make exactly k + 3 turns and never more than 7 (5 before the provider retried); then a render that succeeds at once, k + 1; then one whose fresh retry succeeds, k + 2; five transient first attempts end the stage at its fifth, 5 turns, as before. The single first-attempt-transient case this replaces is the sweep's k = 1.
  */
 
 import { createHash } from 'node:crypto';
@@ -320,10 +321,14 @@ describe('every attempt is logged', () => {
   });
 });
 
+/** One frame through the REAL frame stage over the real provider, on the frame stage's own 420 s budget. */
+const frameRun = () => generateStoryboardFrame({ n: 1, camera: 'WIDE: a red circle on white' },
+  { styleLock: 'flat colour', cast: [], provider: createAntigravityCliImageProvider(OWNER, { deadlineMs: 420_000 }) }, null);
+/** The frame stage's own retries: each one logs that it backs off. */
+const stageBackoffs = () => logged.entries.filter((entry) => entry.module === 'storyboard-frames' && entry.msg === 'storyboard frame transient failure — backing off');
+
 describe('one storyboard frame never re-runs a render the provider retried (verifier probe, core PR #1033)', () => {
-  const frame = (): Promise<Error | null> => generateStoryboardFrame({ n: 1, camera: 'WIDE: a red circle on white' },
-    { styleLock: 'flat colour', cast: [], provider: createAntigravityCliImageProvider(OWNER, { deadlineMs: 420_000 }) }, null).then(() => null, (e: Error) => e);
-  const stageBackoffs = () => logged.entries.filter((entry) => entry.module === 'storyboard-frames' && entry.msg === 'storyboard frame transient failure — backing off');
+  const frame = (): Promise<Error | null> => frameRun().then(() => null, (e: Error) => e);
   /** The verifier's scripted bot node: every odd dispatch Guard A's ERROR, every even one the bot route's 500. */
   const alternating = (): Answer[] => Array.from({ length: 15 }, (_unused, index) => (index % 2 ? { error: BOT_500 } : leftNode(ERROR())));
 
@@ -340,14 +345,43 @@ describe('one storyboard frame never re-runs a render the provider retried (veri
     expect(stageBackoffs(), 'the frame stage never re-runs a render the provider retried').toEqual([]);
     expect(err?.message).toBe(`storyboard frame 1 (antigravity-cli): ${stopMessage(`render retries stopped: attempt ${turns} of 3 failed in a way that is never retried`, backoff)}`);
   });
+});
 
-  it('the stage still retries a first attempt that failed transiently, as before; the render after it that retried ends the stage', async () => {
-    const calls = botAnswers([{ error: BOT_500 }, leftNode(ERROR())]);
-    const err = await drive(frame());
-    // One stage retry of a single-turn render that never retried, then one render of three fresh turns.
-    expect(calls).toHaveLength(4);
-    expect(stageBackoffs()).toHaveLength(1);
+describe('the true bound per frame: the stage\'s retries of transient first attempts plus three turns, at most 7 (5 before)', () => {
+  /** k first attempts that fail transiently (a bot-node 500, which the frame stage retries; the provider never does), then `next`. */
+  const afterTransients = (k: number, next: Answer[]): Answer[] => [...Array.from({ length: k }, (): Answer => ({ error: BOT_500 })), ...next];
+  const K = [0, 1, 2, 3, 4];
+
+  it.each(K)('%i transient first attempts, then Guard A\'s ERRORs: exactly k + 3 image turns, never more than 7', async (k) => {
+    const calls = botAnswers(afterTransients(k, [leftNode(ERROR())]));
+    const err = await drive(frameRun().then(() => null, (e: Error) => e));
+    expect(calls).toHaveLength(k + 3);
+    expect(calls.length, 'at most 7 image turns per frame (5 before the provider retried)').toBeLessThanOrEqual(7);
+    expect(stageBackoffs(), 'one stage retry per transient first attempt, none of the render that retried').toHaveLength(k);
     expect(err?.message).toBe(`storyboard frame 1 (antigravity-cli): ${stopMessage('render retries exhausted: all 3 attempts failed')}`);
+  });
+
+  it.each(K)('%i transient first attempts, then a render that succeeds at once: exactly k + 1 image turns', async (k) => {
+    const calls = botAnswers(afterTransients(k, ['image']));
+    const rendered = await drive(frameRun());
+    expect(calls).toHaveLength(k + 1);
+    expect(rendered.n).toBe(1);
+    expect(stageBackoffs()).toHaveLength(k);
+  });
+
+  it.each(K)('%i transient first attempts, then a render whose fresh retry succeeds: exactly k + 2 image turns', async (k) => {
+    const calls = botAnswers(afterTransients(k, [leftNode(ERROR()), 'image']));
+    const rendered = await drive(frameRun());
+    expect(calls).toHaveLength(k + 2);
+    expect(rendered.n).toBe(1);
+  });
+
+  it('five transient first attempts end the stage at its fifth: 5 image turns, as before this change', async () => {
+    const calls = botAnswers(afterTransients(5, [leftNode(ERROR())]));
+    const err = await drive(frameRun().then(() => null, (e: Error) => e));
+    expect(calls).toHaveLength(5);
+    expect(calls.length).toBeLessThanOrEqual(7);
+    expect(err?.message).toMatch(/^storyboard frame 1 \(antigravity-cli\): antigravity-cli image provider: render task failed — Bot node returned 500/);
   });
 });
 

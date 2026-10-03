@@ -328,9 +328,21 @@ ERROR. Operator decision 2026-10-03: "Retry, max 3, fresh turns" and "Throttle i
   transient, re-runs a render the provider already retried. The first version of this amendment let
   that attempt's words lead: through the real frame stage, a Guard A ERROR followed by a bot-node 500
   on the retry made one frame run 10 image turns (verifier finding on core PR #1033). Now it makes two.
-  A first attempt that is never retried keeps its error as before, and the frame stage still retries
-  such an attempt when it failed transiently, as it always did. Each of those stage retries adds one
-  turn, and the render that ends the stage makes at most three.
+  A first attempt that is never retried keeps its error as before, so a caller still retries one that
+  failed transiently (a bot-node 500 before any fresh turn), as it always did, and the turns add up.
+  Neither changes here: the provider retries only Guard A's ERROR, and the callers' own retries are
+  theirs. The bound per caller is:
+  - the storyboard frame stage makes at most its stage retries plus three image turns per frame, at
+    most 7 (four transient first attempts, then one render of three), against 5 before this change;
+  - Portrait Studio makes at most 5 per portrait (two transient first attempts under its own
+    `withRetries`, then one render of three), against 3 before, while each render ends inside its
+    120 s timeout, which the 90 s default leaves one attempt of headroom for;
+  - Create's region edit and the Test Lab render card have no retry of their own: at most 3.
+
+  Every one of these is a free-class turn on the operator's Antigravity subscription. The frame-stage
+  bound is swept through the real `generateStoryboardFrame`: k = 0 to 4 transient first attempts, then
+  Guard A's ERRORs, make exactly k + 3 turns (k + 1 when the next render succeeds at once, k + 2 when
+  its fresh retry does), and five transient first attempts end the stage at its fifth turn, as before.
 - **Observability.** Each failed attempt is logged on the api (`antigravity-cli render attempt
   failed`: `attempt` n/3, `category`, `waitMs`, `outcome`), a rendered frame reports
   `cliRender.attempt`, and the Test Lab card's verdict and the `storyboard-agy` PASS line name the
@@ -343,7 +355,8 @@ Guards: `tests/unit/storyboard-antigravity-render-retry.spec.ts` (the provider o
 wording, fake timers measuring every wait: what is and is not retried, the fresh task ids, the waits,
 `[backoff]`, the deadline and `startBy`, busy, and that the diagnostic decides nothing; the verifier's
 probe through the real `generateStoryboardFrame`, at most three turns and no stage retry once the
-provider retried; the 90 s default ending before 120 s when every attempt starts late and runs twice
+provider retried; the sweep of k = 0 to 4 transient first attempts, exactly k + 3 turns and never more
+than 7; the 90 s default ending before 120 s when every attempt starts late and runs twice
 its reserve; and every stop message driven out of the provider and checked against the frame stage's
 real `STORYBOARD_FRAME_TRANSIENT_ERROR` and against Portrait Studio's `isTransientVendorError`, which,
 being store code, is a verbatim copy pinned by the sha256 of the store source),
