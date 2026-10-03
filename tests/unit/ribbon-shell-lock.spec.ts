@@ -3,7 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | The ribbon's shell-lock decision: locked only for a non-operator whose deployment names a landing application; the hub is withheld when locked; the header's Experiences entries carry the attribute the lock hides them by.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | The ribbon's shell-lock decision: locked only for a non-operator whose deployment names a landing application; the hub is withheld when locked; the header's Experiences entries carry the attribute the lock hides them by.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the hidden discovery menu, generated lock markers and refusal to load experiences in a locked shell.
  */
 
 import { readFileSync } from 'node:fs';
@@ -30,11 +31,13 @@ describe('resolveShellLock', () => {
 
   it('the cockpit header marks every Experiences entry and its label so the lock can hide them', () => {
     const html = readFileSync(resolve(process.cwd(), 'src/pages/cockpit/index.html'), 'utf8');
-    expect(html).toMatch(/data-experiences-label/);
-    const entries = html.match(/data-experience="[^"]+"/g) || [];
-    expect(entries.length).toBeGreaterThanOrEqual(8);
+    expect(html).toMatch(/id="experience-menu"[^>]*hidden/);
+    expect(html).not.toMatch(/data-experience="(?:studio|jarvis|orbit|commons|homebase)"/);
     const source = readFileSync(resolve(process.cwd(), 'src/pages/cockpit/js/components/RibbonNav.js'), 'utf8');
     expect(source).toMatch(/\[data-experience\], \[data-experiences-label\]/);
+    expect(source).toMatch(/if \(this\.shellLocked\) this\._applyShellLock\(\);[\s\S]*?else await this\._loadExperiences\(\);/);
+    expect(source).toMatch(/heading\.dataset\.experiencesLabel/);
+    expect(source).toMatch(/link\.dataset\.experience/);
     expect(source).toMatch(/if \(this\.hidePlatformChrome && !this\.shellLocked\) this\._appendPlatformHub\(\);/);
   });
 });

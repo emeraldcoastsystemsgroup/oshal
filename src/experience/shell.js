@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Shared shell kernel for every experience layout: the experience chooser bar, device-local pins, the application directory, application and work-item panels over live summaries, the people and provenance panels, and the Jarvis conversation engine (history + ask/result) that Studio, Jarvis, Orbit, Commons, the homebases and the central assistant all reuse instead of fixtures.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Shared shell kernel for every experience layout: the experience chooser bar, device-local pins, the application directory, application and work-item panels over live summaries, the people and provenance panels, and the Jarvis conversation engine (history + ask/result) that Studio, Jarvis, Orbit, Commons, the homebases and the central assistant all reuse instead of fixtures.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Render the assistant's markdown links to same-origin paths and http(s) URLs as anchors after escaping, so an answer that names an application opens it instead of showing raw brackets.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Audience-aware hosting: one withAudience helper appends the layout's `?audience=` to every in-place frame (existing query, hash and audience kept), behind a device-remembered Summary view / Full application switch whose copy leaves the choice of view to the hosted page. The app panel reads the package record lazily (GET /api/swarm/apps/:name, and each installed member of a group) to list declared assistants by name with the concierge marked and online state only where the overview roster joins, and labels relationships as group members or Required / Optional app dependencies (not installed when absent from the catalog; a mixed dependency block shows a neutral note instead of tiers). The Commons game predicate moves here as isGameApp so the directory's Games chip and the Game room share it, and a layout may opt its People panel into the swarm roster from GET /api/user-directory with the non-admin fallback to the caller's own identity.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the caller's catalog is labelled 'not in your catalog': the catalog lists active apps visible to this viewer, so an installed but inactive or person-scoped app is not proof of 'not installed'
@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Household and team membership and the caller's own place for layouts with shell-panels.js: fillPeople reads GET /api/tenants, the chosen tenant's GET /api/tenants/:id/members and the caller's GET /api/location/state once per page; the People panel adds 'Your household or team', the caller's roster row carries their place, and a roster read afterwards names the members it knows.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | 'What is live in this view' lists the reads a layout makes on demand (routines, Workflow Studio definitions, households and teams, the caller's own place, Finance spend, a ticket's workflow) with each one's status once made or 'read when you open it', and says only the caller's own place is shown; a game-like application's panel lists the other games on this swarm (the demo's game room offered them).
  * 15 | maintainer@emeraldcoastsystemsgroup.com | The experience list gains Simple chat (/simple, docs/architecture/simple-chat.md), the opt-in plain text screen over the caller's Jarvis thread; every other entry is unchanged.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 (() => {
   'use strict';
@@ -30,7 +31,7 @@
   const badge = (text, neutral = false) => `<span class="badge${neutral ? ' neutral' : ''}">${esc(text)}</span>`;
 
   /** The selectable experiences. Order is the chooser order; `skin` is the palette each opens with. */
-  const EXPERIENCES = [
+  const LEGACY_EXPERIENCES = [
     { id: 'studio', label: 'Studio', href: '/studio', skin: 'studio', family: 'full', tagline: 'Conversation first', palette: 'Graphite & mint' },
     { id: 'jarvis', label: 'Jarvis', href: '/jarvis', skin: 'jarvis', family: 'full', tagline: 'Assistant first', palette: 'Parchment & ember' },
     { id: 'orbit', label: 'Orbit', href: '/orbit', skin: 'orbit', family: 'full', tagline: 'Connections first', palette: 'Arctic & cobalt' },
@@ -41,13 +42,33 @@
     { id: 'nexus', label: 'Central assistant', href: '/nexus', skin: 'nexus', family: 'assistant', tagline: 'Intent first', palette: 'Luminous cyan' },
     { id: 'simple', label: 'Simple chat', href: '/simple', skin: 'simple', family: 'assistant', tagline: 'Just type', palette: 'Your theme' }
   ];
-  const experienceFor = id => EXPERIENCES.find(e => e.id === id) || null;
+  const EXPERIENCES = [];
+  const readyExperiences = fetch('/api/ui/experiences', { credentials: 'same-origin', cache: 'no-store' })
+    .then(async response => {
+      if (!response.ok) throw new Error('Experience discovery unavailable');
+      const data = await response.json();
+      if (!Array.isArray(data.experiences)) throw new Error('Invalid experience discovery');
+      for (const row of data.experiences) {
+        if (typeof row.app !== 'string' || typeof row.label !== 'string' || typeof row.skin !== 'string') continue;
+        const style = LEGACY_EXPERIENCES.find(e => e.skin === row.skin);
+        EXPERIENCES.push({ ...style, id: row.app, label: row.label, skin: row.skin,
+          href: `/api/ui/experiences/${encodeURIComponent(row.app)}/open`, skinCssUrl: LIVE.localHref(row.skinCssUrl || '') });
+      }
+      window.dispatchEvent(new CustomEvent('oshal-experiences-ready', { detail: EXPERIENCES }));
+      document.querySelectorAll('[data-role="experience-picker"]').forEach(picker => {
+        const selected = currentExperience();
+        picker.outerHTML = pickerMarkup(selected?.id || '', picker.id);
+      });
+      return EXPERIENCES;
+    }).catch(() => null);
+  const experienceFor = id => EXPERIENCES.find(e => e.id === id || e.skin === id) || null;
   function currentExperience() {
     const preset = new URLSearchParams(location.search).get('preset');
     return experienceFor(preset || document.body.dataset.layout || '');
   }
   function pickerMarkup(currentId, id = 'experience-picker') {
-    return `<label class="screenreader" for="${id}">Experience</label><select id="${id}" class="layout-picker" data-role="experience-picker">${EXPERIENCES.map(e => `<option value="${e.id}"${e.id === currentId ? ' selected' : ''}>${esc(e.label)}</option>`).join('')}</select>`;
+    const options = EXPERIENCES.map(e => `<option value="${esc(e.id)}"${e.id === currentId ? ' selected' : ''}>${esc(e.label)}</option>`).join('');
+    return `<select aria-label="Experience" id="${id}" class="layout-picker" data-role="experience-picker"${EXPERIENCES.length < 2 ? ' hidden' : ''}>${options}</select>`;
   }
   function skinPicker(currentSkin) {
     const switcher = window.OSHAL_STYLE_SWITCHER;
@@ -595,5 +616,5 @@ ${workExtras(item)}
       gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard, fillPeople, membershipSlot, membership: () => state.membership };
   }
 
-  window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
+  window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, readyExperiences, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
 })();

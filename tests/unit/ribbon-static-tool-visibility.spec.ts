@@ -3,7 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Per-caller visibility for the static rail: the profile route passes synthesised `tool-*` items through the app's manifest-declared visibility rule with the caller's session (cookie or Authorization header), keeps framework items and unmatched tools, and fails closed when the app cannot answer.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Per-caller visibility for the static rail: the profile route passes synthesised `tool-*` items through the app's manifest-declared visibility rule with the caller's session (cookie or Authorization header), keeps framework items and unmatched tools, and fails closed when the app cannot answer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 /** Real Express and the real profile route; the swarm-app service is a double that returns one synthesised profile. */
 import express from 'express';
@@ -21,7 +22,7 @@ const PORT_BEFORE = process.env.PORT;
 const item = (toolName: string, section: 'top' | 'bottom' = 'top') => ({ id: `tool-${toolName}`, icon: 'codicon codicon-circle-outline', label: toolName, section, toolUi: { iframeUrl: `/api/education/${toolName}`, sidebarLabel: toolName } });
 const synthesised = () => ({
   name: 'little-monsters', displayName: 'Little Monsters',
-  ribbon: { items: [item('lm-dashboard'), item('lm-teacher', 'bottom'), 'tickets', item('lm-class-aaaa1111')], dynamicTools: { allow: [], section: 'top' as const } },
+  ribbon: { items: [item('lm-dashboard'), item('lm-teacher', 'bottom'), 'tickets', item('lm-class-aaaa1111'), { ...item('little-monsters--lm-teacher'), toolUi: { ...item('lm-teacher').toolUi, visibilityToolName: 'lm-teacher' } }], dynamicTools: { allow: [], section: 'top' as const } },
   defaultView: 'lm-dashboard',
 });
 const swarmApps = { synthesiseProfile: async () => synthesised() } as unknown as SwarmAppService;
@@ -50,7 +51,7 @@ afterAll(async () => {
 describe('ribbon profile: per-caller visibility of the static rail', () => {
   it('without a rule every synthesised item is served', async () => {
     const body = await (await fetch(`${base}/api/ui/profile?name=little-monsters`)).json();
-    expect(ids(body)).toEqual(['tool-lm-dashboard', 'tool-lm-teacher', 'tickets', 'tool-lm-class-aaaa1111']);
+    expect(ids(body)).toEqual(['tool-lm-dashboard', 'tool-lm-teacher', 'tickets', 'tool-lm-class-aaaa1111', 'tool-little-monsters--lm-teacher']);
   });
 
   it('a learner session keeps only the tools the app admits; framework items are untouched', async () => {
@@ -62,7 +63,7 @@ describe('ribbon profile: per-caller visibility of the static rail', () => {
 
   it('a token-authenticated teacher is judged by the app too (Authorization header forwarded)', async () => {
     const body = await (await fetch(`${base}/api/ui/profile?name=little-monsters`, { headers: { authorization: 'Bearer teacher-token' } })).json();
-    expect(ids(body)).toEqual(['tool-lm-dashboard', 'tool-lm-teacher', 'tickets', 'tool-lm-class-aaaa1111']);
+    expect(ids(body)).toEqual(['tool-lm-dashboard', 'tool-lm-teacher', 'tickets', 'tool-lm-class-aaaa1111', 'tool-little-monsters--lm-teacher']);
   });
 
   it('a caller the app does not recognise sees no matching tool at all (fail-closed), never a widened rail', async () => {

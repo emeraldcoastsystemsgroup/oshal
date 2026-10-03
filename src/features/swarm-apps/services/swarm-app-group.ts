@@ -3,11 +3,12 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups. A `kind: group` manifest carries NO code and binds installed member apps into one front door: its `toolbar[]` BORROWS member surfaces by app + surface name (a reference the loader resolves — never a copied URL, so a renamed surface fails the group instead of leaving a dead tile), its `setup[]` drives the ONE kernel setup dashboard from the members' per-user `readiness:` probes (the session-authenticated sibling of `smoke:`). Static validation (loader) and resolution against the active members (service: fail-closed at activation, lenient-with-warning at profile synthesis) both live here so the service stays under its size budget.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: validateGuestSeedDeclaration validates the manifest's `guestSeed:` hook fail-closed at load, mirroring readiness but requiring a SERVICE-admitting owner route (service | service-or-oidc) — core, not a browser session, is the caller (it POSTs with the service secret + x-oshal-user-sub = the guest sub). An app that declares a guest seed behind a session-only route would be uncallable by the orchestrator, so that's a load error, not a silent no-op.
- * Home customization | Codex | Validate optional selectable metric catalog pointers under the existing session-owned route contract.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-141 application groups. A `kind: group` manifest carries NO code and binds installed member apps into one front door: its `toolbar[]` BORROWS member surfaces by app + surface name (a reference the loader resolves — never a copied URL, so a renamed surface fails the group instead of leaving a dead tile), its `setup[]` drives the ONE kernel setup dashboard from the members' per-user `readiness:` probes (the session-authenticated sibling of `smoke:`). Static validation (loader) and resolution against the active members (service: fail-closed at activation, lenient-with-warning at profile synthesis) both live here so the service stays under its size budget.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guest-seed contract: validateGuestSeedDeclaration validates the manifest's `guestSeed:` hook fail-closed at load, mirroring readiness but requiring a SERVICE-admitting owner route (service | service-or-oidc) — core, not a browser session, is the caller (it POSTs with the service secret + x-oshal-user-sub = the guest sub). An app that declares a guest seed behind a session-only route would be uncallable by the orchestrator, so that's a load error, not a silent no-op.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | A group's members are its REQUIRED apps (dependencies.required.apps, or the legacy dependencies.apps), read through the shared dependency contract; optional apps are install-time offers, never members.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | P8 permits metadata-only chatBot on a code-less group so its borrowed cockpit can name an existing member concierge. Executable bots, workflow and tools remain forbidden; when chatBot is declared, activation proves it is the canonical concierge of a required ACTIVE member. Absence remains a loader warn/enforce concern so warn-mode migration does not make activation stricter than loading.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * Home customization | Codex | Validate optional selectable metric catalog pointers under the existing session-owned route contract.
  */
 
 import fs from 'fs';
@@ -81,25 +82,30 @@ export function isGroupManifest(manifest: Pick<SwarmAppManifest, 'kind'>): boole
 }
 
 /**
- * @description Boot order for auto-load: every app first, every group last, so a group's members
- * are already active when it activates. Peeks `kind:` from the YAML text without validating —
+ * @description Boot order for auto-load: ordinary apps, groups, then experiences, so composition
+ * members are active before their host. Peeks declaration keys without validating —
  * unreadable or unparsable files keep their place (the loader reports them properly later).
  * @param manifestFiles - Manifest paths in directory order.
- * @returns The same paths, groups moved to the end (relative order otherwise preserved).
+ * @returns The same paths, compositions after members (relative order within each tier preserved).
  */
 export function orderGroupsLast(manifestFiles: string[]): string[] {
-  const isGroupFile = (file: string): boolean => {
+  const compositionKind = (file: string): 'group' | 'experience' | 'app' => {
     try {
-      const parsed = yaml.load(fs.readFileSync(file, 'utf-8')) as { kind?: unknown } | null;
-      return !!parsed && typeof parsed === 'object' && parsed.kind === 'group';
+      const parsed = yaml.load(fs.readFileSync(file, 'utf-8')) as { kind?: unknown; experience?: unknown } | null;
+      if (parsed?.experience) return 'experience';
+      return parsed?.kind === 'group' ? 'group' : 'app';
     } catch {
-      return false;
+      return 'app';
     }
   };
   const groups: string[] = [];
+  const experiences: string[] = [];
   const apps: string[] = [];
-  for (const file of manifestFiles) (isGroupFile(file) ? groups : apps).push(file);
-  return [...apps, ...groups];
+  for (const file of manifestFiles) {
+    const kind = compositionKind(file);
+    (kind === 'experience' ? experiences : kind === 'group' ? groups : apps).push(file);
+  }
+  return [...apps, ...groups, ...experiences];
 }
 
 /**
@@ -126,7 +132,7 @@ export function groupDashboardTile(groupName: string): SwarmAppStaticUi {
  */
 export function staticRibbonItems(surfaces: SwarmAppStaticUi[]): Array<{
   id: string; icon: string; label: string; section: 'top' | 'bottom'; group?: string;
-  toolUi: { iframeUrl: string; sidebarLabel: string };
+  toolUi: { iframeUrl: string; sidebarLabel: string; visibilityToolName?: string };
 }> {
   return surfaces.map((s) => ({
     id: `tool-${s.toolName}`,
@@ -134,7 +140,7 @@ export function staticRibbonItems(surfaces: SwarmAppStaticUi[]): Array<{
     label: s.label,
     section: (s.section === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom',
     group: s.group,
-    toolUi: { iframeUrl: s.iframeUrl, sidebarLabel: s.label },
+    toolUi: { iframeUrl: s.iframeUrl, sidebarLabel: s.label, ...(s.visibilityToolName ? { visibilityToolName: s.visibilityToolName } : {}) },
   }));
 }
 

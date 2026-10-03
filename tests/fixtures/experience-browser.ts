@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real experience shells through the real static route registration over an isolated, explicitly synthetic swarm: home plan, listing, navigation, tickets, Jarvis shelf/history/ask, package summaries, Little Monsters, Purchasing, Finance and the user directory, with controllable statuses so honest setup, denial and failure states can be proven in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The synthetic ribbon profile answers per application (Little Monsters role-filtered; every other host a home and a more page) so the multi-host presets are exercised against 19 installed applications
@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | portalBuildRoutes gains the membership and own-location reads (peopleRoutes): GET /api/tenants with a controllable status, members-only GET /api/tenants/:id/members, and the caller's GET /api/location/state overview (no coordinates) with a controllable status.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant build routes (lane "orb", `state.nexusBuild`, registered by nexusGapRoutes ahead of the defaults): the caller's busy windows through GET /api/experience/availability (or its refusal body), the Google row of GET /api/connect/list, and Travel's GET /config, GET/POST /profile, GET /flights (four synthetic offers, source, price read) and GET/POST /watches, each with a controllable status and a log of what the page sent; installTravelHost admits Travel into a case's catalog (or installs it outside the plan).
  * 16 | maintainer@emeraldcoastsystemsgroup.com | nexusBuildRoutes keep the fixture's contract: they answer only once a case opts in (enableNexusBuild, which installTravelHost also does) and fall through to the defaults otherwise; the lane can answer POST /api/voice/synthesize with a WAV clip (`nexusBuild.voice.audioData`) for the readback watchdog case.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -56,6 +57,7 @@ export function experienceState() {
   ];
   return {
     apps, authenticated: true, user: { sub: 'synthetic-user', email: 'synthetic@fixture.test', preferred_username: 'synthetic@fixture.test' },
+    experiences: ['studio', 'jarvis', 'orbit', 'commons', 'family', 'classroom', 'company'].map(skin => ({ app: `${skin}-experience`, skin, label: `Synthetic ${skin}`, entry: `/fixture/experience/${skin}.html`, shell: 'page' })),
     status: {} as Record<string, number>, calls: [] as string[], asks: [] as Array<{ message: string; sessionId: string }>,
     tickets: [
       { ticketId: '11111111-1111-4111-8111-111111111111', title: 'Synthetic ledger review', status: 'in_process', ticketType: 'ledger-review', updatedAt: iso(-HOUR), description: 'A synthetic ticket for the shells.' },
@@ -205,6 +207,13 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   // One request log for every case, then each lane's override routes (they answer only what their case state asks
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
+  app.get('/api/ui/experiences', requiresAuth, (_req, res) => res.status(state.status.experiences || 200).json({ experiences: state.experiences }));
+  app.get('/api/ui/experiences/:name/open', requiresAuth, (req, res) => {
+    const experience = state.experiences.find(row => row.app === req.params.name);
+    if (!experience) { res.sendStatus(404); return; }
+    res.redirect(302, experience.entry);
+  });
+  app.get('/fixture/experience/:document', requiresAuth, (req, res) => res.type('html').send(`<h1>${req.params.document.replace(/[^a-z.-]/g, '')}</h1>`));
   portalBuildRoutes(app, state);
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   assemblyHostRoutes(app, state);

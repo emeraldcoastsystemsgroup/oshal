@@ -1,5 +1,11 @@
 # Experience shells
 
+The approved package migration covers seven experiences: Studio, Jarvis, Orbit, Commons,
+Home/Family, Classroom and Business. See [experience application integration](experience-application-integration.md)
+for the source inventory, Finance/Education hosting baseline, composite-role contract and
+delivery gates. Nexus and Simple chat retain their current behavior. Existing shells below
+are not evidence that package discovery or composite-role assignments have shipped.
+
 As-built notes for the ADR-164 experience layouts served under `src/experience/`. Everything here
 describes what the shipped code does today; the design record and its open items stay in
 [ADR-164](../adr/164-configurable-experience-skins-and-application-views.md).
@@ -22,9 +28,19 @@ The selectable experiences, over one unchanged backend:
 | Central assistant | `/nexus` | Intent composer with push-to-talk dictation, a "Request progress" ledger of observed phases, a typed answer workspace (answer, owner-checked visual, handoffs, background work, approval card, fallback provider), lifecycle states (running, ready, partial, failed, setup needed, stopped waiting, still running (poll limit)), speaking core whose readback meter and progress follow the voice (the status keeps the outcome: complete, stopped, paused while away, audio did not start, no engine); Calendar and Travel open inside the conversation as in-context app previews: the caller's busy windows for a month (free Friday-to-Sunday weekends; unread days unknown, never free), a free weekend or typed dates into Travel's own flight search (admitted callers only), local filters and sort, a best-match line naming the weekend, fare, stops and the busy weekends left out, a comparison across every free weekend of the month (the cards filter it), typed dates checked against the calendar, a fare dialog, a device shortlist and fare watches through Travel; the request ledger adds the page's own Calendar, Travel and preferences rows |
 | Simple chat | `/simple` | One plain text screen over the caller's Jarvis thread: a slim header, the conversation above, the box pinned at the bottom, first-run help with three example prompts that leaves after the first message. Same endpoints and device session as the shells (`POST /api/jarvis/ask`, `GET /api/jarvis/ask/result`, `GET /api/jarvis/history`), so it is the same conversation; an answer's application handoffs, files and visual show as links. No orb, pickers or panels. See [simple-chat.md](./simple-chat.md). |
 
-`/portal` (also `/experience`) is the chooser: the suite inventory, the central assistant as a feature, the three homebases ("One swarm. Three ways to belong.") and the four layouts numbered 01-04, each card with a drawn preview in its palette and one live fact, then recent work and the searchable directory. The cockpit header's **Experiences** menu links the
-same entries plus Simple chat, every shell carries an experience picker in its top bar (Simple chat included), and `/little-monsters`
-redirects to the classroom preset. Plain `/cockpit/` is unchanged: the experiences are opt-in.
+`/portal` (also `/experience`) lists experience cards returned by the installed, caller-authorized
+`GET /api/ui/experiences` catalog, beside recent work and the searchable application directory.
+The cockpit **Experiences** menu and shell pickers consume that same catalog; each choice opens
+through the checked package entry operation. A policy outage does not restore static choices.
+Nexus and Simple retain their existing routes. Legacy seven-experience routes still serve
+the authenticated shell documents; `/little-monsters` still redirects to the Classroom preset.
+Retiring these aliases through the corresponding installed package open operation is pending E5.
+
+These are source implementation details. The current deployed backend has not received E2;
+its bind-mounted cockpit document stays aligned with that backend until coordinated rollout.
+The route table above records renderer behavior and familiar aliases, not installed package
+availability. [The integration contract](./experience-application-integration.md) tracks source,
+release and installed evidence separately. Plain `/cockpit/` keeps the existing operator workspace.
 
 **Kernel applications inside the shells.** The whole-portal shells frame an application's first surface with the audience
 they request (`company` from Studio, Orbit and Commons; `family` from Jarvis). Seven kernel applications serve core

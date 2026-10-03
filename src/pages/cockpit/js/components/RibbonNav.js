@@ -3,23 +3,24 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial cockpit ribbon navigation with Codicon icons
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | UI profile overlay — filter/order hardcoded + dynamic items via /api/ui/profile, with ?profile=<name> dev toggle
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Accept both ?app= and ?profile= as focus-mode URL override (contract doc uses ?app=)
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | App ribbon items now render as in-page iframe tool views, not full-page navigations. Sync initial content area with profile.defaultView.
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | Generic iframe→ribbon message contract (app-navigate / app-tools-changed) with the legacy LM literals mapped onto it — the carve-out deleted the LM-specific bridge, silently no-op'ing every in-page navigation in the packaged app (My Day "Record Lecture", dashboard quick-actions, class tiles). Packaged surfaces can only reach the shell via postMessage, so core speaks a generic dialect.
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bridge: map lm-navigate 'class-<full-uuid>' onto the 8-char dynamic-button prefix (class tiles never matched a button — broken since before the carve-out), and WARN when a navigation targets a button the ribbon doesn't have — the silent no-op is what kept this invisible.
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-global-search' (Search) — the caller-scoped global search surface (/api/search/ui) rides along on every cockpit like Optimizer/Workflow Studio, since search over the caller's own data isn't owned by any one app.
- * 8 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add 'tool-run-trace' (Run Trace) — the caller-scoped run-trace waterfall surface (/api/trace/app) rides along on every cockpit, since tracing a ticket's execution timeline isn't owned by any one app.
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | Platform tools: add the four read surfaces for the shared platform services that shipped headless — Budgets (enforced spend caps), Notifications (per-topic routing prefs), Dead Letters (queue quarantine, operator-only), and My Data (export/delete). They are static pages under src/pages/cockpit/tools/, so they need no Express route. Added _loadOperatorState() (GET /api/cli-tokens/whoami) so the operator-only Dead Letters entry is not pinned into a basic user's rail — the routes self-gate server-side regardless, this only avoids offering a tool that can only answer 403.
- * 10 | maintainer@emeraldcoastsystemsgroup.com  | Rail pin (operator request 2026-08-06): a pin toggle in the top-right corner holds the rail expanded; unpinned restores hover-expand. The preference is a UI setting and persists in localStorage (the ?app= URL contract forbids caching the PROFILE there, not this). State lives on the instance, not the DOM — render() rebuilds innerHTML on every profile/tool change, so the class and handler re-apply per render. Hidden on the mobile drawer, which is always full-width.
- * 11 | maintainer@emeraldcoastsystemsgroup.com  | Platform tools: add 'tool-devices' (Get oshal) — the desktop / phone / TV onboarding page, a static file under src/pages/cockpit/tools/ like the others. The one-click worker-node installer (GET /api/join/node-installer) shipped with no cockpit link at all — its only button lived on career-hunter's Job Board, and only while the user had zero nodes — and the phone PWA and the TV apps were promoted nowhere.
- * 12 | maintainer@emeraldcoastsystemsgroup.com  | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial cockpit ribbon navigation with Codicon icons
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | UI profile overlay — filter/order hardcoded + dynamic items via /api/ui/profile, with ?profile=<name> dev toggle
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Accept both ?app= and ?profile= as focus-mode URL override (contract doc uses ?app=)
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | App ribbon items now render as in-page iframe tool views, not full-page navigations. Sync initial content area with profile.defaultView.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Generic iframe→ribbon message contract (app-navigate / app-tools-changed) with the legacy LM literals mapped onto it — the carve-out deleted the LM-specific bridge, silently no-op'ing every in-page navigation in the packaged app (My Day "Record Lecture", dashboard quick-actions, class tiles). Packaged surfaces can only reach the shell via postMessage, so core speaks a generic dialect.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Bridge: map lm-navigate 'class-<full-uuid>' onto the 8-char dynamic-button prefix (class tiles never matched a button — broken since before the carve-out), and WARN when a navigation targets a button the ribbon doesn't have — the silent no-op is what kept this invisible.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-global-search' (Search) — the caller-scoped global search surface (/api/search/ui) rides along on every cockpit like Optimizer/Workflow Studio, since search over the caller's own data isn't owned by any one app.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-run-trace' (Run Trace) — the caller-scoped run-trace waterfall surface (/api/trace/app) rides along on every cockpit, since tracing a ticket's execution timeline isn't owned by any one app.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add the four read surfaces for the shared platform services that shipped headless — Budgets (enforced spend caps), Notifications (per-topic routing prefs), Dead Letters (queue quarantine, operator-only), and My Data (export/delete). They are static pages under src/pages/cockpit/tools/, so they need no Express route. Added _loadOperatorState() (GET /api/cli-tokens/whoami) so the operator-only Dead Letters entry is not pinned into a basic user's rail — the routes self-gate server-side regardless, this only avoids offering a tool that can only answer 403.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Rail pin (operator request 2026-08-06): a pin toggle in the top-right corner holds the rail expanded; unpinned restores hover-expand. The preference is a UI setting and persists in localStorage (the ?app= URL contract forbids caching the PROFILE there, not this). State lives on the instance, not the DOM — render() rebuilds innerHTML on every profile/tool change, so the class and handler re-apply per render. Hidden on the mobile drawer, which is always full-width.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-devices' (Get oshal) — the desktop / phone / TV onboarding page, a static file under src/pages/cockpit/tools/ like the others. The one-click worker-node installer (GET /api/join/node-installer) shipped with no cockpit link at all — its only button lived on career-hunter's Job Board, and only while the user had zero nodes — and the phone PWA and the TV apps were promoted nowhere.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-147/148: App Loader and Users join Dead Letters as operator-only platform-tray entries (iframe tool views over /app-loader and /users). Operator asked why the store was not reachable from the default /cockpit/ page — it was reachable only by typing the URL. Gated by the same _loadOperatorState flag, which reads whoami -> isOperator(), so a role granted on the Users page surfaces them without an env-file edit; the routes self-gate with requiresOperator regardless.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | app-navigate may carry a `query` (sanitizeToolQuery: k=v&k=v, URL-safe, bounded) that the view controller appends to that tool's OWN iframeUrl — so the Create front door can open AI Office on a purpose (kind/starter/theme). A query onto the already-active tile re-renders it. Nothing here can point a frame anywhere but the tile's own URL.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Delegate explicitly marked default-sidebar pages to admitted top workspaces while keeping active pages, focused app navigation and registered iframe targets available.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked tiles: a synthesised profile item may carry `locked` (the target package is not discoverable for this person). The item is forwarded into the view, rendered in the existing guest-disabled treatment (lock glyph, dimmed) with the kernel's role-guidance link on the button, and a click follows that link top-level — where the 403 page would have sent the person — instead of opening a dead frame. ribbonTilePresentation is the pure, exported decision so it can be tested against real view shapes.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-channels' (Chat channels) — the self-serve page for Discord, Telegram, SMS and WhatsApp (link a chat identity with a one-time code, unlink it, and for an operator paste the deployment's Discord bot token). A static page under src/pages/cockpit/tools/ like Notifications; nothing in the cockpit linked the channel routes before, so "cockpit → Channels" in the docs pointed at a page that did not exist.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): a non-operator on a deployment whose landing names an application gets no platform hub, a logo that returns to that application and no Experiences menu — the deployment is that application's product for them. Inputs ride the profile response (landingApp, operator); resolveShellLock is the pure, exported decision.
- * 15 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked tiles: a synthesised profile item may carry `locked` (the target package is not discoverable for this person). The item is forwarded into the view, rendered in the existing guest-disabled treatment (lock glyph, dimmed) with the kernel's role-guidance link on the button, and a click follows that link top-level — where the 403 page would have sent the person — instead of opening a dead frame. ribbonTilePresentation is the pure, exported decision so it can be tested against real view shapes.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -317,6 +318,10 @@ export class RibbonNav {
     await this._loadGuestState();
     await this._loadOperatorState();
     this.profile = await this._fetchProfile();
+    if (this.profile?.experience?.shell === 'page') {
+      window.location.replace(`/api/ui/experiences/${encodeURIComponent(this.profile.name)}/open`);
+      return;
+    }
     this._applyAppBranding();
     this.activeView = this.profile?.defaultView || 'tickets';
     this.views = this._buildFrameworkViews();
@@ -334,6 +339,7 @@ export class RibbonNav {
     this.shellLocked = resolveShellLock({ isOperator: this.profileOperator ?? this.isOperator, landingApp: this.landingApp });
     if (this.hidePlatformChrome && !this.shellLocked) this._appendPlatformHub();
     if (this.shellLocked) this._applyShellLock();
+    else await this._loadExperiences();
 
     logger.info('Ribbon initialised with profile', {
       profile: this.profile?.name,
@@ -359,6 +365,33 @@ export class RibbonNav {
       home.setAttribute('aria-label', `${this.profile?.displayName || this.landingApp} — home`);
     }
     for (const el of document.querySelectorAll('[data-experience], [data-experiences-label]')) el.hidden = true;
+  }
+
+  /**
+   * @description Build header choices from installed packages admitted by the current caller policy.
+   * @returns {Promise<void>} Resolves after discovery; missing or refused discovery keeps the menu hidden.
+   */
+  async _loadExperiences() {
+    const host = document.getElementById('experience-menu');
+    if (!host) return;
+    host.replaceChildren(); host.hidden = true;
+    try {
+      const response = await fetch('/api/ui/experiences', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!Array.isArray(data.experiences) || data.experiences.length < 2) return;
+      const heading = document.createElement('div'); heading.className = 'header-utilities-label';
+      heading.dataset.experiencesLabel = ''; heading.textContent = 'Experiences'; host.append(heading);
+      for (const row of data.experiences) {
+        if (typeof row.app !== 'string' || typeof row.label !== 'string') continue;
+        const link = document.createElement('a'); link.className = 'header-btn';
+        link.href = `/api/ui/experiences/${encodeURIComponent(row.app)}/open`;
+        link.dataset.experience = row.app; link.textContent = row.label; host.append(link);
+      }
+      const all = document.createElement('a'); all.className = 'header-btn'; all.href = '/portal';
+      all.dataset.experience = '/portal'; all.textContent = 'All experiences'; host.append(all);
+      host.hidden = false;
+    } catch (error) { logger.warn('Experience menu unavailable', { error: String(error) }); }
   }
 
   /**

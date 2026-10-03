@@ -3,32 +3,32 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial swarm-app routes per ADR 2026-04-20 + export/import extension
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Harden POST /load: confine the operator-supplied manifest path to the swarm-apps/ directory (reject absolute paths + ../ traversal + non-YAML) so it can't read arbitrary files
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bot Forge bulletproofing: GET /pending lists on-disk manifests not yet loaded; resolveSafeManifestPath now also permits the writable deployed-apps/ dir (where the Forge writes packed bots) so the authenticated operator can one-click Inject them live — replaces the agent's broken unauthenticated curl to /load.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | (1) createPackagedThemeCssFallback — serve an active package's bundled ui/<id>.css at the legacy /cockpit/css/themes/<id>.css path (carve-out deleted core's copy; LM iframes lost every color variable). (2) POST /load stamps the caller as ownerSub — installing a person-scoped package left owner_sub NULL, so RLS hid the app row from every non-operator session and the profile fell back to a stale disk config.
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 §5 data plane: uninstall-impact reports the live RAG collections the manifest's ragCollections globs match; DELETE /:name accepts ?dropData=true (OPERATOR-ONLY — destructive) which deletes them via the injected teardown port and returns droppedRagCollections.
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11: uninstall-impact reports toolsProvided + toolDependents (active apps whose dependencies.tools name a tool this app provides) and blocked reflects them; the DELETE 409 body names the stranded tools.
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D7: wire the app-store remote rail (GET /catalog + operator-only POST /install-remote from app-store-remote.ts) BEFORE the /:name params so the literal segments aren't captured as app names.
- * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: add framework-owned operator APIs for the user-by-app access matrix, assignment updates, and explicit-assignment clearing.
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | GET /:name is now viewer-scoped (getAppForViewer) instead of serving the raw record. It had no visibility check of any kind, so any caller who could name an app — including a guest, for whom the mount-level requiresAuth is a no-op — received the installing operator's real OIDC subject. Not-visible now answers 404 like not-found, so it cannot be used to confirm another user's app exists.
- * 10 | maintainer@emeraldcoastsystemsgroup.com  | ADR-141: GET /:name/setup (the group setup-dashboard plan — manifest data only, probes are fetched by the page in the viewer's own session) and GET /:name/setup-dashboard (the ONE kernel-served setup / connection-status page every group gets, src/pages/cockpit/tools/app-group-setup.html). 404 for anything that is not an active group.
- * 11 | maintainer@emeraldcoastsystemsgroup.com  | Require protected application assignments to use authorization preview/apply instead of the legacy tier mutation API.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial swarm-app routes per ADR 2026-04-20 + export/import extension
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Harden POST /load: confine the operator-supplied manifest path to the swarm-apps/ directory (reject absolute paths + ../ traversal + non-YAML) so it can't read arbitrary files
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Bot Forge bulletproofing: GET /pending lists on-disk manifests not yet loaded; resolveSafeManifestPath now also permits the writable deployed-apps/ dir (where the Forge writes packed bots) so the authenticated operator can one-click Inject them live — replaces the agent's broken unauthenticated curl to /load.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | (1) createPackagedThemeCssFallback — serve an active package's bundled ui/<id>.css at the legacy /cockpit/css/themes/<id>.css path (carve-out deleted core's copy; LM iframes lost every color variable). (2) POST /load stamps the caller as ownerSub — installing a person-scoped package left owner_sub NULL, so RLS hid the app row from every non-operator session and the profile fell back to a stale disk config.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 §5 data plane: uninstall-impact reports the live RAG collections the manifest's ragCollections globs match; DELETE /:name accepts ?dropData=true (OPERATOR-ONLY — destructive) which deletes them via the injected teardown port and returns droppedRagCollections.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 D11: uninstall-impact reports toolsProvided + toolDependents (active apps whose dependencies.tools name a tool this app provides) and blocked reflects them; the DELETE 409 body names the stranded tools.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 D7: wire the app-store remote rail (GET /catalog + operator-only POST /install-remote from app-store-remote.ts) BEFORE the /:name params so the literal segments aren't captured as app names.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | ADR-118 Phase 2: add framework-owned operator APIs for the user-by-app access matrix, assignment updates, and explicit-assignment clearing.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | GET /:name is now viewer-scoped (getAppForViewer) instead of serving the raw record. It had no visibility check of any kind, so any caller who could name an app — including a guest, for whom the mount-level requiresAuth is a no-op — received the installing operator's real OIDC subject. Not-visible now answers 404 like not-found, so it cannot be used to confirm another user's app exists.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-141: GET /:name/setup (the group setup-dashboard plan — manifest data only, probes are fetched by the page in the viewer's own session) and GET /:name/setup-dashboard (the ONE kernel-served setup / connection-status page every group gets, src/pages/cockpit/tools/app-group-setup.html). 404 for anything that is not an active group.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Require protected application assignments to use authorization preview/apply instead of the legacy tier mutation API.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/uninstall-impact reports optionalDependents (apps that list this one as an OPTIONAL dependency); only required dependents block.
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
- * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
- * 15 | maintainer@emeraldcoastsystemsgroup.com  | GET /home-plan now admits a card through current application policy (discovery + the explicit coarse deny tier), the same test /api/ui/workspaces applies. It filtered on INSTALL SCOPE alone, so a protected package stayed on Home — named area plus an Open button in All applications — for a caller holding no grant, and survived revocation while its top-navigation tab disappeared. The authorization port is a REQUIRED construction option so a caller cannot silently re-open the gap.
- * 16 | maintainer@emeraldcoastsystemsgroup.com   | A GUEST session degrades to the unprotected applications instead of being refused. The actor resolver throws for the guest issuer by design, and routing that refusal to the surface as 401 left AppsHomeView rendering "The application list could not be read" on a deployment running ENABLE_GUEST_MODE=true. A guest is now admitted with NO actor, which the runtime already reads as refusing every protected application - stricter than main, which showed a guest those same framework apps without asking policy at all.
- * 15 | maintainer@emeraldcoastsystemsgroup.com  | ADR-145 D4/D5: GET /:name/setup and /:name/setup-dashboard address an ACTIVE GROUP **or** an ACTIVE APP, so an app that belongs to no group can finally report. The plan comes from getAppStatusPlan over the manifests THIS caller may see (the /:name visibility rule, so an invisible app 404s like a missing one) and carries each app's summary probe; for a member that declares no `summary:` the response also carries D5's fallbackItems, composed from this user's own recent jarvis_tasks rows through the injected recentAppTasks port (the router owns no pool). Manifest data only — the page still asks every probe itself in the viewer's own session.
- * 17 | maintainer@emeraldcoastsystemsgroup.com  | PUT /:name/access accepts an OPTIONAL userIssuer so an operator-made tier assignment can name the verified identity provider it belongs to (migration 145). Omitting it stores no issuer, which is exactly what this route did before and still resolves only for a canonical local account; it grants nobody anything on its own.
- * 18 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The publish JSDoc said the endpoint has "two emit targets: a single-shot bot (manifest-worker) or an authored multi-bot workflow (staged)". The compiler sets pipeline: 'graph' unconditionally on both emit paths, so neither is an emit target and there are three spec modes, not two. It survived the CV-1 sweep only by phrasing the claim differently from the pattern being grepped.
- * 19 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is a path ALLOW-LIST: a frozen root here is a containment boundary computed against a directory the rest of the process does not use. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
- * 20 | maintainer@emeraldcoastsystemsgroup.com   | POST /load and POST /import require swarm operator authority; ordinary callers receive 403 before any manifest file is written to disk or loaded.
- * 21 | maintainer@emeraldcoastsystemsgroup.com   | Register the operator schedule-control routes (GET /:name/schedules, PATCH /:name/schedules/:id, app-schedule-control-routes.ts) beside the ADR-157 services routes, before this router's own /:name routes.
- * 22 | maintainer@emeraldcoastsystemsgroup.com   | DELETE /:name removes the app's schedule overrides after the app is removed (clearManifestOverridesFor), so a reinstall starts from the manifest; a toggle keeps them. A failure to clear is logged and does not fail the uninstall.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | POST /import re-enters the caller's RLS request identity after multer (preserveRequestIdentity). When the manifest's last bytes reached multer on a later socket chunk, loadApp ran with no AsyncLocalStorage identity and the owner-stamped swarm_applications write was refused by RLS (400). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: mount the kernel-served Scheduled services surface (GET /:name/services, POST /:name/services/:id/activate, DELETE /:name/services/:id/activation) on this router, which already carries requiresAuth at its mount. Registered before the router's own /:name routes so the literal segments match first.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | GET /home-plan now admits a card through current application policy (discovery + the explicit coarse deny tier), the same test /api/ui/workspaces applies. It filtered on INSTALL SCOPE alone, so a protected package stayed on Home — named area plus an Open button in All applications — for a caller holding no grant, and survived revocation while its top-navigation tab disappeared. The authorization port is a REQUIRED construction option so a caller cannot silently re-open the gap.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | ADR-145 D4/D5: GET /:name/setup and /:name/setup-dashboard address an ACTIVE GROUP **or** an ACTIVE APP, so an app that belongs to no group can finally report. The plan comes from getAppStatusPlan over the manifests THIS caller may see (the /:name visibility rule, so an invisible app 404s like a missing one) and carries each app's summary probe; for a member that declares no `summary:` the response also carries D5's fallbackItems, composed from this user's own recent jarvis_tasks rows through the injected recentAppTasks port (the router owns no pool). Manifest data only — the page still asks every probe itself in the viewer's own session.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | A GUEST session degrades to the unprotected applications instead of being refused. The actor resolver throws for the guest issuer by design, and routing that refusal to the surface as 401 left AppsHomeView rendering "The application list could not be read" on a deployment running ENABLE_GUEST_MODE=true. A guest is now admitted with NO actor, which the runtime already reads as refusing every protected application - stricter than main, which showed a guest those same framework apps without asking policy at all.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | PUT /:name/access accepts an OPTIONAL userIssuer so an operator-made tier assignment can name the verified identity provider it belongs to (migration 145). Omitting it stores no issuer, which is exactly what this route did before and still resolves only for a canonical local account; it grants nobody anything on its own.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Comment correction only. The publish JSDoc said the endpoint has "two emit targets: a single-shot bot (manifest-worker) or an authored multi-bot workflow (staged)". The compiler sets pipeline: 'graph' unconditionally on both emit paths, so neither is an emit target and there are three spec modes, not two. It survived the CV-1 sweep only by phrasing the claim differently from the pattern being grepped.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is a path ALLOW-LIST: a frozen root here is a containment boundary computed against a directory the rest of the process does not use. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | POST /load and POST /import require swarm operator authority; ordinary callers receive 403 before any manifest file is written to disk or loaded.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Register the operator schedule-control routes (GET /:name/schedules, PATCH /:name/schedules/:id, app-schedule-control-routes.ts) beside the ADR-157 services routes, before this router's own /:name routes.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | DELETE /:name removes the app's schedule overrides after the app is removed (clearManifestOverridesFor), so a reinstall starts from the manifest; a toggle keeps them. A failure to clear is logged and does not fail the uninstall.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | Refuse and log nonoperator identity resolution failures before filtering installed applications.
  */
-
-/** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import multer from 'multer';
 import fs from 'fs';
@@ -217,10 +217,20 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
       // is a no-op for existing apps until person-scoped publishing stamps an owner.
       const { sub } = getCaller(req);
       const apps = await service.listApps(filter, { ownerSub: sub, isOperator: isOperator(req) });
-      res.json({ apps });
+      if (isOperator(req)) { res.json({ apps }); return; }
+      let actor: AuthorizationActor | undefined;
+      if (!isGuestRequest(req)) {
+        actor = await options.authorization.resolveActor(req);
+        if (!actor.isActive || !actor.sub || !actor.issuer) {
+          throw Object.assign(new Error('Verified application actor unavailable'), { status: 401 });
+        }
+      }
+      const discoverable = [];
+      for (const app of apps) if (await options.authorization.canDiscover(app.name, actor)) discoverable.push(app);
+      res.json({ apps: discoverable });
     } catch (err: any) {
       logger.error({ err }, 'Failed to list swarm apps');
-      res.status(500).json({ error: err.message });
+      res.status([401, 403].includes(err.status) ? err.status : 500).json({ error: err.message });
     }
   });
 
@@ -661,11 +671,12 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
     const name = String(req.params.name);
     try {
       const app = await service.getApp(name);
-      if (!app || app.status !== 'active' || !app.manifest.theme || !/^[a-z0-9-]+$/i.test(app.manifest.theme)) {
+      const theme = app?.manifest.experience?.skin ?? app?.manifest.theme;
+      if (!app || app.status !== 'active' || !theme || !/^[a-z0-9-]+$/i.test(theme)) {
         res.status(404).type('text/plain').send('no bundled theme');
         return;
       }
-      const cssPath = path.resolve(path.dirname(app.manifestPath), 'ui', `${app.manifest.theme}.css`);
+      const cssPath = path.resolve(path.dirname(app.manifestPath), 'ui', `${theme}.css`);
       if (!cssPath.startsWith(path.resolve(path.dirname(app.manifestPath), 'ui')) || !fs.existsSync(cssPath)) {
         res.status(404).type('text/plain').send('no bundled theme');
         return;

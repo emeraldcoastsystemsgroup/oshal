@@ -1,10 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 D8: lock the kernel-skill contract. The kernel's skills are its package-facing API — every declared module must exist AND be re-exported by the build anchor (the re-export is what durably carries a feature into dist/: tsconfig.server.json USED to carry a blanket src/features/** exclude that made a named include a no-op, and although that exclude is now gone, a per-feature include is one line anybody can tidy away and nothing fails loudly when it is). Also proves the manifest `uses:` validator fails CLOSED on an unknown skill id, so a typo dies at load instead of crashing an installed app at mount.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1 carve #5 (finance): the contract grows to eleven — 'payments' is pinned as a declared skill because the finance rip removed its last core importer and BOTH the finance and payments store packages resolve @/features/payments from dist. The spec list is the guard that a future "cleanup" of the anchor can't silently unpin it.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-090 D8: lock the kernel-skill contract. The kernel's skills are its package-facing API — every declared module must exist AND be re-exported by the build anchor (the re-export is what durably carries a feature into dist/: tsconfig.server.json USED to carry a blanket src/features/** exclude that made a named include a no-op, and although that exclude is now gone, a per-feature include is one line anybody can tidy away and nothing fails loudly when it is). Also proves the manifest `uses:` validator fails CLOSED on an unknown skill id, so a typo dies at load instead of crashing an installed app at mount.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 Wave 1 carve #5 (finance): the contract grows to eleven — 'payments' is pinned as a declared skill because the finance rip removed its last core importer and BOTH the finance and payments store packages resolve @/features/payments from dist. The spec list is the guard that a future "cleanup" of the anchor can't silently unpin it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin authenticated-artifacts and package-tools in the exact declared capability contract.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Pin app-dependencies: the floor a manifest names when it uses dependencies.required/optional, so an older core refuses the package instead of installing it without its required dependencies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin google-calendar: the contracted kernel skill providing @/features/google-calendar.
@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2: pin fantasy-leagues in the exact contracted list, pin its single package-facing specifier (the barrel sports-edge imports), and prove the manifest validator accepts it under uses:. A package naming it on a core without it is refused at load, which is the compatibility floor sports-edge now relies on.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin location in the exact contracted list, pin its single package-facing specifier (the slice barrel), and prove the manifest validator accepts it under uses:, so a package that names it is refused on a core that predates it.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin exact anonymous package reads in the capability inventory and build-anchor guards.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -95,6 +96,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'application-authorization',
         'authenticated-artifacts',
         'bound-workflow-results',
+        'experience',
         'futures-forward-receipts',
         'futures-archive-import',
         'package-tools',

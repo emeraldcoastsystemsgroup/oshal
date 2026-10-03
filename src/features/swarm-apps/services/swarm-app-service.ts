@@ -1,55 +1,56 @@
 /**
  * CHANGE LOG
- * 37 | maintainer@emeraldcoastsystemsgroup.com | Initialize authoritative manifest bot runtime records before activation; preserve stored provider/model choices.
- * 36 | maintainer@emeraldcoastsystemsgroup.com | Publish installed smoke tests after successful activation and retract them before reload/deactivation; extract stateless artifact registration to keep lifecycle orchestration within its module size limit.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial SwarmAppService — orchestrates manifest load, toggle, list per ADR
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Simplified synthesiseProfile — single hide-list rule, no focused toggle
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry manifest.workflow.autoStart into the registered WorkflowDefinition so auto-start workflows are recognized at dispatch.
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | autoLoadAllWithRetry — boot-storm resilience: transient pg connect timeouts during 20-container startup left the in-memory ribbon registry empty (no per-class icons) with no retry
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile now emits per-app identity: theme (manifest skin, applied transiently by the cockpit so each app looks distinct without clobbering the operator's global theme) and chatBots ([{agentId,name}] — the app's own declared bots, so the chat selector renders this app's swarm; they run inline on chat so need not be Redis-live).
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | Auto-hide the ribbon Tickets item for any app without a ticketType — tickets only belong to an app that owns a queue (cockpit filters to that type); otherwise it would show the whole unfiltered fleet.
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | isVisibleToCaller: explicit 'operator' scope arm — admin-only apps (security-center) are hidden from every non-operator listing; operators bypass via listApps, and the RLS public-read policy (063) already excludes non-public rows at the DB layer.
- * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 P1: activate() mounts a package's own compiled-JS routes via an injected ManifestRouteMounter (packageDir = the manifest's own directory); deactivate() unmounts. No-op unless the app declares routes AND a flag-enabled mounter is injected — the framework's hardcoded server.ts mounts stay authoritative by default.
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 P2 migration runner: activate() applies a package's OWN migrations/*.sql (package-relative paths only) idempotently, tracked in app_package_migrations, each file in a single-checked-out-client transaction; flag APP_PACKAGE_MIGRATIONS default OFF. Verified by tests/unit/app-package-migrations.spec.ts.
- * 10 | maintainer@emeraldcoastsystemsgroup.com   | findActiveAppByTheme — resolve a packaged app from its bundled skin id so the legacy /cockpit/css/themes/<id>.css contract can fall back to package-bundled CSS (the carve-out deleted core's little-monsters.css and every LM iframe lost its color variables).
- * 11 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards manifest dependencies.connectors as the app's connector allow-list (present = complete set surfaces may offer, [] = none, absent = no filter) — a kids' education app must not prompt for Facebook; the cockpit ribbon pin, marketplace view, and welcome wizard consume it.
- * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085: (1) activate() registers packaged bots into the ACTIVE bot registry via the injected ManifestBotRegistrar (deactivate retracts — no ghost dispatch); store apps need zero core-registry edits and the boot wiring audit passes. (2) uninstallImpact expands manifest ragCollections globs against live collections; unloadApp({dropData}) deletes them per-name, non-fatally — the §5 data-loss gate, never on toggle-off.
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D11 tool ownership: loadApp fails CLOSED on a tool name another ACTIVE app provides (names are GLOBAL — runtime_tool_executors is keyed by tool_name and upserted ON CONFLICT DO UPDATE, so a duplicate silently REPOINTS the other app's tool; purchasing + travel both declared 'explain-pick', travel sorted last under readdirSync, and the SHOPPING concierge was live-routing to POST /api/travel/chat) and on an unresolvable dependencies.tools. deregisterManifestTools never removes a tool another active app still provides. uninstallImpact reports toolsProvided/toolDependents and unloadApp blocks on them (a dependent BLOCKS; it never RETAINS — retention-by-dependent would let any package pin another app's executor alive past its owner's removal). manifestToolOwner() backs the runtime routes' 409 guard. All derived at query time from active manifests — never from tools.registered_by (first-writer-wins) or the swarm-app:<name> tag (last-writer-wins), which disagree under a collision.
- * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 Wave 1: registerManifestTools substitutes {packageDir} in a manifest cli tool's cliCommand with the package's own directory (the D10 ctx.appPackageDir pattern, applied to the tool path). Substitution happens BEFORE registration on purpose: the cli-command-validator rejects unknown template tokens, so the stored executor is always a concrete path — a packaged CLI tool (first: brand-graphics) can bundle its script instead of shipping it into core scripts/.
- * 15 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards manifest.surface.ops as surfaceOps — the cockpit surface-bridge relay's per-app op allow-list (resolveRelayTarget ctx.allowedOps). Fail-closed at the relay: absent = no ops relayed (deliberately stricter than connectors' absent-=-unfiltered).
- * 16 | maintainer@emeraldcoastsystemsgroup.com   | seedBotAuthorizations resolves persona paths against the package dir first, cwd second. cwd-only resolution sent every packaged bot's persona to /app/<persona> (missing), so the seeder logged "Persona file returned null" and seeded 0 tools for EVERY store-installed app's bots — found live during the brand-graphics carve activation; core manifests (repo-relative ai-lab/ paths) keep the cwd resolution via the fallback.
- * 17 | maintainer@emeraldcoastsystemsgroup.com   | ADR-097: toSummary carries manifest.suite (null for pre-097 packages) so /api/swarm/apps callers — first the applications catalog — can group by primary suite.
- * 18 | maintainer@emeraldcoastsystemsgroup.com   | ADR-090 addendum: activate() registers the app's skillProfiles into the shared registry (applySkillProfiles, keyed by app+ticketType); deactivate() retracts them. Mirrors applyGuestTier — non-fatal, replace-by-app, full teardown on toggle-off so an inactive app holds zero live profiles.
- * 19 | maintainer@emeraldcoastsystemsgroup.com   | De-brand (visible leak): dropped the orphaned legacy-brand key from FRAMEWORK_ITEMS — RibbonNav had no catalog entry for it so it rendered nothing; the retired RCA-demo brand must not appear in the framework ribbon.
- * 20 | maintainer@emeraldcoastsystemsgroup.com   | toSummary now surfaces an `icon` (first static ribbon-tile codicon, else assistant icon, else null) via firstAppIcon() so the /applications console can render a real per-app icon instead of a first-initial placeholder.
- * 21 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest-owned hideAssistant policy so immersive app surfaces can suppress redundant global assistant chrome.
- * 22 | maintainer@emeraldcoastsystemsgroup.com   | Status-flip gap (BACKLOG, surfaced by the skill-profiles adversarial review): loadApp on a record whose resulting status is 'inactive' now calls deactivate() — a manifest edit flipping active→inactive used to call NEITHER activate nor deactivate, so the app read status='inactive' while its bots/workflow/tools/schedules/guest-tier/skill-profiles stayed live until a real toggle-off. deactivate() is idempotent, so the boot auto-load of an already-inactive app stays a safe no-op.
- * 23 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile tools removed by an app manifest update before upsert: retire sole-owner executors fail-loud, delete only the app's prior/incoming declared-bot grants for retired names, retain another active app's same-named executor, and fail closed on activation rollback so stale grants cannot reappear when a tool name is later enabled.
- * 24 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: prevent manifest-derived teardown from deleting kernel-owned RAG collections.
- * 25 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: pass each manifest's opt-in app access declaration to the dynamic route enforcement boundary.
- * 26 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: cache each route-owning app's access declaration so the global gate covers hard-mounted kernel routes as well as dynamic package routes.
- * 27 | maintainer@emeraldcoastsystemsgroup.com   | Register package-contributed Takeout slices as a fail-closed activation resource and retract them on reload, toggle-off, and uninstall.
- * 28 | maintainer@emeraldcoastsystemsgroup.com   | Forward the manifest schedule target as an explicit prompt or deterministic service-route union so package workers never enter the generic prompt dispatcher.
- * 29 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile retired and execution-class-changed schedules from the previous active manifest before activating its replacement, preventing stale prompt/per-user/service handlers after hot reload.
- * 30 | maintainer@emeraldcoastsystemsgroup.com   | Back under the 1000-code-line hard cap (1082 -> 941). Entries 27-29 pushed this file past it, which fails the BLOCKING gate_lint (eslint max-lines, --max-warnings 0) and would have blocked the branch. Moved out the two groups that were never orchestration: record presentation/visibility to swarm-app-record-view.ts, and manifest-to-runtime translation (tool create-input, selector seed, safe WHERE, interpolation) to swarm-app-manifest-mapping.ts. Verbatim moves behind the same names, so the class body and this module's public exports are unchanged; both tsconfigs typecheck at 0 errors and the manifest specs stay green.
- * 31 | maintainer@emeraldcoastsystemsgroup.com   | Forward ui.static[].group into the synthesised ribbon items. RibbonNav has grouped on this field since the rail-pin work, but synthesiseProfile's static-item map listed the keys it copied, so a manifest declaring `group:` produced an identical flat ribbon with no error anywhere — the silent no-op that made the feature look unimplemented. Forwarded verbatim; the renderer stays the authority on where a heading is allowed.
- * 32 | maintainer@emeraldcoastsystemsgroup.com   | listApps passes its caller to toSummary as the VIEWER, and the new getAppForViewer is the viewer-scoped counterpart to getApp. A public-scoped app keeps the owner_sub stamped at install, so both read paths were serializing the deployment operator's OIDC subject to every caller. The viewer is passed through even when undefined on purpose: global search lists with no caller and matches summary.ownerSub to find a user's own person-scoped apps, so unconditional redaction would have hidden those from their owner.
- * 33 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
- * 34 | maintainer@emeraldcoastsystemsgroup.com   | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
- * 35 | maintainer@emeraldcoastsystemsgroup.com   | ADR-141 application groups: activate() fail-closes a `kind: group` whose borrowed toolbar surfaces or setup readiness do not resolve against its ACTIVE members (member + surface named; the record lands inactive); synthesiseProfile renders a group as its kernel setup-dashboard tile followed by the member surfaces its toolbar borrows (resolved at synthesis, so a member that moves a surface is followed); getGroupSetupPlan() hands the dashboard route the steps with each member's probe. autoLoadAll loads groups AFTER every app (orderGroupsLast) so directory order cannot fail-close a group's first boot. Resolution logic lives in swarm-app-group.ts (this file is over its 800-line budget); the static-item map moved there as staticRibbonItems.
- * 36 | maintainer@emeraldcoastsystemsgroup.com   | loadApp adopts rows staged before first sign-in for OSHAL_INSTALL_OWNER_SUB and makes that owner their administrator (install-owner.ts — the rule lives outside this over-budget file). Unowned person-scoped apps were invisible to everyone, and with no explicit tier the rail hid every ADR-149 protected app from the operator who installed them. Adoption happens once; an existing owner or tier is never overridden.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial SwarmAppService — orchestrates manifest load, toggle, list per ADR
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Simplified synthesiseProfile — single hide-list rule, no focused toggle
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry manifest.workflow.autoStart into the registered WorkflowDefinition so auto-start workflows are recognized at dispatch.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | autoLoadAllWithRetry — boot-storm resilience: transient pg connect timeouts during 20-container startup left the in-memory ribbon registry empty (no per-class icons) with no retry
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | synthesiseProfile now emits per-app identity: theme (manifest skin, applied transiently by the cockpit so each app looks distinct without clobbering the operator's global theme) and chatBots ([{agentId,name}] — the app's own declared bots, so the chat selector renders this app's swarm; they run inline on chat so need not be Redis-live).
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Auto-hide the ribbon Tickets item for any app without a ticketType — tickets only belong to an app that owns a queue (cockpit filters to that type); otherwise it would show the whole unfiltered fleet.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | isVisibleToCaller: explicit 'operator' scope arm — admin-only apps (security-center) are hidden from every non-operator listing; operators bypass via listApps, and the RLS public-read policy (063) already excludes non-public rows at the DB layer.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 P1: activate() mounts a package's own compiled-JS routes via an injected ManifestRouteMounter (packageDir = the manifest's own directory); deactivate() unmounts. No-op unless the app declares routes AND a flag-enabled mounter is injected — the framework's hardcoded server.ts mounts stay authoritative by default.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 P2 migration runner: activate() applies a package's OWN migrations/*.sql (package-relative paths only) idempotently, tracked in app_package_migrations, each file in a single-checked-out-client transaction; flag APP_PACKAGE_MIGRATIONS default OFF. Verified by tests/unit/app-package-migrations.spec.ts.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | findActiveAppByTheme — resolve a packaged app from its bundled skin id so the legacy /cockpit/css/themes/<id>.css contract can fall back to package-bundled CSS (the carve-out deleted core's little-monsters.css and every LM iframe lost its color variables).
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | synthesiseProfile forwards manifest dependencies.connectors as the app's connector allow-list (present = complete set surfaces may offer, [] = none, absent = no filter) — a kids' education app must not prompt for Facebook; the cockpit ribbon pin, marketplace view, and welcome wizard consume it.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-085: (1) activate() registers packaged bots into the ACTIVE bot registry via the injected ManifestBotRegistrar (deactivate retracts — no ghost dispatch); store apps need zero core-registry edits and the boot wiring audit passes. (2) uninstallImpact expands manifest ragCollections globs against live collections; unloadApp({dropData}) deletes them per-name, non-fatally — the §5 data-loss gate, never on toggle-off.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 D11 tool ownership: loadApp fails CLOSED on a tool name another ACTIVE app provides (names are GLOBAL — runtime_tool_executors is keyed by tool_name and upserted ON CONFLICT DO UPDATE, so a duplicate silently REPOINTS the other app's tool; purchasing + travel both declared 'explain-pick', travel sorted last under readdirSync, and the SHOPPING concierge was live-routing to POST /api/travel/chat) and on an unresolvable dependencies.tools. deregisterManifestTools never removes a tool another active app still provides. uninstallImpact reports toolsProvided/toolDependents and unloadApp blocks on them (a dependent BLOCKS; it never RETAINS — retention-by-dependent would let any package pin another app's executor alive past its owner's removal). manifestToolOwner() backs the runtime routes' 409 guard. All derived at query time from active manifests — never from tools.registered_by (first-writer-wins) or the swarm-app:<name> tag (last-writer-wins), which disagree under a collision.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | ADR-085 Wave 1: registerManifestTools substitutes {packageDir} in a manifest cli tool's cliCommand with the package's own directory (the D10 ctx.appPackageDir pattern, applied to the tool path). Substitution happens BEFORE registration on purpose: the cli-command-validator rejects unknown template tokens, so the stored executor is always a concrete path — a packaged CLI tool (first: brand-graphics) can bundle its script instead of shipping it into core scripts/.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | synthesiseProfile forwards manifest.surface.ops as surfaceOps — the cockpit surface-bridge relay's per-app op allow-list (resolveRelayTarget ctx.allowedOps). Fail-closed at the relay: absent = no ops relayed (deliberately stricter than connectors' absent-=-unfiltered).
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | seedBotAuthorizations resolves persona paths against the package dir first, cwd second. cwd-only resolution sent every packaged bot's persona to /app/<persona> (missing), so the seeder logged "Persona file returned null" and seeded 0 tools for EVERY store-installed app's bots — found live during the brand-graphics carve activation; core manifests (repo-relative ai-lab/ paths) keep the cwd resolution via the fallback.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | ADR-097: toSummary carries manifest.suite (null for pre-097 packages) so /api/swarm/apps callers — first the applications catalog — can group by primary suite.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | ADR-090 addendum: activate() registers the app's skillProfiles into the shared registry (applySkillProfiles, keyed by app+ticketType); deactivate() retracts them. Mirrors applyGuestTier — non-fatal, replace-by-app, full teardown on toggle-off so an inactive app holds zero live profiles.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | De-brand (visible leak): dropped the orphaned legacy-brand key from FRAMEWORK_ITEMS — RibbonNav had no catalog entry for it so it rendered nothing; the retired RCA-demo brand must not appear in the framework ribbon.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | toSummary now surfaces an `icon` (first static ribbon-tile codicon, else assistant icon, else null) via firstAppIcon() so the /applications console can render a real per-app icon instead of a first-initial placeholder.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Forward the manifest-owned hideAssistant policy so immersive app surfaces can suppress redundant global assistant chrome.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Status-flip gap (BACKLOG, surfaced by the skill-profiles adversarial review): loadApp on a record whose resulting status is 'inactive' now calls deactivate() — a manifest edit flipping active→inactive used to call NEITHER activate nor deactivate, so the app read status='inactive' while its bots/workflow/tools/schedules/guest-tier/skill-profiles stayed live until a real toggle-off. deactivate() is idempotent, so the boot auto-load of an already-inactive app stays a safe no-op.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Reconcile tools removed by an app manifest update before upsert: retire sole-owner executors fail-loud, delete only the app's prior/incoming declared-bot grants for retired names, retain another active app's same-named executor, and fail closed on activation rollback so stale grants cannot reappear when a tool name is later enabled.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | SEC-05: prevent manifest-derived teardown from deleting kernel-owned RAG collections.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | ADR-118 Phase 2: pass each manifest's opt-in app access declaration to the dynamic route enforcement boundary.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | ADR-118 Phase 2: cache each route-owning app's access declaration so the global gate covers hard-mounted kernel routes as well as dynamic package routes.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com | Register package-contributed Takeout slices as a fail-closed activation resource and retract them on reload, toggle-off, and uninstall.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com | Forward the manifest schedule target as an explicit prompt or deterministic service-route union so package workers never enter the generic prompt dispatcher.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Reconcile retired and execution-class-changed schedules from the previous active manifest before activating its replacement, preventing stale prompt/per-user/service handlers after hot reload.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Back under the 1000-code-line hard cap (1082 -> 941). Entries 27-29 pushed this file past it, which fails the BLOCKING gate_lint (eslint max-lines, --max-warnings 0) and would have blocked the branch. Moved out the two groups that were never orchestration: record presentation/visibility to swarm-app-record-view.ts, and manifest-to-runtime translation (tool create-input, selector seed, safe WHERE, interpolation) to swarm-app-manifest-mapping.ts. Verbatim moves behind the same names, so the class body and this module's public exports are unchanged; both tsconfigs typecheck at 0 errors and the manifest specs stay green.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Forward ui.static[].group into the synthesised ribbon items. RibbonNav has grouped on this field since the rail-pin work, but synthesiseProfile's static-item map listed the keys it copied, so a manifest declaring `group:` produced an identical flat ribbon with no error anywhere — the silent no-op that made the feature look unimplemented. Forwarded verbatim; the renderer stays the authority on where a heading is allowed.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com | listApps passes its caller to toSummary as the VIEWER, and the new getAppForViewer is the viewer-scoped counterpart to getApp. A public-scoped app keeps the owner_sub stamped at install, so both read paths were serializing the deployment operator's OIDC subject to every caller. The viewer is passed through even when undefined on purpose: global search lists with no caller and matches summary.ownerSub to find a user's own person-scoped apps, so unconditional redaction would have hidden those from their owner.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com | ADR-139 Stage 1: applyArtifactActions on activate / unregister on deactivate — the app's "Send to…" declarations join the shared registry with the skill-profiles discipline (replace-by-app, retract-on-absent, full teardown on toggle-off).
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | synthesiseProfile forwards ribbon.hideStatusBar (true → true, else undefined) exactly like hideChatPanel/hideAssistant, so the cockpit can drop the operational status bar for apps that are not ticket/queue-shaped.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | ADR-141 application groups: activate() fail-closes a `kind: group` whose borrowed toolbar surfaces or setup readiness do not resolve against its ACTIVE members (member + surface named; the record lands inactive); synthesiseProfile renders a group as its kernel setup-dashboard tile followed by the member surfaces its toolbar borrows (resolved at synthesis, so a member that moves a surface is followed); getGroupSetupPlan() hands the dashboard route the steps with each member's probe. autoLoadAll loads groups AFTER every app (orderGroupsLast) so directory order cannot fail-close a group's first boot. Resolution logic lives in swarm-app-group.ts (this file is over its 800-line budget); the static-item map moved there as staticRibbonItems.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Publish installed smoke tests after successful activation and retract them before reload/deactivation; extract stateless artifact registration to keep lifecycle orchestration within its module size limit.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | loadApp adopts rows staged before first sign-in for OSHAL_INSTALL_OWNER_SUB and makes that owner their administrator (install-owner.ts — the rule lives outside this over-budget file). Unowned person-scoped apps were invisible to everyone, and with no explicit tier the rail hid every ADR-149 protected app from the operator who installed them. Adoption happens once; an existing owner or tier is never overridden.
+ * 37 | maintainer@emeraldcoastsystemsgroup.com | Initialize authoritative manifest bot runtime records before activation; preserve stored provider/model choices.
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: only a REQUIRED app dependency blocks an uninstall and counts toward orphans; apps that list the target as OPTIONAL are reported (optionalDependents) and never block. Group members and the connector allow-list read through @/shared/app-dependencies so the tiered and legacy forms agree.
  * 39 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability: synthesiseProfile takes an optional per-person discovery port (the ui-profile route binds it to the verified actor) and, when given, hands the static tiles plus every installed record to lockUndiscoverableTiles — a tile under ANOTHER active package's mount that the person cannot discover comes back `locked` (kept in place; the cockpit renders the guest-disabled style with the role-guidance link) instead of a dead frame. No port = the manifest-static rail exactly as before. The logic lives in swarm-app-tile-discoverability.ts; this file is over its size budget.
  * 40 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 landing half: the synthesised defaultView now comes from openableDefaultView, so a locked tile is never the view the cockpit opens on. Locking only the rail button left a launcher whose ribbon.defaultView names another package's surface opening straight onto the kernel's role-guidance 403 inside the frame.
- * 41 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The stages copy said it was "carried into the registry so the staged dispatcher can run the operator-pinned bots in order"; no staged dispatcher exists, and the comment contradicted the developer guide's own statement that no runtime reads the field.
- * 42 | maintainer@emeraldcoastsystemsgroup.com   | P8 uses the canonical trimmed concierge selector for profile synthesis. An explicit external chatBot is mapped only to a repository id not owned by a declared local bot, so a failed first resolution leaves chatAgent absent instead of silently relabelling the first local bot; a resolved external concierge joins the scoped selector ahead of local bots.
- * 43 | maintainer@emeraldcoastsystemsgroup.com   | P8 separates agent association from lifecycle ownership: activate/deactivate now touches declared bots plus the legacy workflow.workerBot only when no bots are declared. A borrowed metadata-only chatBot (including group concierges) is never deactivated with the package that references it, while an explicit chatBot distinct from a no-bots workflow worker still leaves that worker lifecycle-owned. All name lookups order duplicate rows by agent_id.
- * 44 | maintainer@emeraldcoastsystemsgroup.com   | Resolve an external cockpit concierge directly by canonical name instead of requiring a durable agent_ids association. The warn rollout exposed that agent_ids also feeds application-execution ownership, so a metadata reference to general-bot cannot safely live there. The lookup remains deterministic and fail-closed; a miss never relabels a worker or local bot.
- * 45 | maintainer@emeraldcoastsystemsgroup.com   | Fail closed on ambiguous or inactive external/fallback concierge names. A workflow fallback resolves only inside the app's executable agent_ids; only a metadata-only external chatBot may resolve globally, and then exactly one ACTIVE row must carry the name. A declared local concierge stays pinned directly to its explicit manifest agentId, so a lower-id namesake cannot shadow it.
- * 46 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile a distinct external workflow.workerBot alongside declared bots during activation/deactivation. The prior early return after bots[] left Social active while social-writer stayed inactive after every boot; the canonical external-association selector now adds only the executable worker, never a borrowed metadata-only chatBot.
+ * 41 | maintainer@emeraldcoastsystemsgroup.com | Comment correction only. The stages copy said it was "carried into the registry so the staged dispatcher can run the operator-pinned bots in order"; no staged dispatcher exists, and the comment contradicted the developer guide's own statement that no runtime reads the field.
+ * 42 | maintainer@emeraldcoastsystemsgroup.com | P8 uses the canonical trimmed concierge selector for profile synthesis. An explicit external chatBot is mapped only to a repository id not owned by a declared local bot, so a failed first resolution leaves chatAgent absent instead of silently relabelling the first local bot; a resolved external concierge joins the scoped selector ahead of local bots.
+ * 43 | maintainer@emeraldcoastsystemsgroup.com | P8 separates agent association from lifecycle ownership: activate/deactivate now touches declared bots plus the legacy workflow.workerBot only when no bots are declared. A borrowed metadata-only chatBot (including group concierges) is never deactivated with the package that references it, while an explicit chatBot distinct from a no-bots workflow worker still leaves that worker lifecycle-owned. All name lookups order duplicate rows by agent_id.
+ * 44 | maintainer@emeraldcoastsystemsgroup.com | Resolve an external cockpit concierge directly by canonical name instead of requiring a durable agent_ids association. The warn rollout exposed that agent_ids also feeds application-execution ownership, so a metadata reference to general-bot cannot safely live there. The lookup remains deterministic and fail-closed; a miss never relabels a worker or local bot.
+ * 45 | maintainer@emeraldcoastsystemsgroup.com | Fail closed on ambiguous or inactive external/fallback concierge names. A workflow fallback resolves only inside the app's executable agent_ids; only a metadata-only external chatBot may resolve globally, and then exactly one ACTIVE row must carry the name. A declared local concierge stays pinned directly to its explicit manifest agentId, so a lower-id namesake cannot shadow it.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com | Reconcile a distinct external workflow.workerBot alongside declared bots during activation/deactivation. The prior early return after bots[] left Social active while social-writer stayed inactive after every boot; the canonical external-association selector now adds only the executable worker, never a borrowed metadata-only chatBot.
+ * 47 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  */
 
 import type { Pool } from 'pg';
@@ -58,6 +59,7 @@ import { resolve, dirname } from 'path';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
 import { connectorAllowList, optionalAppDependencies, requiredAppDependencies } from '@/shared/app-dependencies';
+import { resolveExperienceSurfaces, type ExperienceDeclaration } from '@/shared/experience-contract';
 import {
   registerDynamicToolUI,
   deregisterDynamicToolUI,
@@ -100,6 +102,7 @@ import {
   resolveManifestConciergeAgent,
 } from './swarm-app-concierge';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
+import { experienceCandidates, activeExperienceMembers } from './swarm-app-experience';
 import {
   interpolate,
   manifestToolToCreateInput,
@@ -503,6 +506,15 @@ export class SwarmAppService {
   }
 
   /**
+   * @description Resolve active installation and scope candidates before request-boundary authorization.
+   * @param viewer Current installation visibility identity.
+   * @returns Candidate experience metadata from the active application repository.
+   */
+  async listExperiences(viewer: SummaryViewer) {
+    return experienceCandidates(await this.repo.list('active'), viewer);
+  }
+
+  /**
    * @description Fetch one app AS A GIVEN VIEWER may see it — the request-scoped counterpart to
    * {@link getApp}. Returns null both when the app does not exist and when it exists but this
    * viewer may not see it, so the caller answers 404 either way and never confirms the existence
@@ -533,7 +545,7 @@ export class SwarmAppService {
    */
   async findActiveAppByTheme(themeId: string): Promise<SwarmApplicationRecord | null> {
     const records = await this.repo.list('active');
-    return records.find((r) => r.manifest.theme === themeId) ?? null;
+    return records.find((r) => (r.manifest.experience?.skin ?? r.manifest.theme) === themeId) ?? null;
   }
 
   /**
@@ -737,6 +749,7 @@ export class SwarmAppService {
       dynamicTools: { allow: string[]; section?: 'top' | 'bottom' };
     };
     defaultView?: string;
+    experience?: ExperienceDeclaration;
     /** When true, the cockpit hides its right-rail chat panel for this app
      *  (apps that are themselves the chat surface, e.g. Jarvis). */
     hideChatPanel?: boolean;
@@ -837,8 +850,9 @@ export class SwarmAppService {
     // manifest, the cockpit loads it from the theme.css route instead of requiring
     // the skin to be registered in core's COCKPIT_THEMES.
     let themeCssUrl: string | undefined;
-    if (manifest.theme && /^[a-z0-9-]+$/i.test(manifest.theme)) {
-      const cssPath = resolve(dirname(record.manifestPath), 'ui', `${manifest.theme}.css`);
+    const theme = manifest.experience?.skin ?? manifest.theme;
+    if (theme && /^[a-z0-9-]+$/i.test(theme)) {
+      const cssPath = resolve(dirname(record.manifestPath), 'ui', `${theme}.css`);
       if (existsSync(cssPath)) themeCssUrl = `/api/swarm/apps/${manifest.name}/theme.css`;
     }
 
@@ -851,11 +865,12 @@ export class SwarmAppService {
       name: manifest.name,
       displayName: manifest.displayName,
       description: manifest.description,
+      experience: manifest.experience,
       hideChatPanel: ribbon.hideChatPanel === true ? true : undefined,
       hideStatusBar: ribbon.hideStatusBar === true ? true : undefined,
       hideAssistant: ribbon.hideAssistant === true ? true : undefined,
       chatAgent,
-      theme: manifest.theme,
+      theme,
       themeCssUrl,
       assistant,
       chatBots: chatBots.length ? chatBots : undefined,
@@ -892,6 +907,11 @@ export class SwarmAppService {
    * @returns Static surfaces in ribbon order.
    */
   private async ribbonSurfaces(record: SwarmApplicationRecord): Promise<SwarmAppStaticUi[]> {
+    if (record.manifest.experience) {
+      const members = await activeExperienceMembers(record.manifest, name => this.repo.findByName(name));
+      const resolved = resolveExperienceSurfaces(record.manifest, members);
+      return [...(record.manifest.ui?.static ?? []), ...resolved.surfaces];
+    }
     if (!isGroupManifest(record.manifest)) return record.manifest.ui?.static ?? [];
     const { tiles, missing } = resolveGroupToolbar(record.manifest, await this.activeMembers(record.manifest));
     if (missing.length) logger.warn({ group: record.name, missing }, 'Group toolbar references did not resolve — tiles omitted');
@@ -912,6 +932,7 @@ export class SwarmAppService {
     }
     return members;
   }
+
 
   /**
    * @description The setup-dashboard plan for an ADR-141 group: its steps with each member's
@@ -952,6 +973,7 @@ export class SwarmAppService {
   // ── Internal: activation / deactivation primitives ─────────────────────
 
   private async activate(record: SwarmApplicationRecord): Promise<void> {
+    if (record.manifest.experience) resolveExperienceSurfaces(record.manifest, await activeExperienceMembers(record.manifest, name => this.repo.findByName(name)));
     this.testLabCatalog.unregister(record.name);
     await this.authorizationRegistrar?.start(record);
     // ADR-141 D2/D3: a group activates only when every borrowed surface and every setup readiness

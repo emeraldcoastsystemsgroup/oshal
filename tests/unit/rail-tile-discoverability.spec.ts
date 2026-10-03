@@ -3,9 +3,11 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 rail discoverability guard. A launcher-shaped app declares tiles whose iframeUrl sits under ANOTHER package's mount; the manifest-static rail rendered them for a person who could not discover the target, and a click opened the kernel's role-guidance 403 inside the frame. These cases run the REAL profile route, the REAL SwarmAppService (repository doubled), the REAL ApplicationAuthorizationRuntime over MemoryAuthorizationStore and real package loading: a non-discoverable target comes back locked in place with the role-guidance link, a granted one keeps its tile, a tile under the app's OWN mount / an unowned path / a mount-prefix lookalike is never touched, a legacy-mode package is always discoverable, an ADR-141 group's borrowed tiles follow their member, no port means the declared rail, and no manifest changes.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | The LANDING half of the same rule. Locking the rail button left the synthesised defaultView alone, so an app whose ribbon.defaultView names a tile under another package's mount opened the cockpit straight onto that package's role-guidance 403 inside the frame — the rail showed the tile locked while the content area showed the dead frame. These cases run the same real route/service/runtime stack and assert the landing view: a declared default that is locked falls through to the first openable tile, every static tile locked lands on the first framework view, a grant restores the declared one, an app with no lock anywhere lands exactly where it did before, and an internal call with no port still gets the manifest-static default.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Declare concierges on every surfaced fixture under P8's enforce default; the code-free group borrows its required studio member's concierge so profile semantics remain realistic.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 rail discoverability guard. A launcher-shaped app declares tiles whose iframeUrl sits under ANOTHER package's mount; the manifest-static rail rendered them for a person who could not discover the target, and a click opened the kernel's role-guidance 403 inside the frame. These cases run the REAL profile route, the REAL SwarmAppService (repository doubled), the REAL ApplicationAuthorizationRuntime over MemoryAuthorizationStore and real package loading: a non-discoverable target comes back locked in place with the role-guidance link, a granted one keeps its tile, a tile under the app's OWN mount / an unowned path / a mount-prefix lookalike is never touched, a legacy-mode package is always discoverable, an ADR-141 group's borrowed tiles follow their member, no port means the declared rail, and no manifest changes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The LANDING half of the same rule. Locking the rail button left the synthesised defaultView alone, so an app whose ribbon.defaultView names a tile under another package's mount opened the cockpit straight onto that package's role-guidance 403 inside the frame — the rail showed the tile locked while the content area showed the dead frame. These cases run the same real route/service/runtime stack and assert the landing view: a declared default that is locked falls through to the first openable tile, every static tile locked lands on the first framework view, a grant restores the declared one, an app with no lock anywhere lands exactly where it did before, and an internal call with no port still gets the manifest-static default.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Declare concierges on every surfaced fixture under P8's enforce default; the code-free group borrows its required studio member's concierge so profile semantics remain realistic.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Refuse directly focused rail experience profiles without the current named entry permission.
  */
 /** Real Express, package loading, profile synthesis and authorization; only persistence and identity are isolated doubles. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -159,6 +161,49 @@ async function landing(name: string, user = 'alice'): Promise<string | undefined
 }
 
 describe('ADR-149 rail discoverability — the profile route, the real service and the real runtime', () => {
+  it('two installed experiences discover and open only for their current assigned callers', async () => {
+    await installFixture();
+    for (const name of ['home-experience', 'business-experience']) {
+      const m = manifest(name, [tile(`${name}-home`, `/api/${name}/app`)], true);
+      m.uses = ['application-authorization', 'app-dependencies', 'experience'];
+      m.dependencies = { required: { apps: ['studio'] }, optional: { apps: ['optional-missing'] } };
+      m.experience = { version: 1, entry: `/api/${name}/app`, shell: 'page', skin: name === 'home-experience' ? 'family' : 'company', label: name,
+        surfaces: [{ app: 'studio', surface: 'studio-home' }, { app: 'optional-missing', surface: 'optional-home' }] };
+      await install(m);
+    }
+    const get = (path: string, user = 'alice') => fetch(base + path, { headers: { 'x-fixture-user': user }, redirect: 'manual' });
+    expect((await get('/api/ui/experiences/home-experience/open')).status).toBe(404);
+    expect((await rail('home-experience')).status).toBe(404);
+    await grantOpener('home-experience'); await grantOpener('business-experience', admin);
+    const aliceList = await (await get('/api/ui/experiences')).json();
+    const adminList = await (await get('/api/ui/experiences', 'administrator')).json();
+    expect(aliceList.experiences.map((row: { app: string }) => row.app)).toEqual(['home-experience']);
+    expect(adminList.experiences.map((row: { app: string }) => row.app)).toEqual(['business-experience']);
+    expect((await get('/api/ui/experiences/home-experience/open')).status).toBe(403); // Discovery cannot replace the named resource adapter.
+    records.get('home-experience')!.manifest.experience!.shell = 'rail';
+    expect((await get('/api/ui/profile?name=home-experience')).status).toBe(403);
+    const navigate = runtime.canNavigateHttpPath;
+    Object.defineProperty(runtime, 'canNavigateHttpPath', { configurable: true, writable: true, value: undefined });
+    try {
+      const missingPort = await get('/api/ui/profile?name=home-experience');
+      expect(missingPort.status).toBe(503);
+      expect(await missingPort.json()).toMatchObject({ error: 'experience_navigation_unavailable' });
+    } finally { runtime.canNavigateHttpPath = navigate; }
+
+    policy.registerResourceAdapter('home-experience', 'records', { authorize: async ({ operation, grant }) => operation.path === '/app' && grant.scope === 'own' });
+    const opened = await get('/api/ui/experiences/home-experience/open');
+    expect(opened.status).toBe(302); expect(opened.headers.get('location')).toBe('/cockpit/?app=home-experience');
+    expect((await get('/api/ui/experiences/business-experience/open')).status).toBe(404);
+    const profile = await rail('home-experience');
+    expect(byId(profile.items, 'tool-studio--studio-home')?.locked?.app).toBe('studio');
+    expect(profile.items.some(row => row.id.includes('optional-home'))).toBe(false);
+    await grantOpener('studio');
+    expect(byId((await rail('home-experience')).items, 'tool-studio--studio-home')?.locked).toBeUndefined();
+    const installed = records.get('home-experience')!;
+    installed.scope = 'person'; installed.ownerSub = 'another-user';
+    expect((await rail('home-experience')).status).toBe(404);
+    expect((await get('/api/ui/experiences/home-experience/open')).status).toBe(404);
+  });
   it('locks a tile whose target this person cannot discover, in place and with the role-guidance link; a grant restores it', async () => {
     await installFixture();
     const before = await rail('launcher');
