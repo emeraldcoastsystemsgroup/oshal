@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Homebase modules built from the design study over live data, rendered in the homebase's own classes: the opt-in check-in panel (the caller's own place from ADR-169 location state, household members with no check-in shown because no group presence read exists, the "share from this browser" switch and who can see the caller), the room strip (the home assistant and the household), the Family admin card with its People & roles and Devices dialogs (household members and roles from the caller's group, location devices with stop reporting), a learner's level progress and Little Monsters notices.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Routines (Jarvis briefing sources and the caller's schedules, added by asking Jarvis), search in this home (what the page read plus the caller-scoped global search), files (Jarvis task files and saved drafts), tasks (open work and open classwork), the day-grouped agenda with a read-only event dialog, the assistant bubble and inline composer, the room tabs and the "Make it yours" choices (how the assistant offers help, what greets you, what stays close at hand).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Match shared search and assistant wording to the active home, workspace or classroom.
  */
 (function (root, factory) {
   var api = factory();
@@ -25,6 +26,7 @@
    * @returns {object} The renderers.
    */
   function create(ctx) {
+    const space = ctx.key === 'company' ? 'workspace' : ctx.key === 'classroom' ? 'classroom' : 'home';
     const { esc, btn, link, pill, head, avatar, LIVE } = ctx;
     const ago = d => LIVE.relativeTime(d);
     const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || `${one}s`)}`;
@@ -120,7 +122,7 @@
       const b = r.briefings, s = r.schedules;
       const briefings = !b.ok ? refusedLine(b, 'Your briefings') : b.sources.length ? `<div class="list-items">${b.sources.map(briefingRow).join('')}</div>` : '<p class="subtle">No briefing source is available to you.</p>';
       const schedules = !s.ok ? refusedLine(s, 'Your schedules') : s.rows.length ? `<div class="list-items">${s.rows.map(scheduleRow).join('')}</div>` : '<p class="subtle">You have no schedules yet.</p>';
-      return `<section class="panel" data-module="routines"><div class="panel-kicker">FOR THIS HOME</div>${head('A calmer start, on a schedule.')}<h3>Briefings</h3>${briefings}<h3>Scheduled</h3>${schedules}<form id="routine-form" class="add-form"><label class="screenreader" for="routine-input">Ask Jarvis for a routine</label><input id="routine-input" maxlength="300" required placeholder="Every Saturday at 8:30, prepare a weekend brief"${ctx.thread().busy ? ' disabled' : ''}><button class="button" type="submit" aria-label="Ask Jarvis">→</button></form><p class="subtle" id="routine-feedback" role="status">Jarvis turns a sentence with a time into one of your schedules.</p></section>`;
+      return `<section class="panel" data-module="routines"><div class="panel-kicker">FOR THIS ${space.toUpperCase()}</div>${head('A calmer start, on a schedule.')}<h3>Briefings</h3>${briefings}<h3>Scheduled</h3>${schedules}<form id="routine-form" class="add-form"><label class="screenreader" for="routine-input">Ask Jarvis for a routine</label><input id="routine-input" maxlength="300" required placeholder="Every Saturday at 8:30, prepare a weekend brief"${ctx.thread().busy ? ' disabled' : ''}><button class="button" type="submit" aria-label="Ask Jarvis">→</button></form><p class="subtle" id="routine-feedback" role="status">Jarvis turns a sentence with a time into one of your schedules.</p></section>`;
     }
 
     /* ── search, files, tasks ────────────────────────────────────── */
@@ -140,7 +142,7 @@
       const s = ctx.state.search || { query: '', local: [], global: null };
       const g = s.global, count = s.local.length + (g && g.ok ? g.hits.length : 0);
       const swarm = !g ? '<p class="subtle">Searching the rest of your swarm…</p>' : !g.ok ? refusedLine(g, 'The swarm search') : g.hits.length ? g.hits.map(globalRow).join('') : '<p class="subtle">Nothing else in your swarm matches.</p>';
-      return `<section class="panel" data-module="search"><div class="panel-kicker">SEARCH IN ${esc(ctx.preset.name.toUpperCase())}</div>${head(esc(plural(count, 'match', 'matches')))}<p class="subtle">For “${esc(s.query)}” · only your own data</p><h3>In this home</h3>${s.local.length ? s.local.map(localRow).join('') : '<div class="empty">No matches in this home.</div>'}<h3>Across your swarm</h3>${swarm}</section>`;
+      return `<section class="panel" data-module="search"><div class="panel-kicker">SEARCH IN ${esc(ctx.preset.name.toUpperCase())}</div>${head(esc(plural(count, 'match', 'matches')))}<p class="subtle">For “${esc(s.query)}” · only your own data</p><h3>In this ${space}</h3>${s.local.length ? s.local.map(localRow).join('') : `<div class="empty">No matches in this ${space}.</div>`}<h3>Across your swarm</h3>${swarm}</section>`;
     }
     /** @description Files: every file your finished Jarvis tasks produced, newest first, and your saved drafts (filled by the drafts read). */
     function filesPage() {
@@ -203,7 +205,7 @@
     /** @description The inline composer: a question typed here goes to the same Jarvis thread the Ask dialog uses. */
     function composer() {
       const busy = ctx.thread().busy;
-      return `<form id="composer-form" class="composer"><label class="screenreader" for="composer-input">Ask ${esc(ctx.preset.assistantLabel.toLowerCase())}</label><input id="composer-input" maxlength="600" autocomplete="off" placeholder="Ask about this home…"${busy ? ' disabled' : ''}><button class="button primary" type="submit" aria-label="Send"${busy ? ' disabled' : ''}>↑</button></form>`;
+      return `<form id="composer-form" class="composer"><label class="screenreader" for="composer-input">Ask ${esc(ctx.preset.assistantLabel.toLowerCase())}</label><input id="composer-input" maxlength="600" autocomplete="off" placeholder="${esc(ctx.preset.assistantPrompt)}"${busy ? ' disabled' : ''}><button class="button primary" type="submit" aria-label="Send"${busy ? ' disabled' : ''}>↑</button></form>`;
     }
     /** @description The room tabs a preset declares (Room, Tasks, Files …) with "Make it yours" beside them. */
     function roomTabs() {
@@ -215,7 +217,7 @@
     function configExtras() {
       const c = ctx.config(), hide = c.hide || [];
       const lead = [['room', 'The room · the preset’s order'], ['day', 'My day · the calendar first'], ['work', 'The work · open items first']];
-      const keep = [['room', 'People in this home'], ['calendar', 'Calendar'], ['shopping', 'Shopping list']];
+      const keep = [['room', `People in this ${space}`], ['calendar', 'Calendar'], ['shopping', 'Shopping list']];
       const bot = `<label class="field">Your assistant helps by<select id="bot-choice"><option value="suggest" ${c.bot !== 'ask' ? 'selected' : ''}>Offering a catch-up of finished work</option><option value="ask" ${c.bot === 'ask' ? 'selected' : ''}>Waiting for me to ask</option></select></label>`;
       return `${bot}<fieldset class="config-fieldset"><legend>What greets you?</legend>${lead.map(([v, l]) => `<label class="config-check"><input type="radio" name="lead-choice" value="${v}" ${(c.lead || 'room') === v ? 'checked' : ''}>${l}</label>`).join('')}</fieldset><fieldset class="config-fieldset"><legend>Keep close at hand</legend>${keep.map(([v, l]) => `<label class="config-check"><input type="checkbox" data-keep="${v}" ${hide.includes(v) ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>`;
     }
