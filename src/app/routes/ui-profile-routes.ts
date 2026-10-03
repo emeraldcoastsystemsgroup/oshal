@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): the profile response carries `landingApp` (the deployment's focused landing, or null) and `operator` (the server's verdict for this caller) so the ribbon withholds the operator doors with the same inputs the cockpit document route redirects on.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Enforce the named app.open operation before serving a directly focused experience profile.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Preserve focused shell context on profile refusals and extract bounded profile handlers.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -76,7 +77,7 @@ async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<
 }
 
 /**
- * @description Creates the UI profile routes. The cockpit calls these at boot
+ * @description Resolves one UI profile request. The cockpit calls this at boot
  * to decide which ribbon items to render. A profile does NOT disable backend
  * routes or bots — the framework keeps running; the profile only masks/orders
  * the surfaces the operator sees.
@@ -93,68 +94,84 @@ async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<
  *   GET  /api/ui/profiles           → list of available profile names
  *   POST /api/ui/profile/reload     → clear the in-memory cache (dev only)
  *
+ * @param req Current profile request. @param res Profile or refusal response.
  * @param service - UIProfileService for file-based profile fallback
  * @param swarmApps - optional SwarmAppService for manifest-first resolution
  * @param discovery - optional ADR-149 ports; when present a synthesised rail follows each
  *   target package's discoverability for the signed-in person (locked tiles, kept in place)
- * @returns Express Router
+ * @param shell Server-owned focused-landing and operator inputs.
+ * @returns Completion of the profile response.
  */
+async function serveProfile(req: Request, res: Response, service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts, shell?: UiProfileShellPorts): Promise<void> {
+  const requested = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+  const selected = requested || service.getEnvSelectedName();
+  // Shell lock inputs (ADR-164 amendment): the deployment's landing application and the
+  // server's operator verdict, so the ribbon decides the operator doors the same way the
+  // cockpit document route decides its redirect.
+  const lock = { landingApp: shell?.landingApp(req) ?? null, operator: shell ? shell.isOperator(req) : undefined };
+  try {
+    // Try manifest synthesis for BOTH request-level and env-selected names.
+    // Without this, UI_PROFILE=<app-name> on the server falls through to the
+    // disk profile JSON and loses the manifest's tool-* prefixed IDs and
+    // focused ribbon.
+    if (selected && swarmApps) {
+      if (!(await experienceProfileAllowed(selected, req, res, swarmApps, discovery, lock))) return;
+      const port = discovery ? await bindTileDiscovery(req, discovery) : undefined;
+      const synthetic = await swarmApps.synthesiseProfile(selected, port);
+      if (synthetic) {
+        if (synthetic.experience && !discovery) { res.status(503).json({ error: 'experience_discovery_unavailable', ...lock }); return; }
+        synthetic.ribbon.items = await filterRibbonItemsForCaller(synthetic.ribbon.items, req);
+        logger.debug({ selected, source: requested ? 'query' : 'env' }, 'Serving synthesised profile from swarm-app manifest');
+        res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName(), ...lock });
+        return;
+      }
+    }
+    const profile = service.load(selected);
+    if (requested && swarmApps) {
+      // An explicit ?name= that reaches the disk fallback usually means the swarm-app
+      // row exists but is invisible to THIS caller (RLS scope/owner mismatch) or the
+      // app is unloaded — a stale profile JSON can silently impersonate the app here.
+      logger.warn({ selected, resolved: profile.name }, 'Requested app profile fell back to disk JSON — manifest synthesis returned nothing for this caller');
+    } else {
+      logger.debug({ selected, resolved: profile.name }, 'Serving UI profile from disk');
+    }
+    res.json({ profile, requested: selected, source: 'disk', envDefault: service.getEnvSelectedName(), ...lock });
+  } catch (err) {
+    logger.error({ err, selected }, 'Failed to load UI profile');
+    res.status(500).json({ error: 'Failed to load UI profile', ...lock });
+  }
+}
+
+/** @description Refuse unavailable experience profiles without losing the deployment's shell context.
+ * @param selected Requested or deployment-selected application. @param req Current request.
+ * @param res Response carrying refusal and server-owned lock inputs. @param apps Loaded applications.
+ * @param discovery Current authorization ports. @param lock Deployment and caller lock inputs.
+ * @returns Whether manifest synthesis may proceed. */
+async function experienceProfileAllowed(selected: string, req: Request, res: Response, apps: SwarmAppService,
+  discovery: UiProfileDiscoveryPorts | undefined, lock: { landingApp: string | null; operator: boolean | undefined }): Promise<boolean> {
+  if (!discovery) return true;
+  const installed = await apps.getApp(selected);
+  if (!installed?.manifest.experience) return true;
+  const actor = await discovery.resolveActor(req);
+  const record = await apps.getAppForViewer(selected, { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin });
+  if (!record || !record.manifest.experience || record.status !== 'active' || !actor.isActive || !(await discovery.runtime.canDiscover(selected, actor))) {
+    res.status(404).json({ error: 'experience_unavailable', ...lock }); return false;
+  }
+  if (!discovery.runtime.canNavigateHttpPath) { res.status(503).json({ error: 'experience_navigation_unavailable', ...lock }); return false; }
+  if (!(await discovery.runtime.canNavigateHttpPath(actor, record.manifest.experience.entry))) {
+    res.status(403).json({ error: 'experience_navigation_refused', ...lock }); return false;
+  }
+  return true;
+}
+
+/** @description Bind profile resolution, discovery and development-only cache controls.
+ * @param service File-based profile service. @param swarmApps Manifest-first application resolution.
+ * @param discovery Current caller's discovery and navigation authority. @param shell Server-owned lock inputs.
+ * @returns The UI profile router. */
 export function createUiProfileRoutes(service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts, shell?: UiProfileShellPorts): Router {
   const router = Router();
   router.use(createExperiencePackageRoutes({ apps: swarmApps, authorization: discovery }));
-
-  router.get('/profile', async (req: Request, res: Response) => {
-    const requested = typeof req.query.name === 'string' ? req.query.name.trim() : '';
-    const selected = requested || service.getEnvSelectedName();
-    // Shell lock inputs (ADR-164 amendment): the deployment's landing application and the
-    // server's operator verdict, so the ribbon decides the operator doors the same way the
-    // cockpit document route decides its redirect.
-    const lock = { landingApp: shell?.landingApp(req) ?? null, operator: shell ? shell.isOperator(req) : undefined };
-    try {
-      // Try manifest synthesis for BOTH request-level and env-selected names.
-      // Without this, UI_PROFILE=<app-name> on the server falls through to the
-      // disk profile JSON and loses the manifest's tool-* prefixed IDs and
-      // focused ribbon.
-      if (selected && swarmApps) {
-        if (discovery) {
-          const installed = await swarmApps.getApp(selected);
-          if (installed?.manifest.experience) {
-            const actor = await discovery.resolveActor(req);
-            const record = await swarmApps.getAppForViewer(selected, { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin });
-            if (!record || record.status !== 'active' || !actor.isActive || !(await discovery.runtime.canDiscover(selected, actor))) {
-              res.status(404).json({ error: 'experience_unavailable' }); return;
-            }
-            if (!discovery.runtime.canNavigateHttpPath) { res.status(503).json({ error: 'experience_navigation_unavailable' }); return; }
-            if (!(await discovery.runtime.canNavigateHttpPath(actor, record.manifest.experience!.entry))) {
-              res.status(403).json({ error: 'experience_navigation_refused' }); return;
-            }
-          }
-        }
-        const port = discovery ? await bindTileDiscovery(req, discovery) : undefined;
-        const synthetic = await swarmApps.synthesiseProfile(selected, port);
-        if (synthetic) {
-          if (synthetic.experience && !discovery) { res.status(503).json({ error: 'experience_discovery_unavailable' }); return; }
-          synthetic.ribbon.items = await filterRibbonItemsForCaller(synthetic.ribbon.items, req);
-          logger.debug({ selected, source: requested ? 'query' : 'env' }, 'Serving synthesised profile from swarm-app manifest');
-          res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName(), ...lock });
-          return;
-        }
-      }
-      const profile = service.load(selected);
-      if (requested && swarmApps) {
-        // An explicit ?name= that reaches the disk fallback usually means the swarm-app
-        // row exists but is invisible to THIS caller (RLS scope/owner mismatch) or the
-        // app is unloaded — a stale profile JSON can silently impersonate the app here.
-        logger.warn({ selected, resolved: profile.name }, 'Requested app profile fell back to disk JSON — manifest synthesis returned nothing for this caller');
-      } else {
-        logger.debug({ selected, resolved: profile.name }, 'Serving UI profile from disk');
-      }
-      res.json({ profile, requested: selected, source: 'disk', envDefault: service.getEnvSelectedName(), ...lock });
-    } catch (err) {
-      logger.error({ err, selected }, 'Failed to load UI profile');
-      res.status(500).json({ error: 'Failed to load UI profile' });
-    }
-  });
+  router.get('/profile', (req, res) => serveProfile(req, res, service, swarmApps, discovery, shell));
 
   router.get('/profiles', (_req: Request, res: Response) => {
     try {

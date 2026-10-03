@@ -55,6 +55,7 @@
  * 49 | maintainer@emeraldcoastsystemsgroup.com | Route OSHAL directory intent through the normal Home lifecycle and keep the duplicate chat rail closed beside its embedded Jarvis.
  * 50 | maintainer@emeraldcoastsystemsgroup.com | Read the durable-storage indicator once at boot alongside the first metrics read, so a box that came up with a store stranded in memory says so on the first paint rather than at the first 60s poll.
  * 51 | maintainer@emeraldcoastsystemsgroup.com | Mount the per-surface help control and feed it every view change from switchView — the shell already owns the one chokepoint that knows which surface is on screen, so the control never has to guess from the DOM.
+ * 52 | maintainer@emeraldcoastsystemsgroup.com | Show a focused profile refusal before opening a default workbench or ticket deep link.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -64,6 +65,7 @@ import { initHeaderOptions } from './header-options.js';
 import { mountSurfaceHelp } from './surface-help.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
+import { renderProfileRefusal } from './cockpit-profile-refusal.js';
 import { renderModalContent, getAuthToken } from './cockpit-modals.js';
 import { CockpitBotSelectorController } from './cockpit-bot-selector-controller.js';
 // CM-7: Legacy CockpitChatPanelController removed — cockpit always uses embedded iframe
@@ -364,6 +366,7 @@ class CockpitApp {
     this.ribbon = new RibbonNav('ribbonContainer', (viewId) => this.switchView(viewId));
     void this.ribbon.ready.then(() => {
       this.workspaceNavigation = new WorkspaceNavigation({ profile: this.ribbon.profile, studentMode: this.ribbon.studentMode });
+      if (renderProfileRefusal(document.getElementById('mainContent'), this.ribbon.profile)) return;
       if (this.pendingView || this.viewController.currentView) return;
       const requestedTicketId = readRequestedTicketId();
       const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'home');

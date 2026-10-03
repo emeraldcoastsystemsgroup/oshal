@@ -107,8 +107,9 @@ Smart Home remains `home`. Nexus is outside this approved seven-experience migra
 An experience is an application a developer installs: its own screens, skin and member
 dependencies, exposed through an `experience:` manifest block behind the `experience` kernel
 skill (ADR-164 D11–D13). E2 replaces the static Experiences menu with installed, authorized
-discovery. The live cockpit document remains aligned with the older deployed backend until the
-build owner coordinates rollout; that temporary state does not count as installed acceptance.
+discovery. Coordinate the backend, installed packages and cockpit document during rollout;
+source checks do not count as installed acceptance. Record release and installed evidence in
+[the integration contract](architecture/experience-application-integration.md).
 
 **Done when:**
 - Slice 2 — a package declaring only `uses: [application-authorization, experience]` and an

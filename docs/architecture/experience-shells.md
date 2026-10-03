@@ -36,8 +36,8 @@ Nexus and Simple retain their existing routes. Legacy seven-experience entry rou
 HTML aliases now redirect through the corresponding installed package open operation, including
 `/little-monsters` to Classroom. Missing or refused packages do not restore the legacy documents.
 
-These are source implementation details. The current deployed backend has not received E2;
-its bind-mounted cockpit document stays aligned with that backend until coordinated rollout.
+These are source implementation details. Roll out the backend, installed experience packages
+and bind-mounted cockpit document together; discovery requires the compatible backend.
 The route table above records renderer behavior and familiar aliases, not installed package
 availability. [The integration contract](./experience-application-integration.md) tracks source,
 release and installed evidence separately. Plain `/cockpit/` keeps the existing operator workspace.
