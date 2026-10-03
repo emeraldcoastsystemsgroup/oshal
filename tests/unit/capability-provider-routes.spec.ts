@@ -4,13 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 guard for the operator route's own branches, over a real express app and the REAL capability adapters (text to speech over a real registry, images and video over their real providers, no credentials, so nothing reaches a network): GET lists all four capabilities with each provider's cost class and availability and the swarm default with its source; an unknown capability, an unknown provider, a voice the provider does not list, a voice on a speech-to-text row and a model are each refused 400 with nothing written; a listed voice is written beside its provider (D9); a table refusal (42501) answers 403; no store answers 503; the speech-to-text try action transcribes through exactly the named provider as the calling operator and refuses a request with no clip; a non-operator is refused on every route. The database boundary itself (the policy, the role, the real snapshot and the end-to-end move of a dictation) is capability-swarm-rows-postgres.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the offer endpoints: a price and quota label written, listed on the provider with the capability's price unit and cleared; an unknown provider, a negative or non-numeric price, an over-long label and an audience (slice S2) refused 400 with nothing written; a non-operator refused.
  */
 
 import type { Server } from 'node:http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCapabilityProviderRoutes, type CapabilityProviderRouteDeps } from '@/app/routes/capability-provider-routes';
-import { CAPABILITY_FLEET_SCOPE, type Capability, type CapabilityAdapter, type CapabilitySwarmRow } from '@/shared/capability-providers';
+import { CAPABILITY_FLEET_SCOPE, type Capability, type CapabilityAdapter, type CapabilityProviderOffer, type CapabilitySwarmRow } from '@/shared/capability-providers';
 import { STTProviderRegistry, TTSProviderRegistry, createSttCapabilityAdapter, createTtsCapabilityAdapter } from '@/features/voice-providers';
 import { createImageCapabilityAdapter, createVideoCapabilityAdapter } from '@/features/video-generation';
 
@@ -40,6 +41,17 @@ let adapters: Record<Capability, CapabilityAdapter>;
 let server: Server;
 let base = '';
 let withStore = true;
+/** In-memory stand-in for the offer store (the real one is proven against Postgres in the spend spec). */
+const offers = new Map<string, CapabilityProviderOffer>();
+const offerStore: NonNullable<CapabilityProviderRouteDeps['offers']> = {
+  listAll: async () => [...offers.values()],
+  upsert: async (capability, providerId, values, updatedBy) => {
+    const offer = { capability, providerId, offeredTo: null, ...values, updatedBy, updatedAt: new Date().toISOString() };
+    offers.set(`${capability}|${providerId}`, offer);
+    return offer;
+  },
+  remove: async (capability, providerId) => offers.delete(`${capability}|${providerId}`),
+};
 
 function session(req: Request, _res: Response, next: NextFunction): void {
   const sub = req.headers['x-test-sub'];
@@ -58,6 +70,7 @@ beforeAll(async () => {
   app.use(session);
   app.use('/api/capability-providers', createCapabilityProviderRoutes({
     get store() { return withStore ? store : undefined; },
+    get offers() { return withStore ? offerStore : undefined; },
     snapshot: () => null,
     adapters: () => adapters,
     voice: { transcribeAudio } as unknown as CapabilityProviderRouteDeps['voice'],
@@ -73,7 +86,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-beforeEach(() => { rows.clear(); refusal = null; withStore = true; transcribeAudio.mockClear(); });
+beforeEach(() => { rows.clear(); offers.clear(); refusal = null; withStore = true; transcribeAudio.mockClear(); });
 afterEach(() => { refusal = null; });
 
 const call = async (method: string, route: string, body?: unknown, sub: string | null = OPERATOR_SUB) => {
@@ -154,5 +167,36 @@ describe('the capability provider operator routes (ADR-173 S1)', () => {
     expect(options.caller.principal).toMatchObject({ kind: 'user', sub: OPERATOR_SUB, isOperator: true });
     const empty = await fetch(`${base}/api/capability-providers/stt/local-stt/try`, { method: 'POST', headers: { 'x-test-sub': OPERATOR_SUB }, body: new FormData() });
     expect(empty.status).toBe(400);
+  });
+});
+
+describe('provider offers: unit prices and quota labels (ADR-173 S1b, D4)', () => {
+  it('writes a price and a quota label, lists them on the provider, and DELETE clears them', async () => {
+    const res = await call('PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0.0004, quotaLabel: 'shared free tier' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ priceUnit: 'audio-seconds', offer: { capability: 'stt', providerId: 'gemini-stt', unitPriceUsd: 0.0004, quotaLabel: 'shared free tier', updatedBy: OPERATOR_SUB } });
+    const listing = await call('GET', '/');
+    const stt = (listing.body.capabilities as Array<{ capability: string; priceUnit: string; providers: Array<{ providerId: string; offer: unknown }> }>)[1];
+    expect(stt.priceUnit).toBe('audio-seconds');
+    expect(stt.providers.find((p) => p.providerId === 'gemini-stt')?.offer).toMatchObject({ unitPriceUsd: 0.0004 });
+    expect((await call('DELETE', '/offers/stt/gemini-stt')).body).toMatchObject({ removed: true });
+    expect(offers.size).toBe(0);
+  });
+
+  it.each([
+    ['an unknown provider', '/offers/stt/whisper', { unitPriceUsd: 0.1 }, 'unknown_provider'],
+    ['a negative price', '/offers/stt/gemini-stt', { unitPriceUsd: -1 }, 'unit_price_invalid'],
+    ['a price that is not a number', '/offers/stt/gemini-stt', { unitPriceUsd: '0.1' }, 'unit_price_invalid'],
+    ['a quota label over 120 characters', '/offers/stt/gemini-stt', { unitPriceUsd: null, quotaLabel: 'x'.repeat(121) }, 'quota_label_invalid'],
+    ['an audience (the grant control is slice S2)', '/offers/tts/gemini-tts', { unitPriceUsd: null, offeredTo: 'everyone' }, 'offered_to_not_supported'],
+  ])('refuses %s with 400 and writes nothing', async (_label, route, body, code) => {
+    const res = await call('PUT', route, body);
+    expect(res).toMatchObject({ status: 400, body: { code } });
+    expect(offers.size).toBe(0);
+  });
+
+  it('a non-operator cannot write a price', async () => {
+    expect((await call('PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0 }, PERSON_SUB)).status).toBe(403);
+    expect(offers.size).toBe(0);
   });
 });
