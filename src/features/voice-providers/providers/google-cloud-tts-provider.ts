@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reverted to OAuth-only — texttospeech.googleapis.com returns UNAUTHENTICATED for API keys per Google policy. Gemini TTS is the new default for API-key users; this provider stays available for operators who complete google-bot OAuth consent
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Recognize mounted Google application-default service accounts as paid Cloud TTS credentials.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Omit unsupported pitch controls for Chirp 3 HD voices so paid Cloud narration synthesizes successfully.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (swarm-paid) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -47,6 +48,8 @@ export class GoogleCloudTTSProvider implements TTSProvider {
   public readonly id = 'google-cloud-tts';
   public readonly displayName = 'Google Cloud TTS (Chirp 3 HD)';
   public readonly kind = 'server' as const;
+  /** ADR-173 D4: the swarm's Google workspace profile or service account carries the call. */
+  public readonly costClass = 'swarm-paid' as const;
 
   constructor(private readonly config: GoogleCloudTTSConfig) {}
 

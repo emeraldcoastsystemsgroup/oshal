@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-130 codex-cli storyboard image provider. Pins: (1) the demo-aware default — env unset resolves to codex-cli ONLY under DEMO_MODE (with executor + operator sub), and stays codex otherwise; (2) the SEC-shaped availability gates — no executor, no DEMO_MODE, non-operator sub, or missing userSub each read unavailable and selection fails closed with the demo-carve hint; (3) the render round-trip against the REAL shared-workspace filesystem — anchor staged for the executor, prompt carries the anchor step + output contract, PNG read back and magic-checked, non-PNG and missing-file both throw. The executor is doubled (it IS the app-boot injection seam); the filesystem and resolver are real.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02, the bot-level rule: the codex-cli render request names its rail ('codex-cli'), never a harness to switch the render bot onto (the executor stamps the bot's own record; storyboard-cli-image-wiring.spec.ts). The demo-default case registers no render-bot reader, which keeps codex-cli (the render-bot mapping is pinned in storyboard-image-default.spec.ts).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the request's `prompt` is the server-authored instruction alone (it names the brief by reference as the ticket-or-user-body record) and the brief is the request's own `brief` field; the render case pins that the brief is no longer embedded in the instruction.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: the two cases that resolve the codex platform rail with a fake key answer its vendor key probe in-process (resolution now runs it, D3 step 4) instead of calling the vendor; the probe cache is cleared around every case.
  */
 
 import * as fs from 'fs';
@@ -17,9 +18,11 @@ const logSpies = vi.hoisted(() => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => logSpies }));
 
 import {
+  clearStoryboardImageHealthCache,
   createCodexCliImageProvider,
   resolveStoryboardImageProvider,
 } from '../../src/features/video-generation/services/storyboard-image-providers';
+import { answerVendorKeyProbes } from '../helpers/vendor-key-probe-stub';
 import {
   registerCliStoryboardImageExecutor,
   resolveCliStoryboardImageExecutor,
@@ -73,9 +76,12 @@ describe('codex-cli storyboard image provider (ADR-130)', () => {
     delete process.env.OPENAI_API_KEY;
     // Reset the module-level executor seam between cases.
     registerCliStoryboardImageExecutor(null);
+    clearStoryboardImageHealthCache();
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    clearStoryboardImageHealthCache();
     for (const k of ENV_KEYS) {
       const v = savedEnv[k];
       if (v === undefined) delete process.env[k];
@@ -95,6 +101,7 @@ describe('codex-cli storyboard image provider (ADR-130)', () => {
   it('env unset WITHOUT demo mode keeps the codex default (fails closed on this box shape)', async () => {
     delete process.env.DEMO_MODE;
     process.env.OPENAI_API_KEY = 'sk-test-platform-key';
+    answerVendorKeyProbes(200); // ADR-173 D3 step 4: the codex key probe, answered in-process
     const provider = await resolveStoryboardImageProvider({ userSub: OPERATOR_SUB });
     expect(provider.id).toBe('codex');
   });
@@ -103,6 +110,7 @@ describe('codex-cli storyboard image provider (ADR-130)', () => {
     registerWritingExecutor(PNG_BYTES, []);
     process.env.STORYBOARD_IMAGE_PROVIDER = 'codex';
     process.env.OPENAI_API_KEY = 'sk-test-platform-key';
+    answerVendorKeyProbes(200); // ADR-173 D3 step 4: the codex key probe, answered in-process
     const provider = await resolveStoryboardImageProvider({ userSub: OPERATOR_SUB });
     expect(provider.id).toBe('codex');
   });

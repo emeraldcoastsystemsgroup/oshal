@@ -6,7 +6,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial TTS/STT provider contract — pluggable voice harness parallel to LLM provider registry, browser + server-side providers behind a single interface
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added optional abort signal for bounded memory-only STT calls.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Allow applications to request bounded performance direction without changing every provider consumer's default delivery.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: TTSProvider and STTProvider carry an optional declared costClass (free | swarm-paid | user-paid). Optional so an external implementation still compiles; the capability adapters treat a provider that declares none as unavailable (fail closed), so every built-in provider declares its class.
  */
+
+import type { CapabilityCostClass } from '@/shared/capability-providers';
 
 /**
  * @description Kind of audio delivery the provider performs.
@@ -69,6 +72,11 @@ export interface TTSProvider {
   readonly id: string;
   readonly displayName: string;
   readonly kind: VoiceProviderKind;
+  /**
+   * Who pays for this provider's calls (ADR-173 D4): `free`, `swarm-paid` or `user-paid`. Every
+   * built-in provider declares one; a provider that declares none is never offered or resolved.
+   */
+  readonly costClass?: CapabilityCostClass;
   getStatus(): Promise<VoiceProviderStatus>;
   synthesize(request: TTSSynthesizeRequest): Promise<TTSSynthesizeResult>;
   listVoices(): Promise<TTSVoice[]>;
@@ -117,6 +125,8 @@ export interface STTProvider {
   readonly id: string;
   readonly displayName: string;
   readonly kind: VoiceProviderKind;
+  /** Who pays for this provider's calls (ADR-173 D4); none declared means never offered or resolved. */
+  readonly costClass?: CapabilityCostClass;
   getStatus(): Promise<VoiceProviderStatus>;
   transcribe(request: STTTranscribeRequest): Promise<STTTranscribeResult>;
 }

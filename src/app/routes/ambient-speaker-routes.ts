@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added authenticated memory-only audio diarization, owner-private speaker profile management, private-org member context, deterministic self-enrollment, and trusted transcript persistence.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added receipt state transitions, failed-claim release, concurrent retry signaling, and completed lost-response acknowledgement.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | POST /audio re-enters the caller's RLS request identity after multer (preserveRequestIdentity around the audio parser). When the last audio bytes reached multer on a later socket chunk, the settings read, the receipt claim and the speaker-store writes after the upload ran with no AsyncLocalStorage identity, so the GUC pool stamped them anonymous non-operator and owner RLS scoped them to nothing (the receipt claim is refused: 500 speaker_service_unavailable). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D8: the diarization transcriber passes its caller (the request identity this route already re-enters after multer) to VoiceService. google-cloud-stt stays the explicit provider the speaker path needs for word timestamps, a required preference (D10): used when available, refused with the missing piece otherwise, never switched.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the diarization transcriber names the voice rail's accountable bot (the Jarvis bot, as /api/voice does), so its google-cloud-stt spend is recorded against a bot and the caller.
  */
 
 import express, { Router, type Request, type RequestHandler } from 'express';
@@ -37,6 +39,8 @@ import {
   type SpeakerProfileStoreContract,
 } from '@/features/speaker-diarization';
 import { VoiceService } from '@/features/voice';
+import { requestIdentityCapabilityPrincipal } from '@/shared/capability-providers';
+import { VOICE_ROUTE_ACCOUNTABLE_AGENT_ID } from './voice-routes';
 import { GOOGLE_CLOUD_STT_MAX_INLINE_AUDIO_BYTES } from '@/features/voice-providers';
 import { createChildLogger } from '@/shared/logger';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
@@ -449,6 +453,8 @@ async function transcribeForDiarization(voice: VoiceService, audio: Buffer, mime
   try {
     return await voice.transcribeAudio(audio, mimeType, {
       providerId: 'google-cloud-stt', enableSegments: true, signal: controller.signal,
+      // ADR-173 D8: the speaker route's caller, from the request identity it already re-entered.
+      caller: { principal: requestIdentityCapabilityPrincipal('ambient speaker transcription'), appId: null, agentId: VOICE_ROUTE_ACCOUNTABLE_AGENT_ID },
     });
   } finally {
     clearTimeout(timer);

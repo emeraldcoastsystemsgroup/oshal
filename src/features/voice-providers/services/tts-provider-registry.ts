@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | TTS provider registry — singleton that instantiates providers from swarm config and resolves swarm-default vs per-app overrides at call time
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Registered OpenAI TTS as an explicit server provider without changing swarm defaults.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: configuredDefaultId(channel) and configuredDefaultVoice(id) expose what the swarm config names (the seed of the swarm default when no swarm row exists, D6) and a provider's own default voice (the voice a resolution landing on it uses, D9), so the capability adapter reads the same config this registry was built from.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -101,6 +102,31 @@ export class TTSProviderRegistry {
    */
   get(id: string): TTSProvider | undefined {
     return this.providers.get(id);
+  }
+
+  /**
+   * @description The provider id the swarm config names for a channel, whether or not it is
+   * registered: the seed of the swarm default when no swarm row exists (ADR-173 D6).
+   *
+   * @param channel Which configured default — `default` or `serverSide`.
+   * @returns The configured provider id.
+   */
+  configuredDefaultId(channel: 'default' | 'serverSide' = 'default'): string {
+    return channel === 'serverSide'
+      ? this.config.tts.serverSide || this.config.tts.default
+      : this.config.tts.default;
+  }
+
+  /**
+   * @description A provider's configured default voice (its `defaultVoice` option): the voice a
+   * resolution that lands on this provider without a voice of its own uses (ADR-173 D9).
+   *
+   * @param id Provider identifier.
+   * @returns The voice id, or null when the provider configures none.
+   */
+  configuredDefaultVoice(id: string): string | null {
+    const value = this.config.tts.providers[id]?.defaultVoice;
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
   }
 
   /**
