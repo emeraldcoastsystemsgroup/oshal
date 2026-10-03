@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One dispatch per due occurrence, across the real Redis store (2026-10-03: the index reconcile re-added an in-flight record at its past nextRunAt every 60 s, so a fire longer than a minute ran as up to four concurrent copies — the World depth refresh popped at 02:33:15, 02:34:15 and 02:36:15). A job held open across two reconcile cycles is dispatched once, although the reconcile really does put the past time back in the due index; after it finishes the next occurrence dispatches normally; and a job abandoned at the dispatch timeout releases the guard, so a hung handler never blocks its schedule's next occurrence.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A fire whose handler fails releases the guard too (review of core #1030: the `.finally` on the due dispatch is the single release point).
  */
 
 import Redis from 'ioredis';
@@ -53,6 +54,7 @@ beforeAll(async () => {
   store = new RedisScheduleStore({ redisUrl: conn.url });
   svc = new ScheduleService(store, async (schedule): Promise<ScheduleDispatchResult> => {
     calls.push(schedule.id);
+    if (schedule.taskType.includes('failing')) throw new Error('fixture handler failure');
     await new Promise<void>((resolve) => { gates.push(resolve); });
     return { success: true, scheduleId: schedule.id };
   }, { ensureSchedulingEnabled: async () => undefined });
@@ -95,6 +97,20 @@ describe('one dispatch per due occurrence', () => {
     expect(await reconcileThenPop()).toBe(0);
 
     await makeDue(record.id); // the next occurrence comes due
+    expect(await svc.dispatchDueSchedules()).toBe(1);
+    await vi.waitFor(() => expect(calls).toEqual([record.id, record.id]), { timeout: 10_000, interval: 25 });
+  }, 60_000);
+
+  it('a fire whose handler fails releases the guard, so its next occurrence still dispatches', async () => {
+    const record = await dueSchedule('dispatch-failing-fixture');
+    expect(await svc.dispatchDueSchedules()).toBe(1);
+    await vi.waitFor(async () => {
+      const skipped = (await store.getSchedule(record.id))!;
+      expect(Date.parse(skipped.nextRunAt!)).toBeGreaterThan(Date.now());
+    }, { timeout: 10_000, interval: 25 });
+    expect(calls).toEqual([record.id]);
+
+    await makeDue(record.id);
     expect(await svc.dispatchDueSchedules()).toBe(1);
     await vi.waitFor(() => expect(calls).toEqual([record.id, record.id]), { timeout: 10_000, interval: 25 });
   }, 60_000);
