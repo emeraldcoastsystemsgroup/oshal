@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | 'What is live in this view' lists the reads a layout makes on demand (routines, Workflow Studio definitions, households and teams, the caller's own place, Finance spend, a ticket's workflow) with each one's status once made or 'read when you open it', and says only the caller's own place is shown; a game-like application's panel lists the other games on this swarm (the demo's game room offered them).
  * 15 | maintainer@emeraldcoastsystemsgroup.com | The experience list gains Simple chat (/simple, docs/architecture/simple-chat.md), the opt-in plain text screen over the caller's Jarvis thread; every other entry is unchanged.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Select the current package identity in the chooser before interpreting legacy layout names.
  */
 (() => {
   'use strict';
@@ -63,6 +64,8 @@
     }).catch(() => null);
   const experienceFor = id => EXPERIENCES.find(e => e.id === id || e.skin === id) || null;
   function currentExperience() {
+    const packageApp = document.body.dataset.experienceApp;
+    if (packageApp) return experienceFor(packageApp);
     const preset = new URLSearchParams(location.search).get('preset');
     return experienceFor(preset || document.body.dataset.layout || '');
   }
