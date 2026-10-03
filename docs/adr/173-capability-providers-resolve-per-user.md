@@ -667,8 +667,9 @@ functionality"). Database claims are proved against the real enforcing role and 
     (`chat_tasks` rollup per capability, provider, caller, bot and UTC day, plus one `oshal_cost_events` row) with the accountable bot
     and the caller; the amount is the call's units (characters, counted as code points; audio seconds measured from the clip's
     WAV, Ogg or WebM container, else the transcript's last segment) times the offer price. A `free` call records nothing; a call with no price
-    or unmeasurable units is recorded at zero, marked estimated. A person's row is written under the request identity, so it
-    stays theirs; the system's or an unattributed caller's spend is the swarm's own row. The operator route adds `PUT`/`DELETE
+    or unmeasurable units is recorded as a zero-amount row; the api log line names it unpriced and why. A person's row is
+    written under the request identity, so it stays theirs; the system's or an unattributed caller's spend is the swarm's
+    own row. The operator route adds `PUT`/`DELETE
     /offers/:capability/:providerId`, and the config-admin card (`config-admin-capability-providers.js`) writes the swarm
     default per capability (with a voice for TTS) and each provider's price.
 - **S2. User defaults.** The per-user table with `voice_user_prefs` copied across, routes mirroring

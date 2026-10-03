@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4): the spend rule and its seam. The amount of one capability call is its units times the unit price on the provider's offer row — never a literal in code; with no price set the call is still recorded, at zero, and says the price is unset; with units that could not be measured it is recorded at zero and says so. A free provider's call records nothing. The recorder that writes the event (chat_tasks + oshal_cost_events) is installed by the app at boot, so the voice feature records spend without importing the cost store; with nothing installed (no Postgres) nothing is recorded.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4): the spend rule and its seam. The amount of one capability call is its units times the unit price on the provider's offer row — never a literal in code; with no price set, or with units that could not be measured, the call is still recorded, as a zero-amount row, and the rule returns why (the recorder's api log line names it unpriced and the reason). A free provider's call records nothing. The recorder that writes the event (chat_tasks + oshal_cost_events) is installed by the app at boot, so the voice feature records spend without importing the cost store; with nothing installed (no Postgres) nothing is recorded.
  */
 
 /**
