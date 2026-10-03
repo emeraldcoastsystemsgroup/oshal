@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Judge and ledger of the storyboard-agy live-acceptance case (ADR-130 amendment 2026-10-02, the bot-level rule), over a fake api port. Pass needs the card's step to pass with a PNG of at least 64 x 64 from antigravity-cli, a generate_image DONE receipt, the bot's report that it ran antigravity-cli and a 'match' reconcile (its own setting, never switched); a degraded card (the render bot on another rail, or not the operator) is unavailable; a missing receipt, a non-PNG, another provider, a 'corrected' or unreported reconcile, or a card that failed is a fail; a render workspace the card did not remove turns the case red, and a workspace outside the card's tag is a cleanup error. The case posts exactly one Lab run for the card and nothing else.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The case's one POST /api/test-lab/run carries the render dispatch budget plus the margin as its own `timeoutMs` (480 s by default; STORYBOARD_CLI_IMAGE_TIMEOUT_MS when set; a non-positive or non-numeric value falls back), and names the image-turn framing suite among its regression tests.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a 'corrected' reconcile on the render bot's own harness (the card's botHarness; antigravity-cli when the selection named no bot) passes like a 'match'. A correction onto another harness (either way round), an 'absent' or unreported reconcile, and a turn run elsewhere still fail. The pass fixture carries the card's renderBot and botHarness as the card reports them.
  */
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
@@ -15,7 +16,8 @@ const agy = requireCjs('../../scripts/lib/live-acceptance-storyboard-agy.js');
 const TASK = 'sbimg-testlab-live-storyboard-0a1b2c3d';
 
 const passOutput = (over: Record<string, unknown> = {}) => ({
-  provider: 'antigravity-cli', model: 'gemini-3.8-flash-low', sourceMimeType: 'image/jpeg', format: 'png', width: 1024, height: 1024, bytes: 2048,
+  provider: 'antigravity-cli', renderBot: 'general-bot', botHarness: 'antigravity-cli',
+  model: 'gemini-3.8-flash-low', sourceMimeType: 'image/jpeg', format: 'png', width: 1024, height: 1024, bytes: 2048,
   cliRender: { taskId: TASK, tool: 'generate_image', toolState: 'DONE', locator: 'step-output', sha256: 'f'.repeat(64), ranOn: 'antigravity-cli', providerConfigAction: 'match' },
   cleanup: { taskId: TASK, removed: true }, ...over,
 });
@@ -41,6 +43,16 @@ describe('storyboard-agy live acceptance', () => {
     expect(api.calls[0].options).toEqual({ timeoutMs: 480_000 });
   });
 
+  it('passes a render bot found on a stale default and corrected onto its own harness, as the 2026-10-03 00:24 render was', async () => {
+    const corrected = passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: 'corrected' } });
+    const result = await agy.run({ api: world({ state: 'pass', output: corrected }).api });
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.detail).toContain('ran on the bot\'s own antigravity-cli (reconcile corrected)');
+    // With no render bot in the selection (an explicit STORYBOARD_IMAGE_PROVIDER), the bot's own harness is the rail's.
+    const explicit = await agy.run({ api: world({ state: 'pass', output: { ...corrected, renderBot: null, botHarness: null } }).api });
+    expect(explicit.state, explicit.detail).toBe('pass');
+  });
+
   it('budgets its one call from the render dispatch budget the api holds the bot to, plus a margin', () => {
     expect(agy.renderCallTimeoutMs({})).toBe(agy.DEFAULT_RENDER_BUDGET_MS + agy.RENDER_CALL_MARGIN_MS);
     expect(agy.renderCallTimeoutMs({})).toBe(480_000);
@@ -56,8 +68,12 @@ describe('storyboard-agy live acceptance', () => {
     ['not a PNG', passOutput({ format: null, width: 0, height: 0 }), /not a PNG of at least 64 x 64/],
     ['another rail', passOutput({ provider: 'codex-cli' }), /did not come from antigravity-cli/],
     ['a turn run on another provider', passOutput({ cliRender: { ...passOutput().cliRender, ranOn: 'openai-codex' } }), /does not report that the turn ran on antigravity-cli/],
-    ['a switched provider', passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: 'corrected' } }), /does not report a match on its own provider setting/],
-    ['an unreported reconcile', passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: null } }), /does not report a match/],
+    ['a correction onto another harness', passOutput({ cliRender: { ...passOutput().cliRender, ranOn: 'openai-codex', providerConfigAction: 'corrected' } }),
+      /the bot's reconcile was corrected on openai-codex, not a match on or a correction onto its own antigravity-cli setting/],
+    ['a correction onto a harness that is not the bot\'s own', passOutput({ botHarness: 'openai-codex', cliRender: { ...passOutput().cliRender, providerConfigAction: 'corrected' } }),
+      /the bot's reconcile was corrected on antigravity-cli, not a match on or a correction onto its own openai-codex setting/],
+    ['a reconcile the bot did not run', passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: 'absent' } }), /the bot's reconcile was absent on antigravity-cli/],
+    ['an unreported reconcile', passOutput({ cliRender: { ...passOutput().cliRender, providerConfigAction: null } }), /the bot's reconcile was not reported on antigravity-cli/],
   ])('fails a passing card with %s', async (_label, output, reason) => {
     const result = await agy.run({ api: world({ state: 'pass', output }).api });
     expect(result.state).toBe('fail');

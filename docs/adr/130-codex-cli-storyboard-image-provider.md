@@ -1,6 +1,6 @@
 # ADR-130 — codex-cli storyboard image provider (demo-mode rendering on the swarm's own harness)
 
-**Status:** Accepted; amended 2026-10-02 (the render bot's own harness picks the image rail; antigravity-cli rail; phase 2 not built; amendment (b): the image-turn prompt framing, the SEC-05 carve for image turns)
+**Status:** Accepted; amended 2026-10-02 (the render bot's own harness picks the image rail; antigravity-cli rail; phase 2 not built; amendment (b): the image-turn prompt framing, the SEC-05 carve for image turns) and 2026-10-03 (a bot found on a stale default is first corrected onto its own setting; Guard A's refusals say which way the turn failed)
 **Date:** 2026-08-22
 **Extends:** ADR-082 (storyboard provider family), ADR-127 (demo-mode CLI carve), ADR-036 (bot-owned execution)
 
@@ -138,10 +138,12 @@ added a mark nobody asked for.
   refresh (`OSHAL_PROVIDER_SWITCH_REFRESH_MS`, 30 s by default) with no restart. In a process with
   no boot wiring the demo default stays `codex-cli`, which then reads unavailable for want of the
   executor.
-- **The render never changes the render bot's provider.** The 2026-09-21 consequence above (a fixed
+- **A render never moves the bot off its own setting; a bot found on a stale default is first
+  corrected onto it (ADR-034).** The 2026-09-21 consequence above (a fixed
   `providerId: 'openai-codex'` stamp that moved the render bot onto codex for the turn) is replaced:
   the render dispatch is stamped with the render bot's OWN canonical record, the same one its text
-  turns carry, so the bot's ADR-034 reconcile is a match on its own setting and never a switch. At
+  turns carry, so the bot's ADR-034 reconcile is a match on that setting or, when the bot is found
+  running something else, a correction onto it before the turn. At
   dispatch the executor reads that record again and refuses, before any network call, when its
   harness's rail is not the rail the render was prepared for (the bot was switched in between, or
   `STORYBOARD_IMAGE_PROVIDER` names the other CLI rail): "`<bot>` runs `<harness>`, whose image
@@ -149,6 +151,16 @@ added a mark nobody asked for.
   harness". The stamp carries an EMPTY fallback chain, so the bot's post-execution check refuses a
   turn a failover rung ran on another harness. Every render is marked `imageTurn`, and its prompt
   reaches the bot verbatim (no ticket or handover scaffolding), without the host-tools-only marker.
+
+  *Amended 2026-10-03.* This bullet said "the render never changes the render bot's provider … a
+  match on its own setting and never a switch". The first live render after a deploy (00:24 UTC,
+  main `44d3a823`) showed why that was wrong: general-bot had booted at 00:14:54 while the api was
+  unreachable, fell back to its env seed (`openai-codex`, `gpt-5.5`), and the render's dispatch,
+  carrying the bot's own `antigravity-cli` record, corrected it onto that record before the turn
+  (ADR-034 `corrected`); the frame rendered, and the Lab card and the live case, which required
+  `match`, failed it. Operator decision 2026-10-03: both accept `match` or `corrected` when the render
+  ran on the render bot's own harness, and still fail any other reconcile action or a turn that ran
+  elsewhere.
 - **`STORYBOARD_IMAGE_PROVIDER` is the explicit deployment override**, not the default: the image
   APIs (`codex` platform key, `comfyui`, `vertex`, `openrouter`), and the CLI ids for compatibility,
   which serve only when the render bot's own harness is that rail's harness.
@@ -165,7 +177,19 @@ added a mark nobody asked for.
     that reached DONE, the file is a regular PNG or JPEG inside the private brain directory written
     during the turn, and the workspace does not already hold an output or a receipt. An image
     drawn with code, a run_command-only turn, a tool step that ended in ERROR, a file older than
-    the turn and a path outside the brain are all refused, and the turn fails.
+    the turn and a path outside the brain are all refused, and the turn fails. Since 2026-10-03 a
+    refusal says which way the turn failed (`generate_image` never ran, ran and ended in ERROR, ran
+    but did not finish, or reached DONE with no acceptable file) and then, behind a fixed marker,
+    gives the bot's untrusted diagnostic: the ERROR step's own error text and the model's final
+    reply, each with control characters turned into spaces and bounded to 200 characters. The bot
+    logs the same. Neither side lets that diagnostic into a message it classifies. On the node the
+    Antigravity provider keeps it off the error's message and stderr, which the node's provider
+    failover reads (a throttle word in the tool's or the model's text would otherwise send the
+    render to the fallback rung), and the handler re-attaches it only where the error leaves the
+    node. The api keeps it off the render error's message and carries it beside it as `diagnostic`,
+    because the storyboard frame stage and Portrait Studio decide a retry from the message (and
+    Switchboard its not-configured answer). The Lab card shows it. What Guard A accepts did not
+    change.
 - **Store Create and Portrait Studio** accept the operator-only `antigravity-cli` rail (operator
   decisions 2026-10-02, "Allow it for me now" and "it should just be the same everywhere"): each
   needs the provider to report itself available for the caller, so anyone but the operator is told
@@ -199,8 +223,11 @@ CLI image dispatch is also not built.
   `tests/unit/storyboard-test-lab-render.spec.ts` (the live card).
 - Live proof on the box is the automated case `node scripts/operations/live-acceptance.js
   storyboard-agy` (Lab card `storyboard-antigravity-render`): one frame on the render bot's
-  antigravity rail, `generate_image` DONE, a real PNG, the bot's report that it ran
-  `antigravity-cli` with a `match` reconcile, its workspace removed. It has not run on the box yet.
+  antigravity rail, `generate_image` DONE, a real PNG, the bot's report that it ran its own
+  `antigravity-cli` with a `match` reconcile, or a `corrected` one when it was found on a stale
+  default (2026-10-03), its workspace removed. It first ran on the box on 2026-10-03 (main
+  `44d3a823`) and passed 0 of 3: the first render produced its frame and was failed by the then
+  match-only check, and the next two were refused by Guard A.
 
 **Amendment (b), 2026-10-02 — the image-turn prompt framing (SEC-05 carve, server-authored
 instruction only).** The first live render on the box (main `1848fb4f`, 19:00 UTC) was refused by

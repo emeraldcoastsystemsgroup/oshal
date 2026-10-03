@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the explicit-only Test Lab card storyboard-antigravity-render (ADR-130 amendment 2026-10-02, the bot-level rule), the step the live-acceptance case storyboard-agy drives on the box. The card, the selection, the resolver, the antigravity-cli provider, its receipt check, the JPEG-to-PNG conversion and the workspace cleanup are real on a temporary shared root; the render-bot reader is a fixture (the real reader is pinned in storyboard-image-default.spec.ts) and the executor double plays the bot node's part exactly as agy-image-turn.js leaves it (output.jpg plus its receipt) and reports what the node reports (the provider it ran on and its ADR-034 reconcile), because the bot half is pinned through a real child process in storyboard-antigravity-image-turn.spec.ts. Cases: a pass renders one frame from a generated 256 x 256 anchor on a tagged sbimg-testlab-live-storyboard-<8 hex> workspace, carries the render bot and its harness, and removes exactly that folder; a render bot on another rail and a non-operator caller are degraded with nothing dispatched; an output without its receipt is a fail, and its workspace is still removed; a turn the bot reports as run on another provider, or as a 'corrected' reconcile (a switched bot), is a fail; the readback card names the render bot and harness it followed and fails a harness that cannot make images.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The card must list the image-turn framing guard (tests/unit/image-turn-prompt-framing.spec.ts) and every spec the live case module storyboard-agy names in its REGRESSION_TESTS, so the card and the case that drives it on the box never list different guards again.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a render never moves the bot off its own setting, and a bot found on a stale default is first corrected onto it. The 00:24 live render was failed by this card for exactly that ('corrected' after the bot booted on its env fallback). Now a 'corrected' reconcile on the render bot's own harness (the selection's harness) passes like a 'match'; a correction onto another harness, an 'absent' or unreported reconcile, and a turn run elsewhere still fail; with an explicit STORYBOARD_IMAGE_PROVIDER (the selection names no bot) the bot's own harness is the rail's, antigravity-cli. A refused render's failure carries the bot's untrusted diagnostic (the image tool's error text, the model's reply) in its detail and as output.diagnostic, apart from the error message.
  */
 
 import { createHash } from 'node:crypto';
@@ -34,7 +35,7 @@ const runRender = (ownerSub?: string): Promise<StepResult> => card('storyboard-a
 const fleet = (harness: string): void => registerStoryboardRenderBotReader(async () => ({ name: 'general-bot', harness }));
 
 /** The bot's part, as agy-image-turn.js leaves it: the tool's JPEG and its receipt in the task workspace. */
-function botLeaves(requests: CliStoryboardRenderRequest[], options: { receipt?: boolean; ranOn?: string; action?: 'match' | 'corrected' } = {}): void {
+function botLeaves(requests: CliStoryboardRenderRequest[], options: { receipt?: boolean; ranOn?: string; action?: 'match' | 'corrected' | 'absent' } = {}): void {
   registerCliStoryboardImageExecutor(async (request) => {
     requests.push(request);
     const dir = path.join(root, request.workspaceFolderId);
@@ -126,17 +127,55 @@ describe('Test Lab: storyboard-antigravity-render', () => {
     expect(fs.existsSync(path.join(root, requests[0].workspaceFolderId))).toBe(false);
   });
 
-  it('a turn the bot reports as run on another provider, or as a switched (corrected) provider, is a fail', async () => {
+  it('a render bot found on a stale default and corrected onto its own harness passes, like a match (ADR-130 amendment 2026-10-03)', async () => {
     fleet('antigravity-cli');
     const requests: CliStoryboardRenderRequest[] = [];
     botLeaves(requests, { action: 'corrected' });
-    const switched = await runRender();
-    expect(switched.state).toBe('fail');
-    expect(switched.detail).toContain("the bot's provider reconcile was corrected, not a match on its own setting");
+    const corrected = await runRender();
+    expect(corrected.state, corrected.detail).toBe('pass');
+    expect(corrected.detail).toContain('ran on antigravity-cli (reconcile corrected)');
+    expect(corrected.output).toMatchObject({ botHarness: 'antigravity-cli', cliRender: { ranOn: 'antigravity-cli', providerConfigAction: 'corrected' } });
+  });
+
+  it('with STORYBOARD_IMAGE_PROVIDER naming the rail (no render bot in the selection) the bot\'s own harness is the rail\'s, antigravity-cli', async () => {
+    fleet('antigravity-cli');
+    process.env.STORYBOARD_IMAGE_PROVIDER = 'antigravity-cli';
+    const requests: CliStoryboardRenderRequest[] = [];
+    botLeaves(requests, { action: 'corrected' });
+    const explicit = await runRender();
+    expect(explicit.state, explicit.detail).toBe('pass');
+    expect(explicit.output).toMatchObject({ botHarness: null, cliRender: { providerConfigAction: 'corrected' } });
+  });
+
+  it('a correction onto another harness, an absent reconcile, or a turn run elsewhere is a fail', async () => {
+    fleet('antigravity-cli');
+    const requests: CliStoryboardRenderRequest[] = [];
+    botLeaves(requests, { action: 'corrected', ranOn: 'openai-codex' });
+    const correctedElsewhere = await runRender();
+    expect(correctedElsewhere.state).toBe('fail');
+    expect(correctedElsewhere.detail).toContain("the bot's provider reconcile was corrected on openai-codex; only a match on, or a correction onto, its own antigravity-cli setting passes");
+    botLeaves(requests, { action: 'absent' });
+    const absent = await runRender();
+    expect(absent.state).toBe('fail');
+    expect(absent.detail).toContain("the bot's provider reconcile was absent on antigravity-cli; only a match on, or a correction onto, its own antigravity-cli setting passes");
     botLeaves(requests, { ranOn: 'openai-codex' });
     const elsewhere = await runRender();
     expect(elsewhere.state).toBe('fail');
     expect(elsewhere.detail).toContain('the bot reports the turn ran on openai-codex, not antigravity-cli');
+    expect(elsewhere.detail).toContain("the bot's provider reconcile was match on openai-codex");
+  });
+
+  it('a refused render fails with Guard A\'s own words, and the bot\'s untrusted diagnostic beside them', async () => {
+    fleet('antigravity-cli');
+    const diagnostic = 'generate_image error "TOOL_ERROR: no image generated in response"; model reply "NO_IMAGE_CAPABILITY"';
+    const reason = 'image turn refused: the event stream shows no generate_image tool step that reached DONE: generate_image ran and ended in ERROR';
+    registerCliStoryboardImageExecutor(async () => ({ success: false, responseText: '',
+      error: `Bot node execution failed: Antigravity CLI error: ${reason} | untrusted diagnostic: ${diagnostic}` }));
+    const step = await runRender();
+    expect(step.state).toBe('fail');
+    expect(step.detail).toContain(`The render failed: antigravity-cli image provider: render task failed — Bot node execution failed: Antigravity CLI error: ${reason}`);
+    expect(step.detail).toContain(`The render bot's diagnostic (the image tool's error text and the model's reply; untrusted, for diagnosis only): ${diagnostic}`);
+    expect(step.output).toMatchObject({ diagnostic, cleanup: { removed: true } });
   });
 
   it('the rail readback names the render bot and harness it followed, and fails a harness that cannot make images', async () => {

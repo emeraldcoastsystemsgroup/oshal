@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the storyboard image rail (BACKLOG "Free ComfyUI storyboard provider"). Which rail renders a storyboard still decides whether the stage costs money per image and whether it can serve anybody but the operator, and nothing in the cockpit said which one this deployment would pick. The live step reads the selection and probes the free GPU rail's own health, so an operator can see that the FREE rail is standing by - or exactly which of url / workflow / reachability is missing - without submitting a frame. Read-only: it generates no image, submits no job and spends nothing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (the bot-level rule: the render bot's own effective harness picks the image rail). The rail readback now awaits selectStoryboardImageProvider - the function the resolver itself uses - instead of re-deriving the default, so it names the render bot and the harness it followed and reports a refused selection ("<bot> runs <harness>, which cannot make images") as a fail. New explicit-only card storyboard-antigravity-render: as the signed-in caller, it requires the resolved rail to be antigravity-cli, renders ONE frame through it (a generated 256 x 256 red-circle anchor and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, requires a real PNG back plus the bot's receipt that generate_image reached DONE, and removes exactly that workspace (proven gone). It spends one model turn on the operator's subscription, so it never runs from "run all". The new guards are attached as regressionTests.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The render card lists tests/unit/image-turn-prompt-framing.spec.ts among its regressionTests: the card renders through the framed image turn (the SEC-05 carve for image turns, ADR-130 amendment b), and only the live case module's REGRESSION_TESTS carried that guard.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a render never moves the bot off its own setting, and a bot found on a stale default is first corrected onto it (ADR-034). On 2026-10-03 00:24 the first render after a deploy produced its frame but this card failed it: general-bot had booted on its env fallback (openai-codex) and the render's dispatch corrected it onto its own antigravity-cli ('corrected'). The card now accepts 'match' or 'corrected' when the turn ran on the render bot's own harness (the selection's harness; with an explicit STORYBOARD_IMAGE_PROVIDER the selection names no bot, and the wiring dispatches the antigravity rail only to a bot whose own harness is antigravity-cli), and still fails any other reconcile or a turn that ran elsewhere. A refused render's failure detail and output now carry the bot's untrusted diagnostic (the image tool's error text and the model's reply), which the provider keeps off the error message.
  *
  * @module routes/test-lab-storyboard-scenarios
  */
@@ -37,6 +38,14 @@ const RENDER_TASK = /^sbimg-testlab-live-storyboard-[0-9a-f]{8}$/;
 const PAID_RAILS = new Set(['codex', 'vertex', 'openrouter']);
 /** The rails that serve only the deployment operator in demo mode (ADR-127). */
 const OPERATOR_RAILS = new Set(['codex-cli', 'antigravity-cli']);
+/** The rail this card renders on, and the one harness that serves it (storyboard-image-default's mapping). */
+const RENDER_RAIL_HARNESS = 'antigravity-cli';
+/**
+ * What the bot may report of its ADR-034 reconcile for a render on its own harness: its own setting
+ * matched, or it was found on a stale default and corrected onto that setting first (ADR-130
+ * amendment 2026-10-03). Anything else, or a turn that ran on another harness, fails.
+ */
+const OWN_SETTING_ACTIONS: ReadonlySet<string> = new Set(['match', 'corrected']);
 
 /**
  * @description Live step: report which rail this deployment would render storyboard stills on, and
@@ -113,22 +122,36 @@ function removeRenderWorkspace(taskId: string): { taskId: string; removed: boole
 }
 
 /**
+ * @description The reconcile half of the verdict: the bot kept on, or put back on, its own setting.
+ * @param {StoryboardImageResult['cliRender']} receipt - The render's receipt and the bot's report.
+ * @param {string} ownHarness - The render bot's own harness.
+ * @returns {string[]} The problem, or none.
+ */
+function reconcileProblems(receipt: StoryboardImageResult['cliRender'], ownHarness: string): string[] {
+  const action = receipt?.providerConfigAction ?? null;
+  if (action && OWN_SETTING_ACTIONS.has(action) && receipt?.ranOn === ownHarness) return [];
+  return [`the bot's provider reconcile was ${action ?? 'not reported'} on ${receipt?.ranOn ?? 'nothing'}; only a match on, or a correction onto, its own ${ownHarness} setting passes`];
+}
+
+/**
  * @description Judge one finished render: a real PNG of a usable size, from the antigravity rail,
- * carrying the bot's receipt that generate_image reached DONE, run on the bot's own antigravity-cli
- * setting (the bot reports it ran antigravity-cli and its ADR-034 reconcile was a 'match', not a
- * switch), with its workspace removed.
+ * carrying the bot's receipt that generate_image reached DONE, run on the render bot's own harness
+ * with its ADR-034 reconcile a 'match' on that setting or a 'corrected' onto it (a bot found on a
+ * stale default is put back first; a render never moves it off its own setting), with its workspace
+ * removed.
  * @param {StoryboardImageResult} rendered - The provider's answer.
  * @param {{removed: boolean}} cleanup - The workspace cleanup fact.
+ * @param {string} ownHarness - The render bot's own harness.
  * @returns {{state: StepResult['state'], detail: string}} The verdict.
  */
-function judgeRender(rendered: StoryboardImageResult, cleanup: { removed: boolean }): { state: StepResult['state']; detail: string } {
+function judgeRender(rendered: StoryboardImageResult, cleanup: { removed: boolean }, ownHarness: string): { state: StepResult['state']; detail: string } {
   const size = pngSize(rendered.image);
   const receipt = rendered.cliRender;
   const problems = [
     ...(size && size.width >= 64 && size.height >= 64 ? [] : ['the image is not a PNG of at least 64 x 64']),
     ...(receipt?.tool === 'generate_image' && receipt.toolState === 'DONE' ? [] : ['no receipt shows a generate_image step that reached DONE']),
-    ...(receipt?.ranOn === 'antigravity-cli' ? [] : [`the bot reports the turn ran on ${receipt?.ranOn ?? 'nothing'}, not antigravity-cli`]),
-    ...(receipt?.providerConfigAction === 'match' ? [] : [`the bot's provider reconcile was ${receipt?.providerConfigAction ?? 'not reported'}, not a match on its own setting`]),
+    ...(receipt?.ranOn === RENDER_RAIL_HARNESS ? [] : [`the bot reports the turn ran on ${receipt?.ranOn ?? 'nothing'}, not ${RENDER_RAIL_HARNESS}`]),
+    ...reconcileProblems(receipt, ownHarness),
     ...(cleanup.removed ? [] : ['the render workspace was not removed']),
   ];
   const facts = `${size ? `${size.width} x ${size.height} PNG` : 'no PNG'} from ${rendered.sourceMimeType ?? 'an unreported format'}, model ${rendered.model}, ran on ${receipt?.ranOn ?? 'unreported'} (reconcile ${receipt?.providerConfigAction ?? 'unreported'}), located by ${receipt?.locator ?? 'nothing'}`;
@@ -159,17 +182,26 @@ async function renderStep(_cookie: string, _prior: Record<string, unknown>, runt
   const taskId = `sbimg-testlab-live-storyboard-${randomBytes(4).toString('hex')}`;
   let rendered: StoryboardImageResult | null = null;
   let failure = '';
+  let diagnostic: string | null = null;
   try {
     rendered = await createAntigravityCliImageProvider(runtime.ownerSub, { taskId }).generateWithMeta!(RENDER_BRIEF, await circleAnchor());
   } catch (err) {
     logger.error({ err, stack: (err as Error).stack, taskId }, 'live storyboard render failed');
     failure = err instanceof Error ? err.message : String(err);
+    // The bot's untrusted diagnostic (the image tool's error, the model's reply), kept off the message by the provider.
+    const said = (err as { diagnostic?: unknown } | null)?.diagnostic;
+    diagnostic = typeof said === 'string' && said ? said : null;
   }
   const cleanup = removeRenderWorkspace(taskId);
   const kept = 'the render bot keeps its task record and the chat_tasks usage row as the audit trail; neither holds the image';
-  if (!rendered) return result('fail', `The render failed: ${failure.slice(0, 400)}${cleanup.removed ? '' : ' The render workspace was not removed.'}`, { taskId, cleanup, kept });
+  if (!rendered) {
+    const told = diagnostic ? ` The render bot's diagnostic (the image tool's error text and the model's reply; untrusted, for diagnosis only): ${diagnostic}` : '';
+    return result('fail', `The render failed: ${failure.slice(0, 400)}${cleanup.removed ? '' : ' The render workspace was not removed.'}${told}`, { taskId, cleanup, kept, diagnostic });
+  }
   const size = pngSize(rendered.image);
-  const verdict = judgeRender(rendered, cleanup);
+  // The render bot's own harness. An explicit STORYBOARD_IMAGE_PROVIDER names no bot in the selection; the
+  // wiring then dispatches this rail only to a bot whose own record maps to it, which is antigravity-cli.
+  const verdict = judgeRender(rendered, cleanup, selection.harness ?? RENDER_RAIL_HARNESS);
   return result(verdict.state, verdict.detail, { provider: 'antigravity-cli', renderBot: selection.renderBot, botHarness: selection.harness, model: rendered.model, sourceMimeType: rendered.sourceMimeType ?? null,
     format: size ? 'png' : null, width: size?.width ?? 0, height: size?.height ?? 0, bytes: rendered.image.length, cliRender: rendered.cliRender ?? null, cleanup, kept });
 }
@@ -193,7 +225,7 @@ export const STORYBOARD_SCENARIOS: Scenario[] = [{
   title: 'Storyboard stills — render one frame on the render bot\'s antigravity rail',
   group: 'tool',
   explicitOnly: true,
-  description: 'As you, requires the resolved storyboard image rail to be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), renders ONE frame through it (a generated red-circle reference and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, and requires a real PNG back with the bot\'s receipt that generate_image reached DONE. The render bot\'s provider is never switched for it. Removes exactly that workspace and proves it gone; the render bot\'s task record and usage row stay as the audit trail. Serves only the deployment operator in demo mode. Spends one model turn on the operator\'s subscription.',
+  description: 'As you, requires the resolved storyboard image rail to be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), renders ONE frame through it (a generated red-circle reference and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, and requires a real PNG back with the bot\'s receipt that generate_image reached DONE. A render never moves the render bot off its own setting: its provider reconcile must be a match on its own harness, or a correction onto it when the bot was found on a stale default (ADR-034); any other reconcile, or a turn that ran on another harness, fails. A refused render says which way Guard A refused it (generate_image never ran, ended in ERROR, or reached DONE with no file) and shows the bot\'s untrusted diagnostic (the image tool\'s error text and the model\'s reply) beside it. Removes exactly that workspace and proves it gone; the render bot\'s task record and usage row stay as the audit trail. Serves only the deployment operator in demo mode. Spends one model turn on the operator\'s subscription.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/storyboard-image-default.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-antigravity-image-turn.spec.ts' },

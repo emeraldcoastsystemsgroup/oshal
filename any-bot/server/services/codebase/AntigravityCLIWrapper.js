@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Give every invocation a private Antigravity HOME and approve terminal commands only there. agy's --sandbox restricts terminal access but does not answer headless confirmations, so command execution was still soft-denied; the ephemeral command(regex:.*) grant now operates only with --sandbox and the exact --add-dir task boundary, never through the persistent host config or --dangerously-skip-permissions.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Host-tools-only turns. A Jarvis ask on the Antigravity brain ran 10 min 45 s and died with `jetski: no output produced - a tool required the "read_file" permission`. The recall tools reach a CLI turn only through the host loop's XML contract (AgenticController parses the reply and runs the bot-node tool), but agy answered that prompt with its OWN tools - a local repro with this wrapper's argv showed its first step was a native run_command, and a native view_file outside --add-dir produces exactly the live error. hostToolsOnly now runs agy as an invocation-local custom agent (`--agent oshal-host-tools`, excludeDefaultComponents) that holds no native tools, with an empty permission allow list and no --mode accept-edits; --sandbox and the single --add-dir stay. It narrows the grant: nothing outside the host's brokered tools is callable. Also: a failed turn's diagnostic now names each denied tool and its target from the stream-json events, which the wrapper used to discard, so the next denial is not a guess.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Image turns (ADR-130 amendment 2026-10-02: storyboard images render on the render bot's own harness). An imageTurn runs exactly the proven shape - the unbridged workspace task turn (accept-edits, --sandbox, one --add-dir, private HOME) - and refuses to combine with hostToolsOnly or a tool bridge. When the turn succeeds, the image agy's generate_image wrote into the private HOME is collected into the task workspace (agy-image-turn.js: output.png or output.jpg by its real bytes, plus a receipt) BEFORE the HOME is removed; Guard A refuses the turn unless the stream shows a generate_image tool step that reached DONE and that tool's own file is found. The result reports the collected image (file, real mime type, bytes, sha256, locator).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com  | Guard A gets the model's final reply (the result event's response) as `reply`, so a refused image turn's reason says what the model answered beside which way generate_image went (agy-image-turn.js entry 2). Nothing else about the turn changes.
  */
 
 'use strict';
@@ -345,7 +346,7 @@ class AntigravityCLIWrapper {
     let image;
     let refusal = '';
     if (success && imageTurn) {
-      const collected = collectImageTurnOutput({ home, workspaceDir, stdout, startedAtMs: start });
+      const collected = collectImageTurnOutput({ home, workspaceDir, stdout, startedAtMs: start, reply: parsed.text });
       if (collected.ok) image = { file: collected.file, mimeType: collected.mimeType, bytes: collected.bytes, sha256: collected.sha256, locator: collected.locator };
       else { success = false; refusal = collected.reason; }
     }
