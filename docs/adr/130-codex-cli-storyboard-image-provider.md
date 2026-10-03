@@ -356,8 +356,8 @@ wording, fake timers measuring every wait: what is and is not retried, the fresh
 `[backoff]`, the deadline and `startBy`, busy, and that the diagnostic decides nothing; the verifier's
 probe through the real `generateStoryboardFrame`, at most three turns and no stage retry once the
 provider retried; the sweep of k = 0 to 4 transient first attempts, exactly k + 3 turns and never more
-than 7; the 90 s default ending before 120 s when every attempt starts late and runs twice
-its reserve; and every stop message driven out of the provider and checked against the frame stage's
+than 7; the 90 s default ending before 120 s when an attempt starts as late as it may and runs twice
+its 30 s reserve while no earlier attempt took over 30 s; and every stop message driven out of the provider and checked against the frame stage's
 real `STORYBOARD_FRAME_TRANSIENT_ERROR` and against Portrait Studio's `isTransientVendorError`, which,
 being store code, is a verbatim copy pinned by the sha256 of the store source),
 `tests/unit/storyboard-image-turn-queue.spec.ts` (the queue itself), plus the updated
