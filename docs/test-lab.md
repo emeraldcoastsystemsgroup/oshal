@@ -339,14 +339,14 @@ category (a quota, a 429 or a rate limit in the image tool's own error) through 
 on every attempt without reaching the rung. The retry suite (`storyboard-antigravity-render-retry`)
 holds the provider to the real Guard A wording with fake timers: only Guard A's ERROR is retried,
 after about 3 s then 8 s (about 20 s then 45 s for ` [backoff]`), at most three times, never past the
-render's deadline (90 s when the caller names none, so the render ends before Create's and Portrait's own
-120 s), and the untrusted diagnostic decides nothing. Once the provider has retried, its error is its own
+render's deadline (90 s when the caller names none, leaving Create's and Portrait's own 120 s one
+attempt of headroom), and the untrusted diagnostic decides nothing. Once the provider has retried, its error is its own
 fixed words, which neither the real frame stage's pattern nor Portrait Studio's classifier (a copy pinned
 to the store source) reads as transient: the verifier's probe through the real frame stage makes two
 turns and no stage retry. The frame stage still retries a first attempt that failed transiently, as it
 always did, so a frame makes at most its stage retries plus three turns, at most 7 against 5 before
 (swept for k = 0 to 4 transient first attempts: exactly k + 3 turns); Portrait Studio at most 5 per
-portrait against 3; Create and this card at most 3;
+portrait against 3, while each render ends inside its 120 s timeout; Create and this card at most 3;
 the queue suite (`storyboard-image-turn-queue`) pins one image turn at a time per render bot. The framing suite
 (`image-turn-prompt-framing`) captures the exact text agy is handed on an image turn through that same
 chain: the server-authored render instruction as `TRUSTED CONFIGURATION`, `generate_image` beside

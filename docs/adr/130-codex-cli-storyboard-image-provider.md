@@ -308,8 +308,8 @@ ERROR. Operator decision 2026-10-03: "Retry, max 3, fresh turns" and "Throttle i
   or the provider's options. Callers that pass none get 90 s: the 120 s that Create's region edit
   (`CREATE_REGION_EDIT_TIMEOUT_MS`) and Portrait Studio (`PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS`) wait by
   default, less one attempt's 30 s. Since an attempt starts only while it is expected to end inside the
-  budget, the last one still ends before their own timeout fires even when it runs twice as long as
-  expected; when Portrait's timeout fires it starts the whole render again. The storyboard frame stage and the Test Lab render card pass the CLI render budget
+  budget, the last one still ends before their own timeout fires even when it runs 30 s longer than the
+  longest attempt before it (twice as long while no attempt has taken over 30 s); when Portrait's timeout fires it starts the whole render again. The storyboard frame stage and the Test Lab render card pass the CLI render budget
   (`STORYBOARD_CLI_IMAGE_TIMEOUT_MS`, 420 s), which the live case's one blocking call already carries
   plus its margin. An attempt starts only while the time left still covers one attempt (30 s until
   the render has timed one, then its longest attempt so far, its wait for the render bot included).
