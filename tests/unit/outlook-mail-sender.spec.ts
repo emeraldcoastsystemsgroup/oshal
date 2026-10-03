@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Boundary guards for the fixed Outlook send seam: sender grant selection fails closed, Mail.Send is required, one bounded recipient, Reply-To resolved in core, the exact Graph payload, and no token or provider body in any result.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Google provider: the Gmail endpoint and gmail.send scope, the raw RFC 2822 message (To, Reply-To, RFC 2047 subject, text+HTML alternative), fail-closed selection among google grants, and Reply-To resolved across providers.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin the Test Lab card that registers this suite and the reader suite, with its anonymous credential refusal step.
  */
 /**
  * Security boundary tests for the fixed Outlook send operation exposed to app packages.
@@ -15,6 +16,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createOutlookMailSender, outlookMailSenderInternals } from '@/app/routes/outlook-mail-sender';
 import type { ConnectionRow } from '@/app/routes/connector-tenancy';
+import { CONNECTOR_OAUTH_SCENARIOS } from '@/app/routes/test-lab-connector-scenarios';
 
 const SUB = 'local-info-mailbox-owner';
 const BDO = 'local-bdo';
@@ -243,5 +245,14 @@ describe('Google provider', () => {
     await expect(send({ ...message, replyToUserSub: BDO })).resolves.toEqual({ status: 'sent', replyTo: 'set' });
     const body = JSON.parse(String(((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.message.replyTo).toEqual([{ emailAddress: { address: 'ben@gsquared.test' } }]);
+  });
+});
+
+describe('Test Lab registration', () => {
+  it('the Outlook mail seams card links this suite and the reader suite and refuses the anonymous credential read', () => {
+    const scenario = CONNECTOR_OAUTH_SCENARIOS.find((s) => s.id === 'outlook-mail-package-seams');
+    expect(scenario, 'outlook-mail-package-seams card').toBeTruthy();
+    expect(scenario?.regressionTests?.map((t) => t.path)).toEqual(['tests/unit/outlook-mail-reader.spec.ts', 'tests/unit/outlook-mail-sender.spec.ts']);
+    expect(scenario?.steps?.map((s) => s.id)).toEqual(['private-token']);
   });
 });
