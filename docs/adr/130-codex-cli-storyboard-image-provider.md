@@ -211,8 +211,11 @@ CLI image dispatch is also not built.
 - With the render bot on `antigravity-cli` (its own row, or the fleet default) and `DEMO_MODE` on,
   the resolver selects `antigravity-cli` for every consumer that passes the caller's sub: Video
   Studio's storyboard stage, Create's region edit and Portrait Studio. Any caller but the operator
-  gets the not-configured refusal. None of these has rendered on the box yet (see the live proof
-  below).
+  gets the not-configured refusal. Of these, Create's region edit has rendered on the box on
+  `antigravity-cli`: `create-region-edit` passed 2 of 2 on main `44d3a823`, then 10 of 10 on
+  `3f06817f` and 10 of 10 on `3642c1f1` (2026-10-03). Video Studio's storyboard stage and Portrait
+  Studio have no recorded live run on the box yet; the live proof below renders through the
+  provider directly, not through the storyboard stage.
 - Guards: `tests/unit/storyboard-image-default.spec.ts` (the mapping, the override, fail-closed, and
   the real reader over the canonical record and the real switch snapshot: bot row over fleet default
   both ways, registry declaration, unread snapshot, a row write moving the rail),
