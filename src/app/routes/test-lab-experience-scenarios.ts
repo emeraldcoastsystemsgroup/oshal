@@ -13,6 +13,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the full-swarm build specs (pure readers; work panels with workflow, Approve and Cancel, the Routines panel, the day focus, visual cards, package facts, membership and the caller's own place, the portal sections and the six-width layout check) as regression tests of the experience scenario, and name them in its description
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment): the pure redirect decision, the cockpit document and experience pages behind a real listener, and the ribbon's door decision are registered as regression tests of the experience scenario.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Simple chat (docs/architecture/simple-chat.md): /simple joins the entry pages the live step reads (its root marker is sc-root), and the kit, /simple and OSHAL Node Simple chat specs are registered as regression tests.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Register fail-closed experience declaration validation as local unit coverage; package hosting and installed acceptance remain pending.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -71,6 +72,7 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   id: 'experience-shells', title: 'Experience shells over the live swarm', group: 'tool',
   description: 'Open the experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant, and Simple chat) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place. The full-swarm layouts add work panels over the ticket routes (recorded workflow, Approve, Cancel), the Routines panel over the caller’s schedules, a device-local day focus, visual cards, package facts, household or team membership with the caller’s own place, and the portal’s gallery sections.',
   regressionTests: [
+    { level: 'unit', path: 'tests/unit/experience-package-contract.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-shell-lock.spec.ts' },

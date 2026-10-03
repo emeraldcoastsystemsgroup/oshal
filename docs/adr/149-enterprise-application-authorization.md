@@ -619,3 +619,30 @@ it: catalog permissions and callback owner verification are unchanged. Vids opts
 published immutable MP4 bytes; World and Trading charts remain protected until a separate opt-in.
 See [the complete schema, limitations and proof recipe](../apps/package-anonymous-routes.md).
 Local fixture proof does not imply deployed live publication.
+
+## Delivery amendment — selectable experience composite roles (operator, 2026-10-03)
+
+**Status:** Approved implementation scope; lifecycle implementation pending.
+
+An experience may offer a named, versioned template of explicit member-application catalog
+roles. Extend the existing package grant planner and audited access workflow, retaining this
+ADR's authority, denies, sensitive review, tenant and resource rules. A template label is not
+a role in another application's catalog and never substitutes for an authoritative roster.
+
+Review must compare exact role IDs/scopes, not merely an existing access tier. Bind the plan
+to the target's issuer/subject, selected optional members, scopes, template digest/version,
+catalog revisions and policy revision; recheck every application's assigning authority at apply.
+Stale review refuses. Installation, experience entry and membership create no human grants.
+
+Persist composite-assignment provenance and its constituent grant sources. Removing a source
+must preserve independently assigned roles and roles still supplied by another composite.
+Idempotent retries must not create duplicate sources. Use atomic application where supported;
+otherwise persist recoverable partial state and never report partial application as complete.
+Reviewed template upgrades may change access; package upgrades alone may not widen it.
+
+The member owner continues enforcing record/field access, expiry, disabled principals,
+relationship loss, explicit denies and separation of duties. Preserve these checks on direct
+API, assistant/tool and background paths as well as UI navigation. See the
+[integration contract and acceptance matrix](../architecture/experience-application-integration.md)
+for the Home pilot, lifecycle cases and implementation sequence. No new assignment schema or
+grant behavior is claimed by this documentation amendment.

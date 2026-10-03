@@ -1,5 +1,11 @@
 # Experience shells
 
+The approved package migration covers seven experiences: Studio, Jarvis, Orbit, Commons,
+Home/Family, Classroom and Business. See [experience application integration](experience-application-integration.md)
+for the source inventory, Finance/Education hosting baseline, composite-role contract and
+delivery gates. Nexus and Simple chat retain their current behavior. Existing shells below
+are not evidence that package discovery or composite-role assignments have shipped.
+
 As-built notes for the ADR-164 experience layouts served under `src/experience/`. Everything here
 describes what the shipped code does today; the design record and its open items stay in
 [ADR-164](../adr/164-configurable-experience-skins-and-application-views.md).

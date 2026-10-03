@@ -30,6 +30,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | readManifest refuses an unknown `scope:` by name (unknown_app_scope) through the contract `oshal-app validate` shares (@/shared/app-scope). loadApp calls readManifest before any database read or write, so dev-workspace-index 0.2.0's `scope: deployment` now fails here instead of at the swarm_applications CHECK mid-install.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | readManifest validates the optional ADR-170 `rating:` block through swarm-app-rating.ts, beside the suite check and with the same posture: a malformed value fails the load, a missing block warns.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Refuse malformed or overbroad anonymous read declarations before activation.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | Refuse undeclared or malformed experience contracts before installation; hosting compatibility remains unavailable until discovery and shell hosting ship.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -58,6 +59,7 @@ import { loadApplicationAuthorization } from '@/shared/application-authorization
 import { validatePackageTools } from '@/shared/package-tools';
 import { loadPackageTestCatalog } from '@/shared/package-testing';
 import { readAppDependencies } from '@/shared/app-dependencies';
+import { validateExperienceDeclaration } from '@/shared/experience-contract';
 import { validateAppScope } from '@/shared/app-scope';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
@@ -693,6 +695,9 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // ADR-090 D8: `uses:` names KERNEL SKILLS, and validation is fail-closed. An unknown id here
   // would otherwise surface as a mount-time crash inside the installed app (the module the
   // package imports simply isn't in the image) — catch the typo at load, where it's cheap.
+  // Validate before the skill lookup: an undeclared experience must never be ignored.
+  // The experience skill remains unavailable until its hosting/discovery slice ships.
+  try { validateExperienceDeclaration(manifest); } catch (err) { throw new Error(`Manifest ${absPath}: ${(err as Error).message}`); }
   if (manifest.uses !== undefined) {
     if (!Array.isArray(manifest.uses)) {
       throw new Error(`Manifest ${absPath}: uses, when present, must be an array of kernel-skill ids`);

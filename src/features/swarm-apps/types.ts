@@ -37,6 +37,7 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | ADR-170 rating label: the closed APP_RATING_TIERS (T1-T4; T0 is code and never declared), APP_RATING_GENERATIONS (none|local|hosted), APP_RATING_DEGRADES (template|hosted|disable|reduced) and APP_RATING_MEMORY_BASES (declared|observed) with guards, the AppRatingMemory/AppRatingFeature/AppRatingDeclaration shapes, and an optional `rating` on SwarmAppManifest (operator 2026-09-29: token rating per application plus container memory low/high).
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | APP_RATING_TIERS gains T0 for a generation-only feature: the store survey found template-prompt image features (Portrait Studio, Create region regenerate, Switchboard compose preview) that drive a hosted image model with no language model, which no T1-T4 value described honestly.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Type exact anonymous GET/HEAD route opt-ins on explicit public mounts.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | Type the staged version-one experience declaration without advertising an unimplemented hosting capability.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -824,6 +825,8 @@ export interface SwarmAppDependencyLists {
 
 /** The YAML manifest shape, as parsed from swarm-apps/*.yaml. */
 export interface SwarmAppManifest {
+  /** ADR-164 staged declaration; installation requires the completed experience kernel skill. */
+  experience?: import('@/shared/experience-contract').ExperienceDeclaration;
   name: string;
   displayName: string;
   /** ADR-141: `group` = a code-less manifest that binds installed member apps into one front door.
