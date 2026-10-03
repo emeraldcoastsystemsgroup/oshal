@@ -611,8 +611,8 @@ quota wall surfaces as a failed transcription and the key stays load-bearing for
 
 - **A table per capability, no shared resolver.** The BACKLOG's smallest image proposal plus today's `voice_user_prefs`
   (D2). Each capability repeats the table, the routes and the resolver, and the order can differ between them.
-- **One preferences blob on the user's profile.** It gives up per-row security, the operator-only write policy on the swarm
-  layer and per-row validation.
+- **One preferences blob on the user's profile.** It gives up per-row security, the swarm layer's write policy (only the
+  operator identity, or server work running under the system identity, may write it; D2) and per-row validation.
 - **Per-user provider credentials for media.** A different feature (ADR-049, "bring your keys"): the rows here name
   providers, and a `user-paid` provider uses a connector the user already holds. A bring-your-own speech or image key can
   later be added as a `user-paid` provider without changing the order.
