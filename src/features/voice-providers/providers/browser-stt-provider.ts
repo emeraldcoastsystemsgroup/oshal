@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Browser STT provider — returns directive for client to recognize locally via Web Speech API; zero server cost, zero credentials
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (free) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import type {
@@ -21,6 +22,8 @@ export class BrowserSTTProvider implements STTProvider {
   public readonly id = 'browser';
   public readonly displayName = 'Browser Web Speech API';
   public readonly kind = 'browser' as const;
+  /** ADR-173 D4: the browser recognizes on the caller's own device; nobody is billed. */
+  public readonly costClass = 'free' as const;
 
   /**
    * @description Browser STT is always "configured" — it has no server deps.

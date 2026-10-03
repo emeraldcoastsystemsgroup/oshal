@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Local speech-to-text provider: transcription that never leaves the host. Every other STT provider here is a cloud call (Google Cloud V2, Gemini, or the browser's own engine), which is the wrong default for material you are contractually or commercially not free to hand to a third party — a customer's recorded call being the case that prompted this. Speaks to the pinned sherpa-onnx sidecar that already does diarization on the compose network, so the transcript comes back SPEAKER-LABELLED rather than as one undifferentiated block. Built as a sibling behind STTProvider; the cloud providers are untouched.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (free) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -55,6 +56,8 @@ export class LocalSTTProvider implements STTProvider {
   public readonly displayName = 'Local (on-host) speech-to-text';
 
   public readonly kind = 'server' as const;
+  /** ADR-173 D4: the on-host sidecar transcribes; nobody is billed. */
+  public readonly costClass = 'free' as const;
 
   constructor(private readonly config: LocalSTTConfig = {}) {}
 

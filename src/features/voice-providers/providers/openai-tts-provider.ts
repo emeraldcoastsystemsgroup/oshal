@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added API-key-only OpenAI natural TTS with the official voice catalog, cinematic instruction control, MP3 output, and one bounded transient retry.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log unreadable response-body failures without exposing provider content so retry cleanup never swallows diagnostics.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Honor bounded application-specific performance direction while retaining configured instructions as the default.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (swarm-paid) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -60,6 +61,8 @@ export class OpenAITTSProvider implements TTSProvider {
   public readonly id = 'openai-tts';
   public readonly displayName = 'OpenAI TTS (GPT-4o mini)';
   public readonly kind = 'server' as const;
+  /** ADR-173 D4: the swarm's OPENAI_API_KEY carries the call. */
+  public readonly costClass = 'swarm-paid' as const;
 
   constructor(private readonly config: OpenAITTSConfig) {}
 

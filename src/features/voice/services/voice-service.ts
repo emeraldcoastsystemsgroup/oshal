@@ -10,19 +10,41 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added safe STT provider override and timestamp-segment request options for deterministic diarization alignment.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 voice picker rails: listTtsProviders() reports every registered provider with its LIVE getStatus (configured true/false + reason — the UI renders unconfigured ones as honest disabled states) and voices for the configured ones; getAvailableVoices() accepts an optional explicit providerId so the picker can enumerate a non-default provider's voices.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time STT failover: when the DEFAULT-resolved provider fails or is unconfigured mid-call (live 2026-08-11: Gemini free tier quota-walled → every dictation answered "Transcription failed" while the local sherpa sidecar sat idle), walk each remaining server-kind registered provider once and return the first real transcript; nothing answers → the ORIGINAL failure surfaces. An explicitly requested provider is the caller's choice and never switches — same boundary rule as an explicit BYO brain. Guard: tests/unit/voice-stt-failover.spec.ts.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: both directions resolve through the shared capability resolver with the caller's principal (D8): an explicit provider is a required preference (D10), the caller's saved voice choice is rung 3, the swarm default is the operator's row else the seed the config names (D6), and a refusal names the missing piece; every answer reports the rung. Entry 7's registration-order failover is REMOVED (D5): a provider that was available and then fails surfaces its own failure and no other provider is tried, so a free-tier quota wall can no longer become a paid Cloud call. A voice travels only with its own provider and only when that provider lists it (D9). listTtsProviders reports each provider's cost class and availability for the caller from the SAME availability function the resolver asks (D3). A caller that names no principal (store code until S4) resolves as unattributed: the operator-written rungs only, logged.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2, wording corrected in round 3): the provider a synthesize request names is a preference, not a requirement: an unregistered or unavailable one no longer refuses the call; it falls through to the next rung under D5 (the swarm default when the request named a provider), with a warning naming the provider and the reason, and its voice does not travel to the provider that answers (D9). This is a change from main, where only an unregistered requested provider fell back to the swarm default, and a registered one that was not usable was called and returned its own unconfigured or failed result. Under D5 a swarm-paid one may land on the swarm-paid default (gemini-tts on google-cloud-tts on the box, billed to the service account), and a free one is refused with payer-changes rather than land on a paid one.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import {
   GoogleAuthNotConfiguredError,
+  createSttCapabilityAdapter,
+  createTtsCapabilityAdapter,
   getSTTProviderRegistry,
   getTTSProviderRegistry,
   type STTProvider,
   type TTSProvider,
   type TTSVoice,
 } from '@/features/voice-providers';
+import {
+  describeCapabilitySwarmDefault,
+  listCapabilityOptions,
+  resolveCapabilityProvider,
+  unattributedCapabilityPrincipal,
+  type CapabilityAdapter,
+  type CapabilityCaller,
+  type CapabilityChoice,
+  type CapabilityCostClass,
+  type CapabilityMissingPiece,
+  type CapabilityPrincipal,
+  type CapabilityResolution,
+  type CapabilityRung,
+  type CapabilitySwarmRowReader,
+} from '@/shared/capability-providers';
 
 const logger = createChildLogger({ module: 'voice-service' });
+
+/** The rung that answered a voice call, or 'refused' (ADR-173 D1). */
+export type VoiceRung = CapabilityRung | 'refused';
 
 /**
  * @description Result returned to HTTP callers for `POST /api/voice/synthesize`.
@@ -36,6 +58,10 @@ export interface SynthesizeResult {
   voiceId?: string;
   fallback?: 'browser' | 'unconfigured' | 'failed';
   message?: string;
+  /** The rung that chose the provider, or 'refused' (ADR-173 D1). */
+  rung?: VoiceRung;
+  /** What is missing when the call was refused. */
+  missing?: CapabilityMissingPiece;
 }
 
 /**
@@ -49,85 +75,118 @@ export interface TranscribeResult {
   languageCode?: string;
   fallback?: 'browser' | 'unconfigured' | 'failed';
   message?: string;
+  /** The rung that chose the provider, or 'refused' (ADR-173 D1). */
+  rung?: VoiceRung;
+  /** What is missing when the call was refused. */
+  missing?: CapabilityMissingPiece;
 }
 
-/** @description Optional provider and timestamp controls for server STT callers. */
+/** @description Optional provider, caller and timestamp controls for server STT callers. */
 export interface TranscribeOptions {
+  /** A provider the calling code names itself: used when available, refused otherwise, never switched. */
   providerId?: string;
   enableSegments?: boolean;
   signal?: AbortSignal;
+  /** Whose call this is, the application and the accountable bot (ADR-173 D8). */
+  caller?: CapabilityCaller;
+}
+
+/** @description Caller and saved-choice inputs for a synthesis call. */
+export interface SynthesizeOptions {
+  /** Whose call this is, the application and the accountable bot (ADR-173 D8). */
+  caller?: CapabilityCaller;
+  /** The caller's saved provider and voice (rung 3; voice_user_prefs until S2). */
+  userDefault?: CapabilityChoice | null;
+}
+
+/** One TTS provider as the picker shows it. */
+export interface TtsProviderListing {
+  id: string;
+  displayName: string;
+  kind: string;
+  /** Kept for the JVV-012 picker: the same answer as `available`. */
+  configured: boolean;
+  reason?: string;
+  costClass: CapabilityCostClass | null;
+  available: boolean;
+  missing: CapabilityMissingPiece | null;
+  voices: Array<{ id: string; name: string; gender: string; language: string }>;
+}
+
+/** @description Optional collaborators (tests); the defaults are the installed ones. */
+export interface VoiceServiceDeps {
+  rows?: CapabilitySwarmRowReader;
 }
 
 /**
- * @description Backend voice service — resolves the configured TTS/STT
- * provider from the registry and calls it, translating
- * `GoogleAuthNotConfiguredError` into a `fallback: 'unconfigured'` response
- * so the client can render a remediation hint instead of crashing.
+ * @description The caller of a legacy entry that named no principal (store code until ADR-173 S4).
+ * @param entry - The entry point, for the log line.
+ * @returns A caller that resolves the operator-written rungs only.
+ */
+function legacyCaller(entry: string): CapabilityCaller {
+  return { principal: unattributedCapabilityPrincipal(`${entry} was called without a caller`), appId: null, agentId: null };
+}
+
+/**
+ * @description The fields a refused resolution contributes to a voice result.
+ * @param resolution - A refusal.
+ * @returns The refusal fields.
+ */
+function refusalFields(resolution: Extract<CapabilityResolution, { ok: false }>): {
+  fallback: 'unconfigured'; message: string; rung: 'refused'; missing: CapabilityMissingPiece;
+} {
+  return { fallback: 'unconfigured', message: resolution.detail, rung: 'refused', missing: resolution.missing };
+}
+
+/**
+ * @description Backend voice service — resolves the TTS/STT provider through the shared capability
+ * resolver and calls it, translating `GoogleAuthNotConfiguredError` into a `fallback: 'unconfigured'`
+ * response so the client can render a remediation hint instead of crashing.
  */
 export class VoiceService {
   private readonly ttsRegistry = getTTSProviderRegistry();
   private readonly sttRegistry = getSTTProviderRegistry();
+  private readonly ttsAdapter: CapabilityAdapter = createTtsCapabilityAdapter(() => this.ttsRegistry);
+  private readonly sttAdapter: CapabilityAdapter = createSttCapabilityAdapter(() => this.sttRegistry);
+
+  constructor(private readonly deps: VoiceServiceDeps = {}) {}
 
   /**
-   * @description Transcribe an uploaded audio buffer using the configured STT
-   * provider. Returns a browser directive when the provider is `browser`, an
-   * unconfigured fallback when the provider can't reach its backend, or a
-   * real transcript otherwise.
+   * @description Transcribe an uploaded audio buffer with the provider the capability resolver
+   * chooses for this caller. Returns a browser directive when that is the browser engine, a
+   * refusal naming the missing piece when nothing is available, or the provider's own answer. A
+   * provider that fails surfaces its own failure: no other provider is tried (ADR-173 D5).
    *
    * @param buffer Raw audio bytes from the multipart upload.
    * @param mimetype Audio MIME type as reported by the uploader.
-   * @param options Optional explicit provider and timestamp-segment controls.
-   * @returns Shape consumed by `TranscribeResponseSchema`.
+   * @param options Optional explicit provider, caller and timestamp-segment controls.
+   * @returns Shape consumed by `TranscribeResponseSchema`, with the rung that answered.
    */
   async transcribeAudio(
     buffer: Buffer,
     mimetype: string,
     options: TranscribeOptions = {},
   ): Promise<TranscribeResult> {
-    const provider = options.providerId
-      ? this.sttRegistry.get(options.providerId)
-      : this.sttRegistry.resolveForApp();
+    const caller = options.caller ?? legacyCaller('VoiceService.transcribeAudio');
+    const resolution = await resolveCapabilityProvider(this.sttAdapter, {
+      capability: 'stt', ...caller,
+      explicit: options.providerId ? { providerId: options.providerId } : null,
+    }, { rows: this.deps.rows });
+    if (!resolution.ok) return { providerId: options.providerId || 'unavailable', ...refusalFields(resolution) };
+    const provider = this.sttRegistry.get(resolution.providerId);
     if (!provider) {
-      logger.warn({ requestedProviderId: options.providerId }, 'transcribeAudio requested unavailable provider');
-      return {
-        providerId: options.providerId || 'unavailable',
-        fallback: 'unconfigured',
-        message: 'Requested STT provider is not configured',
-      };
+      logger.error({ providerId: resolution.providerId }, 'Resolved STT provider vanished from the registry');
+      return { providerId: resolution.providerId, fallback: 'unconfigured', message: 'Resolved STT provider is not registered', rung: 'refused', missing: 'not-registered' };
     }
     logger.info(
-      { providerId: provider.id, kind: provider.kind, bytes: buffer.length, mimetype },
+      { providerId: provider.id, kind: provider.kind, rung: resolution.rung, bytes: buffer.length, mimetype },
       'transcribeAudio resolved provider',
     );
     if (provider.kind === 'browser') {
-      return {
-        providerId: provider.id,
-        fallback: 'browser',
-        message: 'Browser STT selected — use Web Speech API on the client',
-      };
+      return { providerId: provider.id, fallback: 'browser', message: 'Browser STT selected — use Web Speech API on the client', rung: resolution.rung };
     }
-    const first = await this.runServerSTT(
-      provider, buffer, mimetype, options.enableSegments === true, options.signal,
-    );
-    // Turn-time STT failover (live 2026-08-11: Gemini free tier exhausted mid-day and every
-    // dictation answered "Transcription failed" while the local sherpa sidecar sat idle): when
-    // the DEFAULT-resolved provider fails or is unconfigured, try each remaining server-kind
-    // provider once and return the first real transcript. An EXPLICITLY requested provider is
-    // the caller's choice — it surfaces its own failure unswitched, like an explicit BYO brain.
-    if (!options.providerId && (first.fallback === 'failed' || first.fallback === 'unconfigured')) {
-      for (const candidate of this.sttRegistry.list()) {
-        if (candidate.id === provider.id || candidate.kind === 'browser') continue;
-        logger.info(
-          { failedProviderId: provider.id, retryProviderId: candidate.id },
-          'STT failover: default provider failed — trying the next server-kind provider',
-        );
-        const next = await this.runServerSTT(
-          candidate, buffer, mimetype, options.enableSegments === true, options.signal,
-        );
-        if (!next.fallback) return next;
-      }
-    }
-    return first;
+    const result = await this.runServerSTT(provider, buffer, mimetype, options.enableSegments === true, options.signal);
+    return { ...result, rung: resolution.rung };
   }
 
   /**
@@ -166,7 +225,7 @@ export class VoiceService {
           message: error.reason,
         };
       }
-      logger.error({ err: error, providerId: provider.id }, 'STT call failed');
+      logger.error({ err: error, providerId: provider.id }, 'STT call failed — surfacing its own failure (ADR-173 D5: no failover)');
       return {
         providerId: provider.id,
         fallback: 'failed',
@@ -176,42 +235,48 @@ export class VoiceService {
   }
 
   /**
-   * @description Synthesize text into audio (or browser-directive) using
-   * either the swarm-default TTS provider or a caller-specified one.
+   * @description Synthesize text into audio (or a browser directive) with the provider the
+   * capability resolver chooses: the provider the request names when it is available, else the
+   * caller's saved choice, else the swarm default. The voice sent is always one the chosen provider
+   * lists (ADR-173 D9).
    *
    * @param text Text to synthesize.
-   * @param voice Optional voice ID override.
-   * @param providerId Optional explicit provider (e.g. "gemini-tts"); when
-   *   omitted, resolves through the swarm-default flow.
-   * @returns Shape consumed by `SynthesizeResponseSchema`.
+   * @param voice Optional voice id; with `providerId` it is that provider's voice, without it a hint
+   *   used only by a provider that lists it.
+   * @param providerId Optional provider the request names (e.g. "gemini-tts"): a preference (ADR-173 D10's
+   *   default), used when available; when it is not registered or not available the next rung answers and a
+   *   warning names it and the reason.
+   * @param options The caller (ADR-173 D8) and the caller's saved choice.
+   * @returns Shape consumed by `SynthesizeResponseSchema`, with the rung that answered.
    */
   async synthesizeSpeech(
     text: string,
     voice?: string,
     providerId?: string,
+    options: SynthesizeOptions = {},
   ): Promise<SynthesizeResult> {
-    const provider = providerId
-      ? this.ttsRegistry.get(providerId) || this.ttsRegistry.resolveForApp()
-      : this.ttsRegistry.resolveForApp();
-    if (providerId && !this.ttsRegistry.get(providerId)) {
-      logger.warn(
-        { requested: providerId, resolved: provider.id },
-        'synthesizeSpeech requested unknown provider — falling back to default',
-      );
+    const caller = options.caller ?? legacyCaller('VoiceService.synthesizeSpeech');
+    const resolution = await resolveCapabilityProvider(this.ttsAdapter, {
+      capability: 'tts', ...caller,
+      // The request's provider is a preference (D10's default): when it is not registered or not
+      // available the walk moves on under D5 (a change from main: CHANGE LOG 9), and its voice stays with it (D9).
+      requested: providerId ? { providerId, voice: voice ?? null } : null,
+      userDefault: options.userDefault ?? null,
+      voiceHint: providerId ? null : voice ?? null,
+    }, { rows: this.deps.rows });
+    if (!resolution.ok) return { providerId: providerId || 'unavailable', ...refusalFields(resolution) };
+    const provider = this.ttsRegistry.get(resolution.providerId);
+    if (!provider) {
+      logger.error({ providerId: resolution.providerId }, 'Resolved TTS provider vanished from the registry');
+      return { providerId: resolution.providerId, fallback: 'unconfigured', message: 'Resolved TTS provider is not registered', rung: 'refused', missing: 'not-registered' };
     }
-    logger.info(
-      { providerId: provider.id, kind: provider.kind, chars: text.length, voice },
-      'synthesizeSpeech resolved provider',
-    );
+    const voiceId = resolution.voice ?? undefined;
+    logger.info({ providerId: provider.id, kind: provider.kind, rung: resolution.rung, chars: text.length, voice: voiceId },
+      'synthesizeSpeech resolved provider');
     if (provider.kind === 'browser') {
-      return {
-        providerId: provider.id,
-        fallback: 'browser',
-        message: 'Browser TTS selected — use speechSynthesis on the client',
-        voiceId: voice,
-      };
+      return { providerId: provider.id, fallback: 'browser', message: 'Browser TTS selected — use speechSynthesis on the client', voiceId, rung: resolution.rung };
     }
-    return this.runServerTTS(provider, text, voice);
+    return { ...(await this.runServerTTS(provider, text, voiceId)), rung: resolution.rung };
   }
 
   /**
@@ -220,7 +285,7 @@ export class VoiceService {
    *
    * @param provider Resolved server-kind TTS provider.
    * @param text Text to synthesize.
-   * @param voice Optional voice override.
+   * @param voice Optional voice override (always one the provider lists).
    * @returns Synthesis result with base64 audio or unconfigured fallback.
    */
   private async runServerTTS(
@@ -255,11 +320,21 @@ export class VoiceService {
   }
 
   /**
-   * @description List voices exposed by the configured TTS provider. Browser
-   * providers return an empty list because voices are enumerated client-side
-   * via `speechSynthesis.getVoices()` — callers detect the browser case via
-   * the `source` field.
+   * @description The provider a no-provider voice listing describes: the swarm default (the
+   * operator's row, else the seed), falling back to the registry's own default when it names none.
+   * @returns The provider.
+   */
+  private async swarmDefaultTtsProvider(): Promise<TTSProvider> {
+    const view = await describeCapabilitySwarmDefault(this.ttsAdapter, this.deps.rows);
+    return (view.providerId && this.ttsRegistry.get(view.providerId)) || this.ttsRegistry.resolveForApp();
+  }
+
+  /**
+   * @description List voices exposed by a TTS provider (the swarm default when none is named).
+   * Browser providers return an empty list because voices are enumerated client-side
+   * via `speechSynthesis.getVoices()` — callers detect the browser case via the `source` field.
    *
+   * @param providerId Optional explicit provider to list.
    * @returns Envelope matching GetVoicesResponseSchema (`voices` + `source`).
    */
   async getAvailableVoices(providerId?: string): Promise<{
@@ -267,7 +342,7 @@ export class VoiceService {
     source: string;
     providerId: string;
   }> {
-    const provider = (providerId && this.ttsRegistry.get(providerId)) || this.ttsRegistry.resolveForApp();
+    const provider = (providerId && this.ttsRegistry.get(providerId)) || await this.swarmDefaultTtsProvider();
     const voices = await this.safeListVoices(provider);
     return {
       voices: voices.map((v) => ({
@@ -282,55 +357,37 @@ export class VoiceService {
   }
 
   /**
-   * @description Every registered TTS provider with its LIVE configuration status, for the
-   * JVV-012 picker: configured providers include their voices (bounded); unconfigured ones
-   * carry the honest reason so the UI can render a disabled state — never a selectable lie.
-   * Provider secrets never leave this layer; only ids/labels/status travel to the browser.
+   * @description Every registered TTS provider with its cost class and its availability FOR THIS
+   * CALLER, from the same availability function the resolver asks (ADR-173 D3): available providers
+   * include their voices (bounded); unavailable ones carry the missing piece so the UI renders an
+   * honest disabled state. Provider secrets never leave this layer.
    *
-   * @returns Providers (registration order) + the swarm-default provider id.
+   * @param principal The caller (an unattributed principal when the route has none).
+   * @returns Providers (registration order), the swarm default and its source.
    */
-  async listTtsProviders(): Promise<{
+  async listTtsProviders(principal: CapabilityPrincipal = unattributedCapabilityPrincipal('listTtsProviders without a caller')): Promise<{
     defaultProviderId: string;
-    providers: Array<{
-      id: string; displayName: string; kind: string;
-      configured: boolean; reason?: string;
-      voices: Array<{ id: string; name: string; gender: string; language: string }>;
-    }>;
+    swarmDefault: { providerId: string | null; voice: string | null; source: string };
+    providers: TtsProviderListing[];
   }> {
-    const defaultProviderId = this.ttsRegistry.resolveForApp().id;
-    const providers = [] as Array<{
-      id: string; displayName: string; kind: string; configured: boolean; reason?: string;
-      voices: Array<{ id: string; name: string; gender: string; language: string }>;
-    }>;
-    for (const provider of this.ttsRegistry.list()) {
-      const status = await this.safeGetStatus(provider);
-      const voices = status.configured ? (await this.safeListVoices(provider)).slice(0, 400) : [];
+    const view = await describeCapabilitySwarmDefault(this.ttsAdapter, this.deps.rows);
+    const options = await listCapabilityOptions(this.ttsAdapter, principal);
+    const providers: TtsProviderListing[] = [];
+    for (const option of options) {
+      const provider = this.ttsRegistry.get(option.providerId);
+      const voices = option.available && provider ? (await this.safeListVoices(provider)).slice(0, 400) : [];
       providers.push({
-        id: provider.id,
-        displayName: provider.displayName,
-        kind: provider.kind,
-        configured: status.configured,
-        reason: status.reason,
+        id: option.providerId, displayName: option.displayName, kind: provider?.kind ?? 'server',
+        configured: option.available, ...(option.detail ? { reason: option.detail } : {}),
+        costClass: option.costClass, available: option.available, missing: option.missing,
         voices: voices.map((v) => ({ id: v.id, name: v.displayName, gender: v.gender || 'UNSPECIFIED', language: v.languageCode })),
       });
     }
-    return { defaultProviderId, providers };
-  }
-
-  /**
-   * @description getStatus that can never crash the picker — a provider whose status probe
-   * throws is reported unconfigured with the error as the honest reason.
-   * @param provider TTS provider to probe.
-   * @returns The provider's status (or an unconfigured stand-in).
-   */
-  private async safeGetStatus(provider: TTSProvider): Promise<{ configured: boolean; reason?: string }> {
-    try {
-      const status = await provider.getStatus();
-      return { configured: status.configured === true, reason: status.reason };
-    } catch (error) {
-      logger.error({ err: error, providerId: provider.id }, 'getStatus failed — reporting unconfigured');
-      return { configured: false, reason: (error as Error).message };
-    }
+    return {
+      defaultProviderId: view.providerId ?? this.ttsRegistry.resolveForApp().id,
+      swarmDefault: { providerId: view.providerId, voice: view.voice, source: view.source },
+      providers,
+    };
   }
 
   /**

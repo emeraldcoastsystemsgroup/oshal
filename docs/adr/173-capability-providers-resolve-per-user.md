@@ -1,7 +1,7 @@
 # ADR-173: Capability providers resolve per user — text to speech, speech to text, image and video
 
 Date: 2026-10-03
-Status: **Accepted — 2026-10-03, operator decision.** The operator approved D1 to D12 as written ("Approve all 12 as written"). Nothing in the Decision is built yet; slices S1 to S5 are the build.
+Status: **Accepted — 2026-10-03, operator decision.** The operator approved D1 to D12 as written ("Approve all 12 as written"). Slice S1 is in build: its first part (S1a: the registry with cost classes, one availability function per capability, the swarm rows, the operator route, the resolver with a required principal, the STT failover rewritten to D5 and the D9 voice rule) is built and locally tested; spend recording and the config-admin card (S1b) and the S1 live proof are not done yet. Slices S2 to S5 are not built.
 
 The Context records core `main` `3f06817f` and store `main` `25c87a29`, with read-only observations of the operator's box on 2026-10-03. Core `main` has since taken a docs-only commit (`f096898f`) and `3642c1f1` (PR #1033), which moves the lines this ADR cites in `storyboard-image-providers.ts`, `storyboard-antigravity-image-provider.ts`, `storyboard-cli-image-wiring.ts` and `storyboard-frames.ts` but not what they are cited for; those line numbers are at `3f06817f`. Paths marked `store:` are in the `oshal-applications` repository.
 
@@ -641,6 +641,29 @@ functionality"). Database claims are proved against the real enforcing role and 
   - Done when (live): on the box a recorded clip transcribes through `local-stt` with the expected text; the operator then
     writes the swarm STT row to `local-stt` with no restart, and the next Jarvis dictation's result names `local-stt` while
     its log line names the rung `swarm-default`.
+  - As built, S1a (2026-10-03, locally tested, not live-proven). The swarm table is `oshal_capability_swarm_rows`
+    (migration `183`, `(scope_id, capability)`, forced row-level security: every identity reads, only the operator
+    identity or system work writes). The shared resolver is `resolveCapabilityProvider` (`src/shared/capability-providers`):
+    a provider server code names (required, D10) or one a request names, such as the `providerId` in the body of
+    `POST /api/voice/synthesize` (a preference, D10's default: when it is not registered or not available the walk moves to
+    the next rung under D5, with a warning naming the provider and the reason), then the caller's own default
+    (rung 3: the saved text-to-speech choice in `voice_user_prefs` until S2), then the `fleet-default` row, then the seed
+    (`config-seed/global-config.json`, or for images
+    `selectStoryboardImageSeed`: `STORYBOARD_IMAGE_PROVIDER`, `codex`, or the render bot's harness), then a refusal naming the
+    missing piece. Every resolution logs `capability provider resolved` with its rung. Each provider declares its cost class
+    (speech providers on the class, images in `STORYBOARD_IMAGE_COST_CLASSES`, video in `VIDEO_PROVIDER_COST_CLASSES`), and one
+    availability function per capability serves the options list and the resolver; for images it adds the `codex` and
+    `openrouter` vendor key probes, cached for `OSHAL_CAPABILITY_HEALTH_PROBE_TTL_MS` (60 s). The operator route is
+    `/api/capability-providers` (`GET`, `PUT`/`DELETE /swarm/:capability`, and `POST /stt/:providerId/try` to prove a provider
+    on one clip); a write refreshes the snapshot, which also refreshes every `OSHAL_CAPABILITY_ROWS_REFRESH_MS` (30 s). Calls
+    wired: `/api/voice/transcribe` and `/api/voice/synthesize` (the caller, and the Jarvis bot as the voice rail's accountable
+    bot until S4), the ambient speaker transcription, and storyboard images (`resolveStoryboardImageProvider`). Video has an
+    adapter and no caller yet (S4). The live case is `node scripts/operations/live-acceptance.js capability-stt --allow-paid`.
+    A change from main under D1 and D5: on main, an unregistered provider named in a synthesize request fell back to the
+    swarm default, and a registered one that was not usable was called and returned its own `unconfigured` or `failed`
+    result. Now both fall through under D5: a swarm-paid one may land on the swarm-paid default (`gemini-tts` on
+    `google-cloud-tts` on the box, billed to the service account), and a free one is refused with `payer-changes`.
+    Not yet: the offer table with unit prices, TTS and STT spend events, and the config-admin card (S1b).
 - **S2. User defaults.** The per-user table with `voice_user_prefs` copied across, routes mirroring
   `/api/settings/llm-default`, the "My defaults" card, the offer rows and the operator's grant control; the Spoken voice
   panel's `GET`/`POST /api/voice/prefs` read and write the per-user table through the same availability function (D3, D4).

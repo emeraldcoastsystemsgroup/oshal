@@ -8,12 +8,15 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Switched to direct backend voice imports to avoid browser-only service compilation in server build
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Restored barrel import after voice services public API was narrowed to backend-safe exports
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 selectable TTS: GET /providers (every registered provider with LIVE configured status + voices — unconfigured ones ship reason for an honest disabled UI), GET/POST /prefs (per-user provider+voice persisted in voice_user_prefs; POST rejects any provider whose getStatus is not configured — never selectable), and the synthesize path now honors the caller's saved selection via the controller's prefs resolver. createVoiceRoutes takes the AppContext (pool) — omitted (tests/legacy) → prefs endpoints answer 503 and synthesize keeps the swarm-default flow.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: voiceRouteCaller(req) says whose call each voice request is (D8): the signed-in person (guest and operator facts included), the voice rail's accountable bot (the Jarvis bot, as vision describe attributes, until S4 has each surface name its own) and no application; the controller passes it on every synthesize and transcribe, so /api/voice/transcribe resolves the swarm STT default through the shared resolver and reports the rung. GET /providers lists each provider's cost class and availability for the caller from the same availability function the resolver asks (D3).
  */
 
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
-import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { getTrustedServiceUserSub, isOperator } from '@/shared/middleware/authz';
+import { isGuestRequest } from '@/shared/middleware/guest-session';
+import { routeCapabilityPrincipal, type CapabilityCaller } from '@/shared/capability-providers';
 import { VoiceController, VoiceService } from '@/features/voice';
 import { VoicePrefsStore, getTTSProviderRegistry } from '@/features/voice-providers';
 import type { AppContext } from '@/app/composition/app-context';
@@ -48,6 +51,28 @@ function callerSub(req: Request): string | null {
 }
 
 /**
+ * The bot accountable for calls on the shared voice rail (ADR-036, ADR-173 D7): the Jarvis bot
+ * (oshal-assistant), whose "Spoken voice" panel and dictation are this rail's home, as vision
+ * describe — the rail's visual analog — already attributes. ADR-173 S4 has each surface name its own.
+ */
+export const VOICE_ROUTE_ACCOUNTABLE_AGENT_ID = 'a0000000-0000-0000-0000-000000000050';
+
+/**
+ * @description Whose voice call this request is (ADR-173 D8): the signed-in person (a guest
+ * included, with the operator fact the authz layer decides), the voice rail's accountable bot and
+ * no application; an unattributed principal when the route has no subject.
+ * @param req - The request.
+ * @returns The caller.
+ */
+export function voiceRouteCaller(req: Request): CapabilityCaller {
+  return {
+    principal: routeCapabilityPrincipal(callerSub(req), { isOperator: isOperator(req), isGuest: isGuestRequest(req) }, 'the /api/voice routes'),
+    appId: null,
+    agentId: VOICE_ROUTE_ACCOUNTABLE_AGENT_ID,
+  };
+}
+
+/**
  * @description Creates Express router for voice endpoints (STT/TTS + the JVV-012 voice
  * picker rails). Mounted behind requiresAuth.
  *
@@ -76,19 +101,20 @@ export function createVoiceRoutes(ctx?: AppContext): Router {
       logger.error({ err, sub }, 'voice prefs lookup failed — falling back to swarm default');
       return null;
     }
-  });
+  }, voiceRouteCaller);
 
   // Register routes with controller handlers
   router.post('/transcribe', upload.single('audio'), controller.transcribe);
   router.post('/synthesize', controller.synthesize);
   router.get('/voices', controller.getVoices);
 
-  /** GET /providers — every registered TTS provider with live status + voices, plus the
-   *  swarm default and the caller's saved selection. Unconfigured providers are listed
-   *  (configured:false + reason) so the UI renders an honest disabled state. */
+  /** GET /providers — every registered TTS provider with its cost class and its availability
+   *  FOR THIS CALLER (the same function the resolver asks, ADR-173 D3) + voices, plus the swarm
+   *  default and the caller's saved selection. Unavailable providers are listed (configured:false
+   *  + the missing piece) so the UI renders an honest disabled state. */
   router.get('/providers', async (req: Request, res: Response) => {
     try {
-      const listing = await service.listTtsProviders();
+      const listing = await service.listTtsProviders(voiceRouteCaller(req).principal);
       const sub = callerSub(req);
       const prefs = prefsStore && sub ? await prefsStore.get(sub).catch(() => null) : null;
       res.json({

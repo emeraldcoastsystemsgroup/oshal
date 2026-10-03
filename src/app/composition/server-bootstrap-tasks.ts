@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (BACKLOG #1788): post-bootstrap installs (provider-switch snapshot, swarm-app auto-load with retry, wiring audit, demo seeding, and package routes settled state tracking) behind waitForBootstrapComplete().
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the provider-switch installation promise synchronously before detaching it so canonical dispatch waits for persisted rows instead of racing onto the registry literal.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: install the capability swarm-row snapshot after the database bootstrap, beside the provider-switch snapshot, so a swarm text-to-speech, speech-to-text, image or video row an operator writes moves the next call with no restart.
  * -----------------------------------------------------------------------------
  */
 
@@ -18,6 +19,7 @@ import {
   trackProviderSwitchSnapshotInstallation,
 } from './provider-switch-runtime';
 import { HARNESS_FACTORIES } from './provider-runtime';
+import { installCapabilityProviderRows } from './capability-provider-runtime';
 import { auditSwarmBotWiring } from '@/app/extensions/swarm/validate-swarm-wiring';
 import { seedDemoData, shouldSeedDemoData } from '@/features/demo-mode';
 import type { SwarmAppService } from '@/features/swarm-apps';
@@ -58,6 +60,12 @@ export function runServerBootstrapTasks(options: ServerBootstrapTasksOptions): S
     void installation.catch((err: unknown) => {
       logger.error({ err }, 'Provider switch snapshot first read failed — canonical dispatch remains unavailable until the periodic refresh succeeds');
     });
+    // The capability swarm rows (ADR-173, migration 183): read once the bootstrap has created the
+    // table, then refreshed on a timer and after every operator write.
+    void runWithSystemIdentity(() => waitForBootstrapComplete().then(() => installCapabilityProviderRows(switchPool)))
+      .catch((err: unknown) => {
+        logger.error({ err }, 'Capability row snapshot install failed — capability calls refuse until it is installed');
+      });
   }
 
   void runWithSystemIdentity(() => waitForBootstrapComplete().then((migrated: boolean) => {

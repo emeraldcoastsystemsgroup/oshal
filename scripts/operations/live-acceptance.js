@@ -15,6 +15,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The `files` port gains `dir`: a named directory probe's listing in the api container (names only, never a path from the case), for the tickets-in-tickets case.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | A run that files live fixtures can be interrupted: SIGINT/SIGTERM run what the case registered through the `onInterrupt` port (cancel its tickets, say how to finish), release the helper and exit 130; a `note` port lets a case report ids as it goes. `--cleanup-root=<id>` finishes an interrupted run of one case by its root id through the case's `cleanupRoot`. A crashed case prints NO RECEIPT instead of a receipt of zeros.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | A case may pass `timeoutMs` in the `api` port's options (fourth argument) to bound ONE call beyond the 30 s default: the storyboard-agy case's single POST /api/test-lab/run blocks for the whole render (the api runs the step inline; the bot dispatch budget is 420 s), and on 2026-10-02 the case crashed "aborted due to timeout" about 45 s in, before the render had answered. The default stays CALL_TIMEOUT_MS; a non-positive or non-numeric value is ignored; the other ports are unchanged.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | An `apiLogs(since)` port: the api container's own log lines (OSHAL_VERIFY_API_CONTAINER, default oshal-local-api), for the capability-stt case, which requires the api's resolution line to name capability stt, local-stt and the rung swarm-default. A separate port rather than `logs`, whose OSHAL_VERIFY_JARVIS_CONTAINER override would otherwise redirect an api-log read to the Jarvis container.
  */
 
 'use strict';
@@ -347,8 +348,11 @@ async function bindPorts(base, token, secondToken = '', fetchImpl = fetch) {
   if (who.status !== 200 || !ownerSub) return { error: `the operator token did not resolve to a caller at ${base} (HTTP ${who.status})` };
   const helper = containerHelper(process.env.OSHAL_VERIFY_API_CONTAINER || proofRunner.DEFAULT_API_CONTAINER);
   const logs = (container, since) => readLogs(process.env.OSHAL_VERIFY_JARVIS_CONTAINER || container, since);
+  // The api container's own log (the capability-stt case reads the resolution line there). Its own
+  // knob, so the Jarvis override above can never point an api-log read at the Jarvis container.
+  const apiLogs = (since) => readLogs(process.env.OSHAL_VERIFY_API_CONTAINER || proofRunner.DEFAULT_API_CONTAINER, since);
   const second = await secondCallerPort(base, secondToken, fetchImpl);
-  return { ports: { ...http, ...containerPorts(helper, ownerSub), ownerSub, origin: base, logs, browser: browserPort(base, token), ...(second ? { second } : {}) },
+  return { ports: { ...http, ...containerPorts(helper, ownerSub), ownerSub, origin: base, logs, apiLogs, browser: browserPort(base, token), ...(second ? { second } : {}) },
     dispose: helper.dispose };
 }
 

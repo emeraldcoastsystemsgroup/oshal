@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets case: one tagged build root planned in-process, its children run one at a time over the signed hop, and the root assembled; spends model turns and writes tickets, so its Lab card is explicit-only.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Register the package-run case (live-acceptance-package-run.js) for the Test Lab run-path authority scope: the installed presentations brand-render case run through the durable run route, every run read timed against 1 s. No model turn; it writes the Lab's run-history row and starts a package sandbox, so the card is explicit-only.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Registered storyboard-agy (live-acceptance-storyboard-agy.js): one frame through the antigravity-cli image rail the render bot's own harness selects, via the explicit-only Lab card storyboard-antigravity-render (ADR-130 amendment 2026-10-02, the bot-level rule); the bot must report a 'match' reconcile, so the render switched nothing. It spends one model turn and writes one tagged task workspace, which it removes.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Registered capability-stt (live-acceptance-capability-stt.js), the ADR-173 S1 live proof: a clip spoken by the swarm text-to-speech default transcribes through local-stt, one operator write makes local-stt the swarm STT default (kept on a pass, put back on a failure), and the next dictation names local-stt at the swarm-default rung in its answer and its log line. No model turn; it writes the swarm STT row, so the card is explicit-only.
  */
 
 'use strict';
@@ -37,6 +38,7 @@ const CASES = Object.freeze([
   { module: require('./live-acceptance-tickets-in-tickets.js'), backlog: 'The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh', spendsModel: true, writes: true },
   { module: require('./live-acceptance-package-run.js'), backlog: 'Test Lab package runs cancel themselves when an all-package authority re-check runs past 5 s (2026-10-01)', spendsModel: false, writes: true },
   { module: require('./live-acceptance-storyboard-agy.js'), backlog: 'Storyboard images follow the render bot\'s own harness (antigravity) - live proof on the box', spendsModel: true, writes: true },
+  { module: require('./live-acceptance-capability-stt.js'), backlog: 'Capability providers per user (ADR-173) — build slices', spendsModel: false, writes: true },
 ]);
 
 /**

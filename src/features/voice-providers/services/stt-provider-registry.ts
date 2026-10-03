@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | STT provider registry — mirrors TTS registry, resolves swarm-default vs per-app override for transcription calls
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: configuredDefaultId() exposes the STT default the swarm config names, the seed of the swarm default when no swarm row exists (D6), so the capability adapter reads the same config this registry was built from.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -99,6 +100,16 @@ export class STTProviderRegistry {
    */
   get(id: string): STTProvider | undefined {
     return this.providers.get(id);
+  }
+
+  /**
+   * @description The provider id the swarm config names as the STT default, whether or not it is
+   * registered: the seed of the swarm default when no swarm row exists (ADR-173 D6).
+   *
+   * @returns The configured provider id.
+   */
+  configuredDefaultId(): string {
+    return this.config.stt.default;
   }
 
   /**

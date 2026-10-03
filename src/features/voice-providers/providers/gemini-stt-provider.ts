@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Gemini STT provider — sends audio via generateContent with an inlineData audio part; authenticates with GOOGLE_API_KEY, replacing the OAuth requirement that keeps Cloud STT off the default path
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (swarm-paid) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -36,6 +37,8 @@ export class GeminiSTTProvider implements STTProvider {
   public readonly id = 'gemini-stt';
   public readonly displayName = 'Gemini STT (Google AI Studio)';
   public readonly kind = 'server' as const;
+  /** ADR-173 D4: the swarm's Google API key carries the call (a free tier on it is still the swarm's credential). */
+  public readonly costClass = 'swarm-paid' as const;
 
   constructor(private readonly config: GeminiSTTConfig) {}
 
