@@ -10,6 +10,8 @@ SEQ | AUTHOR | DESCRIPTION
 4 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 5 | maintainer@emeraldcoastsystemsgroup.com | Feed required package dependencies into the existing explicit-role reviewed batch flow.
 6 | maintainer@emeraldcoastsystemsgroup.com | Sole-operator self-approval on the single-change review: a change that needs approval (the caller's own sensitive access, or a sensitive group mapping) stays unappliable until the caller types "approve", and is then sent with the approval reference bound to that exact preview. The server still decides; it refuses whenever the caller is not the swarm root or another swarm administrator exists.
+7 | maintainer@emeraldcoastsystemsgroup.com | Review explicit experience member roles, atomic apply, source-safe revoke and template upgrades through the existing Access authority.
+8 | maintainer@emeraldcoastsystemsgroup.com | Carry the selected business tenant into scoped experience role discovery and review invalidation.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -121,6 +123,13 @@ SEQ | AUTHOR | DESCRIPTION
       <div><label for="target">User or group</label><select id="target"></select></div>
       <div><label for="application">Application for advanced details</label><select id="application"></select></div>
     </section>
+    <section class="panel" id="experience-access" aria-labelledby="experience-access-title">
+      <h2 id="experience-access-title">Experience roles</h2>
+      <p class="hint">Choose a named role for the selected identity. Required member roles are reviewed together; optional members are selected explicitly. Installing an experience creates no access.</p>
+      <div id="experience-role-controls"></div>
+      <p id="experience-role-status" role="status" aria-live="polite">Loading installed experience roles…</p>
+      <div id="experience-role-assignments"></div>
+    </section>
     <section class="panel" id="applications-panel" aria-labelledby="user-applications-title">
       <div class="row application-toolbar">
         <div><h2 id="user-applications-title">This user's applications</h2><p id="application-count" class="hint" role="status"></p></div>
@@ -209,6 +218,7 @@ SEQ | AUTHOR | DESCRIPTION
     </details>
   </div>
 </main>
+<script src="/access/composite-roles.js"></script>
 <script>
 'use strict';
 const API = '/api/authorization';
@@ -357,6 +367,7 @@ async function renderEffective() {
 async function loadCatalog(message) {
   const generation = ++state.catalogGeneration; state.selection++;
   discardPreview(); resetApplicationRows(); resetAudit(); setBusy(true); status('Loading access catalog…');
+  window.oshalCompositeAccess?.invalidate();
   try {
     const catalog = await request('/catalog');
     if (generation !== state.catalogGeneration) return;
@@ -381,7 +392,7 @@ async function loadCatalog(message) {
     resetAudit();
     $('administration').hidden = true;
     status(error.status === 403 ? 'Access administration is unavailable for this account. A verified identity and administration scope are required.' : error.message, 'error');
-  } finally { if (generation === state.catalogGeneration) setBusy(false); }
+  } finally { if (generation === state.catalogGeneration) { setBusy(false); void window.oshalCompositeAccess?.reload(); } }
 }
 async function loadUserApplications() {
   if (!target() || $('target-kind').value === 'group') return;
@@ -446,7 +457,7 @@ function rowSummary(row) {
 function rowEditorMarkup(index) {
   return `<form data-role-editor class="role-editor" aria-label="Application role editor">
     <fieldset><legend data-role-heading></legend><p class="details" data-role-identity></p>
-    <p class="hint">Add or remove one direct assignment. Other roles, inherited group access and explicit restrictions remain unchanged.</p>
+    <p class="hint">Add or remove one direct assignment. Experience roles are managed in the Experience roles section; their grants remain until that experience assignment is revoked.</p>
     <div class="selectors">
       <div><label for="row-${index}-tenant">Business tenant (optional)</label><input id="row-${index}-tenant" name="tenant" maxlength="512" autocomplete="off" /></div>
       <div><label for="row-${index}-action">Change</label><select id="row-${index}-action" name="action"><option value="grant">Add role</option><option value="revoke">Remove direct role</option></select></div>
@@ -559,7 +570,7 @@ function bindApplicationRow(row, summary, editor) {
   populateRowRoles(row); updateRowControls(row);
 }
 function directRowRoles(row) {
-  return new Set((row.catalog.assignments || []).filter(entry => entry.app === row.app.app && !entry.group && !entry.deny
+  return new Set((row.catalog.assignments || []).filter(entry => entry.app === row.app.app && !entry.group && !entry.deny && !entry.managed
     && entry.targetSub === row.selected.targetSub && entry.targetIssuer === row.selected.targetIssuer
     && (entry.tenantId || '') === row.tenant && entry.role).map(entry => entry.role));
 }
@@ -1261,6 +1272,12 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
   updateToolbar(); if (applicationRows.rows.length) attach();
 }
 
+</script>
+<script>
+window.oshalCompositeAccess = window.installOshalCompositeAccess({ request,
+  snapshot: () => !target() || !state.catalog || state.busy ? null : ({ identity: targetInput(), label: targetLabel(target()), selection: state.selection, tenantId: $('tenant').value.trim() }),
+  refresh: () => loadCatalog('Experience role change applied. Current access reloaded.'),
+});
 </script>
 </body>
 </html>

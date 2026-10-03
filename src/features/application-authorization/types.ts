@@ -3,14 +3,18 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Read actor-bound previews before approval and writer-lock acquisition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | ADR-157: an assignment may carry `grantSource`, the provenance of a kernel-written grant (today only `service-activation:<id>`). `source` stays the app's installation source because matchingAssignments binds on it; the tag is what lets a deactivation revoke exactly the assignments its activation created.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: durable catalog snapshots keyed by catalog revision (so an upgrade can classify the catalog its assignments were granted under after the old files are gone), reviewable catalog migration records in the locked policy state, a transaction port that records the activating catalog, and a `catalog-migration` audit event carrying who, when, from/to revision and the change summary.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Keep the approval reference a verified apply named: on the stored catalog-migration approval and on the audit event, so a self-approved change stays distinguishable from one an independent approver signed.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Document installed bindings, reserved reviews and independently revocable assignment provenance.
  */
 import type { AuthorizationActor, AuthorizationCatalog, AuthorizationCatalogChange, AuthorizationChange, AuthorizationPreview, AuthorizationReceipt } from '@/shared/application-authorization';
+import type { CompositeRoleInput, CompositeRolePreview, CompositeRoleReceipt } from '@/shared/application-authorization';
+import type { ExperienceRoleTemplate } from '@/shared/experience-contract';
 export interface AuthorizationAssignment {
   id: string; app: string; source: string; catalogRevision: string;
   /** ADR-157 provenance of a kernel-written grant, e.g. `service-activation:<activation id>`.
@@ -23,11 +27,50 @@ export interface AuthorizationAssignment {
 }
 export interface StoredAuthorizationPreview extends AuthorizationPreview {
   actor: { sub: string; issuer: string }; receipt?: AuthorizationReceipt; idempotencyKey?: string;
+  /** Reserved for the atomic composite operation; the ordinary apply route cannot consume it. */
+  compositeId?: string;
+  /** Source-specific revocation may remove old installation edges without touching independent grants. */
+  revokeGrantSource?: string;
+}
+/** @description Bind a reviewed member to its exact installed source, version, catalog and template declaration. */
+export interface CompositeRoleBinding {
+  app: string; source: string | null; version: string | null; catalogRevision: string | null;
+  declarationDigest?: string;
+}
+/** @description Reserve actor-bound constituent reviews and their durable idempotent receipt for one atomic lifecycle change. */
+export interface StoredCompositeRolePreview {
+  id: string;
+  actor: Pick<AuthorizationActor, 'sub' | 'issuer'>;
+  input: CompositeRoleInput;
+  review: CompositeRolePreview;
+  assignmentId: string;
+  bindings: CompositeRoleBinding[];
+  childPreviewIds: string[];
+  receipt?: CompositeRoleReceipt;
+  idempotencyKey?: string;
+}
+/** @description Retain one reviewed template's exact member identities and qualified target so its provenance can be revoked independently. */
+export interface StoredCompositeRoleAssignment {
+  id: string;
+  app: string;
+  template: ExperienceRoleTemplate;
+  templateDigest: string;
+  targetSub?: string; targetIssuer?: string; tenantId?: string;
+  group?: AuthorizationChange['group'];
+  optionalApps: string[];
+  expiresAt?: string;
+  status: 'active' | 'revoked';
+  createdAt: string; updatedAt: string;
+  /** Exact constituent identities are retained even if a catalog migration removes an edge. */
+  members: Array<{ app: string; role: string; sensitive: boolean }>;
 }
 export interface AuthorizationState {
   revision: number; assignments: AuthorizationAssignment[]; previews: StoredAuthorizationPreview[];
   /** AUTH-07 reviewable catalog migrations. Loaded with the writer lock; absent on unlocked reads. */
   migrations?: StoredCatalogMigration[];
+  compositeAssignments?: StoredCompositeRoleAssignment[];
+  /** Actor-bound reviews are loaded only with the policy writer lock. */
+  compositePreviews?: StoredCompositeRolePreview[];
 }
 /** The catalog one application was registered with, keyed by the revision it hashes to. */
 export interface AuthorizationCatalogSnapshot {
@@ -67,6 +110,8 @@ export interface AuthorizationTransaction {
   catalog(snapshot: AuthorizationCatalogSnapshot): void;
 }
 export interface AuthorizationStore {
+  /** Optional only for older test/store adapters; the composite service refuses when unsupported. */
+  readCompositePreview?(id: string): Promise<StoredCompositeRolePreview | null>;
   /** Content-addressed catalog snapshots for the given revisions; unknown revisions are omitted. */
   readCatalogSnapshots(revisions: readonly string[]): Promise<AuthorizationCatalogSnapshot[]>;
   /** Reviewable catalog migrations, filtered by application and/or id, without the writer lock. */

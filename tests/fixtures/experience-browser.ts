@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant build routes (lane "orb", `state.nexusBuild`, registered by nexusGapRoutes ahead of the defaults): the caller's busy windows through GET /api/experience/availability (or its refusal body), the Google row of GET /api/connect/list, and Travel's GET /config, GET/POST /profile, GET /flights (four synthetic offers, source, price read) and GET/POST /watches, each with a controllable status and a log of what the page sent; installTravelHost admits Travel into a case's catalog (or installs it outside the plan).
  * 16 | maintainer@emeraldcoastsystemsgroup.com | nexusBuildRoutes keep the fixture's contract: they answer only once a case opts in (enableNexusBuild, which installTravelHost also does) and fall through to the defaults otherwise; the lane can answer POST /api/voice/synthesize with a WAV clip (`nexusBuild.voice.audioData`) for the readback watchdog case.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit synthetic legacy document routes for renderer regression fixtures after production entries move to installed packages; production aliases have separate acceptance.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -204,6 +205,12 @@ function packageRoutes(app: express.Application, state: ExperienceState) {
 export async function startExperienceBrowserFixture(options: { denyAuth?: boolean } = {}) {
   const app = express(), state = experienceState();
   const requiresAuth: express.RequestHandler = options.denyAuth ? (_req, res) => { res.status(401).json({ error: 'unauthorized' }); } : (_req, _res, next) => next();
+  // Renderer regressions intentionally exercise the source templates over synthetic
+  // member APIs. This fixture seam is separate from production alias authorization.
+  for (const name of ['studio', 'jarvis', 'orbit', 'commons', 'homebase']) {
+    app.get([`/${name}`, `/${name}/`], requiresAuth, (_req, res) => res.sendFile(resolve(ROOT, 'src/experience', name + '.html')));
+  }
+  app.get('/little-monsters', requiresAuth, (_req, res) => res.redirect('/homebase?preset=classroom'));
   // One request log for every case, then each lane's override routes (they answer only what their case state asks
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
@@ -512,6 +519,11 @@ function portalBuildRoutes(app: express.Application, state: ExperienceState) {
     tenants: [], tenantsStatus: 200, members: {}, location: { status: 200, body: { settings: { defaultPrecisionClass: 'place' }, devices: [], current: null, history: { observationCount: 0 }, visibility: { memberShares: [], guardianShares: [], restrictions: [] } } } };
   Object.assign(state, { portal });
   const router = express.Router();
+  router.use((req, _res, next) => {
+    const home = (state as ExperienceState & { homeBuild?: HomeBuildState }).homeBuild;
+    if (home?.active && /^\/api\/(tenants(?:\/|$)|location(?:\/|$)|v1\/agent\/schedules(?:\/|$))/.test(req.path)) { next('router'); return; }
+    next();
+  });
   router.get('/api/v1/tickets/:ticketId/workflow', (req, res) => {
     const id = req.params.ticketId, ticket = state.tickets.find(t => t.ticketId === id), status = portal.workflowStatus[id] ?? (ticket ? 200 : 404);
     if (!ticket || status !== 200) { res.status(status).json({ success: false, error: status === 404 ? 'Ticket not found' : 'Failed to load ticket workflow' }); return; }
@@ -601,6 +613,8 @@ type HomeLocationState = {
 };
 /** The synthetic state the home-build routes read and change (`state.homeBuild`). */
 export type HomeBuildState = {
+  /** Tests explicitly opt into this lane before requests, avoiding portal fixture interference. */
+  active?: boolean;
   location: HomeLocationState;
   tenants: Array<{ tenant_id: string; kind: string; name: string; role: string }>;
   members: Record<string, Array<{ user_sub: string; role: string }>>;
@@ -722,7 +736,9 @@ function homeRoutineRoutes(router: express.Router, home: HomeBuildState, refused
 }
 
 /** @description The home-build synthetic state of a running fixture (created by homebaseBuildRoutes). */
-export function homeBuildState(state: ExperienceState): HomeBuildState { return (state as ExperienceState & { homeBuild: HomeBuildState }).homeBuild; }
+export function homeBuildState(state: ExperienceState): HomeBuildState {
+  const home = (state as ExperienceState & { homeBuild: HomeBuildState }).homeBuild; home.active = true; return home;
+}
 /** A synthetic busy window as GET /api/experience/availability returns it. */
 type BusyWindow = { start: string; end: string };
 /** A synthetic Travel offer shaped like the package's normalised Duffel card (scripts/oshal-duffel.js normalizeOffer). */

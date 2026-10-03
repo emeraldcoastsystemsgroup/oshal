@@ -5,17 +5,28 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-164: validate experience declarations before installation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve named member surfaces against active manifests without coupling packages to member URLs or markup.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Declare bounded versioned role templates with explicit member role identities; optional members require deliberate selection at assignment time.
  */
 import { readAppDependencies, type AppDependencySource } from '@/shared/app-dependencies';
 
 /** Compatibility floor for package discovery, shell hosting and supported member surfaces. */
 export const EXPERIENCE_SKILL = 'experience';
+/** Advertised only when the complete reviewed composite lifecycle is implemented. */
+export const EXPERIENCE_ROLES_SKILL = 'experience-roles';
 
 /** A supported member surface; identity is independent of a member's internal URL or DOM. */
 export interface ExperienceSurface {
   app: string;
   surface: string;
   audience?: 'family' | 'classroom' | 'company';
+}
+
+/** Catalog role IDs, never display tiers or permission guesses. A declaration grants nothing. */
+export interface ExperienceRoleTemplate {
+  id: string;
+  version: number;
+  label: string;
+  members: Array<{ app: string; role: string }>;
 }
 
 /** Version one of the approved package-owned presentation declaration. */
@@ -26,6 +37,7 @@ export interface ExperienceDeclaration {
   skin: string;
   label: string;
   surfaces?: ExperienceSurface[];
+  roleTemplates?: ExperienceRoleTemplate[];
 }
 
 /** Structural input keeps this contract independent of the feature-layer manifest type. */
@@ -63,7 +75,7 @@ function canonicalPath(value: unknown): value is string {
  */
 export function validateExperienceDeclaration(manifest: ExperienceManifestSource): void {
   if (manifest.experience === undefined) return;
-  const e = object(manifest.experience, ['version', 'entry', 'shell', 'skin', 'label', 'surfaces'], 'experience');
+  const e = object(manifest.experience, ['version', 'entry', 'shell', 'skin', 'label', 'surfaces', 'roleTemplates'], 'experience');
   if (manifest.kind === 'group') throw new Error('experience must be an ordinary application, not a code-free group');
   if (!Array.isArray(manifest.uses) || !manifest.uses.includes(EXPERIENCE_SKILL)
     || !manifest.uses.includes('application-authorization')) {
@@ -92,6 +104,10 @@ export function validateExperienceDeclaration(manifest: ExperienceManifestSource
   }
   const dependencies = readAppDependencies(manifest);
   const members = new Set([...dependencies.required.apps, ...dependencies.optional.apps]);
+  if (e.roleTemplates !== undefined && !manifest.uses.includes(EXPERIENCE_ROLES_SKILL)) {
+    throw new Error('experience role templates require uses: [experience-roles]');
+  }
+  validateRoleTemplates(manifest.name, e.roleTemplates, dependencies.required.apps, members);
   if (e.surfaces === undefined) return;
   if (!Array.isArray(e.surfaces) || e.surfaces.length > 128) throw new Error('experience.surfaces must be an array of at most 128 references');
   const seen = new Set<string>();
@@ -107,6 +123,37 @@ export function validateExperienceDeclaration(manifest: ExperienceManifestSource
     const key = `${ref.app}\0${ref.surface}`;
     if (seen.has(key)) throw new Error('experience surfaces must not repeat an app/surface reference');
     seen.add(key);
+  }
+}
+
+/** @description Validate references now; the authority resolves exact installed roles at review.
+ * @param name Host package name. @param value Untrusted templates. @param required Required members.
+ * @param dependencies All declared members. @returns Nothing; invalid declarations throw. */
+export function validateRoleTemplates(name: unknown, value: unknown, required: string[], dependencies: Set<string>): void {
+  if (value === undefined) return;
+  if (typeof name !== 'string' || !Array.isArray(value) || !value.length || value.length > 32) {
+    throw new Error('experience.roleTemplates must contain 1..32 named templates');
+  }
+  const allowed = new Set([name, ...dependencies]), ids = new Set<string>();
+  for (const item of value) {
+    const template = object(item, ['id', 'version', 'label', 'members'], 'experience.roleTemplates[]');
+    if (typeof template.id !== 'string' || !SLUG.test(template.id) || ids.has(template.id)) throw new Error('experience role template id must be unique');
+    ids.add(template.id);
+    if (!Number.isSafeInteger(template.version) || (template.version as number) < 1) throw new Error('experience role template version must be a positive integer');
+    if (typeof template.label !== 'string' || !template.label.trim() || template.label.length > 128 || /[\x00-\x1f\x7f]/.test(template.label)) {
+      throw new Error('experience role template label must be bounded display text');
+    }
+    if (!Array.isArray(template.members) || !template.members.length || template.members.length > 128) throw new Error('experience role template members must contain 1..128 exact roles');
+    const referenced = new Set<string>(), edges = new Set<string>();
+    for (const item of template.members) {
+      const member = object(item, ['app', 'role'], 'experience role template member');
+      if (typeof member.app !== 'string' || !allowed.has(member.app)) throw new Error('experience role template member must name this application or a declared dependency');
+      if (typeof member.role !== 'string' || !/^(?:@app-admin|[A-Za-z][A-Za-z0-9_.-]{0,127})$/.test(member.role)) throw new Error('experience role template must name an exact catalog role or explicit legacy @app-admin adapter');
+      const key = `${member.app}\0${member.role}`;
+      if (edges.has(key)) throw new Error('experience role template must not repeat a member role');
+      edges.add(key); referenced.add(member.app);
+    }
+    if ([name, ...required].some(app => !referenced.has(app))) throw new Error('experience role template must cover its own application and every required member');
   }
 }
 

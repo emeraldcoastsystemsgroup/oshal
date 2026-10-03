@@ -3,10 +3,11 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Apply migration 142: ownership is read through the derived oshal_application_execution_claims helper, so the fixture schema needs it; the schema-loss case still fails closed through it.
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Apply migration 158 after 142 so the disposable database exposes the current three-argument bot posture helper.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 142: ownership is read through the derived oshal_application_execution_claims helper, so the fixture schema needs it; the schema-loss case still fails closed through it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 158 after 142 so the disposable database exposes the current three-argument bot posture helper.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Apply migration 173 after 127: the policy store now records the activating catalog and loads reviewable catalog migrations in every policy transaction (AUTH-07), so the disposable schema needs the same tables a deployed migration tree has.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import { execFileSync } from 'node:child_process';
@@ -39,6 +40,7 @@ beforeAll(async () => {
   if (!ready) throw new Error('Disposable authorization PostgreSQL did not become ready');
   await owner.query(readFileSync(resolve('scripts/migrations/127-application-authorization.sql'), 'utf8'));
   await owner.query(readFileSync(resolve('scripts/migrations/173-authorization-catalog-migrations.sql'), 'utf8'));
+  await owner.query(readFileSync(resolve('scripts/migrations/185-experience-composite-roles.sql'), 'utf8'));
   await owner.query('CREATE TABLE swarm_applications(name TEXT PRIMARY KEY, agent_ids TEXT[], tool_names TEXT[], manifest_path TEXT, manifest JSONB)');
   await owner.query(readFileSync(resolve('scripts/migrations/142-application-execution-claims-helper.sql'), 'utf8'));
   await owner.query(readFileSync(resolve('scripts/migrations/158-narrow-application-execution-claims-helper.sql'), 'utf8'));

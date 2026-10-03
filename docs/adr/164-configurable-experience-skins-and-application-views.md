@@ -607,7 +607,7 @@ amendment, as the ADR states.
 
 **Status:** Approved delivery direction; declaration validation and E2 package hosting/discovery
 are implemented in source. Release verification and installed migration acceptance remain pending.
-Composite roles and package extraction are separate delivery gates.
+The separate E3 source implementation below is not part of the E2 release verdict.
 
 Scope is Studio, Jarvis, Orbit, Commons, Home/Family, Classroom and Business. Nexus and Simple
 chat are preserved outside this migration. The Finance and Education packages are the hosting
@@ -643,3 +643,11 @@ choices consume discovery; package palettes use the existing theme hooks. Local 
 packages, distinct callers, denied entry and private installation scope; the full-swarm browser
 suite has local browser coverage. Deployed acceptance, release of composite assignments and
 the seven package releases remain separate open gates in the integration contract.
+
+E3 now implements exact versioned role templates behind the separate `experience-roles`
+floor and migration 185. The existing Access service/UI reviews deliberate optional choices,
+rechecks current per-member authority and qualified identity, preserves approvals and denies,
+and applies the reserved constituents atomically with durable provenance/receipts. Revoke
+preserves overlapping/direct grants; upgrades require a fresh review of the current template.
+Isolated policy, HTTP, browser and restricted PostgreSQL tests pass. The seven store packages
+and deployed lifecycle acceptance remain open delivery gates.

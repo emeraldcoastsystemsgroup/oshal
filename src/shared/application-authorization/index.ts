@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Publish the reserved platform membership audit namespace.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Publish the AUTH-07 catalog migration contract types.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Export the shared operation binding resolver for callers outside the authorization feature.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 /** Shared types and the exact validator used by the standalone package CLI. */
 import { createRequire } from 'node:module';
@@ -25,5 +26,6 @@ export * from './types';
 export * from './management-roles';
 export * from './platform-audit';
 export * from './catalog-migration';
+export * from './composite-types';
 
 export { resolveOperationPermissions } from './operation-bindings';

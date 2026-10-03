@@ -18,6 +18,8 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 D3/L2: declare 'location', the consented, owner-scoped location and places store. Two or more packages need it (eats, rides, purchasing, home, drone, spaces) and it needs core tables, a core device ingest route and the Jarvis intent, so it is kernel by the skill test; L2 ships its storage half (migrations 174/175, the owner purge and export, the one erase both account-erasure routes call), and later slices extend the same barrel with the package-facing reads.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Declare the exact anonymous package read compatibility floor.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Declare composite contracts through the existing anchored shared authorization barrel.
  */
 
 /**
@@ -48,6 +50,7 @@ export type KernelSkillId =
   | 'jarvis-briefings'
   | 'app-dependencies'
   | 'experience'
+  | 'experience-roles'
   | 'specialist-context'
   | 'spatial-mapping'
   | 'google-calendar'
@@ -104,6 +107,10 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'experience-roles', title: 'Reviewed experience roles',
+    why: 'Exact catalog role templates compose existing per-member authority with durable source-aware preview, atomic apply, revoke and reviewed upgrade (ADR-149/164).',
+    modules: [{ specifier: '@/shared/application-authorization', distFile: 'dist/shared/application-authorization/index.js' },
+      { specifier: '@/features/application-authorization', distFile: 'dist/features/application-authorization/index.js' }] },
   { id: 'experience', title: 'Experience application hosting',
     why: 'Installed and authorized package discovery, page/focused-rail entry and named member-surface composition share the platform hosting and policy boundaries (ADR-164).',
     modules: [{ specifier: '@/shared/experience-contract', distFile: 'dist/shared/experience-contract/index.js' }] },

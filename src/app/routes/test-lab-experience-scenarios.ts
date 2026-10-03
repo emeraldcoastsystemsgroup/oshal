@@ -15,13 +15,15 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment): the pure redirect decision, the cockpit document and experience pages behind a real listener, and the ribbon's door decision are registered as regression tests of the experience scenario.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register fail-closed experience declaration validation as local unit coverage; package hosting and installed acceptance remain pending.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Probe the seven actual package entries after legacy aliases move to checked open operations and register alias regressions.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
 /** Every entry page the experience chooser links to, with the root marker its shell renders into. */
 export const EXPERIENCE_ENTRY_PAGES: ReadonlyArray<readonly [string, string]> = [
-  ['/portal', 'portal-root'], ['/studio', 'id="app"'], ['/jarvis', 'id="app"'], ['/orbit', 'id="app"'], ['/commons', 'id="app"'],
-  ['/homebase?preset=family', 'homebase-root'], ['/homebase?preset=classroom', 'homebase-root'], ['/homebase?preset=company', 'homebase-root'], ['/nexus', 'nexus-root'],
+  ['/portal', 'portal-root'], ['/api/studio-experience/app', 'id="app"'], ['/api/jarvis-experience/app', 'id="app"'], ['/api/orbit-experience/app', 'id="app"'], ['/api/commons-experience/app', 'id="app"'],
+  ['/api/home-experience/app', 'homebase-root'], ['/api/classroom-experience/app', 'homebase-root'], ['/api/business-experience/app', 'homebase-root'], ['/nexus', 'nexus-root'],
   ['/simple', 'sc-root'],
 ];
 /** The caller-scoped reads every shell joins before it renders anything. */
@@ -69,12 +71,31 @@ export async function experienceShellsStep(cookie: string, fetchImpl: typeof fet
   return classifyExperienceProbe(pages, reads);
 }
 
+/** @description Probe current management-visible templates and receipt metadata without creating grants or previews. */
+export async function experienceCompositeRolesStep(cookie: string, fetchImpl: typeof fetch = fetch): Promise<StepResult> {
+  const response = await fetchImpl(`http://127.0.0.1:${process.env.PORT || '5000'}/api/authorization/composites`, {
+    headers: cookie ? { cookie } : {}, signal: AbortSignal.timeout(20000), redirect: 'manual' });
+  const label = 'Installed experience role templates';
+  if (response.status !== 200) return { app: 'authorization', label, status: response.status,
+    state: [401, 403, 503].includes(response.status) ? 'degraded' : response.status === 404 ? 'gap' : 'fail', detail: `Composite role catalog returned HTTP ${response.status}. No changes attempted.` };
+  const data = await response.json() as Record<string, unknown>;
+  const valid = Number.isSafeInteger(data.revision) && Number(data.revision) >= 0 && Array.isArray(data.experiences) && Array.isArray(data.assignments);
+  return { app: 'authorization', label, state: valid ? 'pass' : 'fail', detail: valid
+    ? `${(data.experiences as unknown[]).length} current management-visible experience packages. Metadata read only; installed lifecycle acceptance is a separate explicit proof.`
+    : 'Composite catalog response is missing policy revision or lifecycle metadata.' };
+}
 export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   id: 'experience-shells', title: 'Experience shells over the live swarm', group: 'tool',
   description: 'Open the experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant, and Simple chat) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place. The full-swarm layouts add work panels over the ticket routes (recorded workflow, Approve, Cancel), the Routines panel over the caller’s schedules, a device-local day focus, visual cards, package facts, household or team membership with the caller’s own place, and the portal’s gallery sections.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/experience-package-contract.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-package-discovery.spec.ts' },
+    { level: 'integration', path: 'tests/unit/experience-package-aliases.spec.ts' },
+    { level: 'unit', path: 'tests/unit/experience-composite-template.spec.ts' },
+    { level: 'unit', path: 'tests/unit/composite-role-lifecycle.spec.ts' },
+    { level: 'integration', path: 'tests/unit/experience-composite-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/experience-composite-postgres.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-composite-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-shell-lock.spec.ts' },
@@ -109,4 +130,14 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/oshal-node-simple-chat-config.spec.ts' },
   ],
   steps: [{ id: 'pages', app: 'cockpit', label: 'Experience pages and their joined reads', run: (cookie) => experienceShellsStep(cookie) }],
+}, {
+  id: 'experience-composite-roles', title: 'Experience roles and lifecycle', group: 'tool',
+  description: 'Read the current caller-visible experience template catalog. Isolated policy, HTTP, browser and PostgreSQL suites verify explicit optional choices, current authority, identity, expiry, denial, sensitive approval, source-safe revocation, reviewed upgrade, restart receipts and atomic rollback. This probe never changes installed assignments.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/composite-role-lifecycle.spec.ts' },
+    { level: 'integration', path: 'tests/unit/experience-composite-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/experience-composite-routes.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-composite-browser.spec.ts' },
+  ],
+  steps: [{ id: 'catalog', app: 'authorization', label: 'Installed experience role templates', run: cookie => experienceCompositeRolesStep(cookie) }],
 }];

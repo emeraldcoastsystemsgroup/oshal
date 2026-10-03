@@ -3,7 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | The cockpit document and the experience entry pages behind a real Express listener: a non-operator on a focused deployment is redirected to the landing (plain cockpit, index.html, /portal, /homebase, /little-monsters), an operator and a focused ?app= request are served, assets are untouched, and a deployment without a focused landing serves everyone as before.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | The cockpit document and the experience entry pages behind a real Express listener: a non-operator on a focused deployment is redirected to the landing (plain cockpit, index.html, /portal, /homebase, /little-monsters), an operator and a focused ?app= request are served, assets are untouched, and a deployment without a focused landing serves everyone as before.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve focused shell lock for package entry aliases, including raw legacy documents.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -53,7 +54,7 @@ describe('focused-landing deployment', () => {
   afterAll(stop);
 
   it('redirects a non-operator from the plain cockpit document and every experience entry page to the landing', async () => {
-    for (const path of ['/cockpit/', '/cockpit', '/cockpit/index.html', '/portal', '/experience/', '/homebase?preset=family', '/nexus', '/studio', '/jarvis', '/orbit', '/commons', '/simple', '/little-monsters']) {
+    for (const path of ['/cockpit/', '/cockpit', '/cockpit/index.html', '/portal', '/experience/', '/homebase?preset=family', '/nexus', '/studio', '/jarvis', '/orbit', '/commons', '/simple', '/little-monsters', '/experience/studio.html', '/experience/homebase.html']) {
       const res = await get(path);
       expect(res.status, path).toBe(302);
       expect(res.headers.get('location'), path).toBe(LANDING);
@@ -89,6 +90,6 @@ describe('deployment without a focused landing', () => {
     expect((await get('/portal')).status).toBe(200);
     const classroom = await get('/little-monsters');
     expect(classroom.status).toBe(302);
-    expect(classroom.headers.get('location')).toBe('/homebase?preset=classroom');
+    expect(classroom.headers.get('location')).toBe('/api/ui/experiences/classroom-experience/open');
   });
 });

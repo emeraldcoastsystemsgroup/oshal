@@ -1,14 +1,15 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience-shells Lab step classifies a missing page as a deployment gap, a refused page or feed as degraded, a broken page or failed feed as fail, and a healthy pass as pass; and that its registration references suites that exist.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Simple chat joins the entry pages: the healthy pass names 10 pages, and /simple is probed for its sc-root marker.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
-import { EXPERIENCE_ENTRY_PAGES, EXPERIENCE_JOINED_READS, EXPERIENCE_SCENARIOS, classifyExperienceProbe, experienceShellsStep } from '@/app/routes/test-lab-experience-scenarios';
+import { EXPERIENCE_ENTRY_PAGES, EXPERIENCE_JOINED_READS, EXPERIENCE_SCENARIOS, classifyExperienceProbe, experienceShellsStep, experienceCompositeRolesStep } from '@/app/routes/test-lab-experience-scenarios';
 
 const marker = (path: string) => EXPERIENCE_ENTRY_PAGES.find(([p]) => p === path)![1];
 const page = (path: string, status = 200, body = `<html>${marker(path)}</html>`, contentType = 'text/html; charset=utf-8') => ({ path, status, contentType, body, marker: () => marker(path) });
@@ -22,9 +23,9 @@ describe('experience shells Lab step', () => {
     expect(EXPERIENCE_ENTRY_PAGES).toContainEqual(['/simple', 'sc-root']);
   });
   it('names a 404 page as a deployment gap, not a failure of the shells', () => {
-    const pages = healthyPages(); pages[1] = page('/studio', 404, 'not found', 'text/plain');
+    const pages = healthyPages(); pages[1] = page('/api/studio-experience/app', 404, 'not found', 'text/plain');
     const result = classifyExperienceProbe(pages, healthyReads());
-    expect(result).toMatchObject({ state: 'gap', status: 404 }); expect(result.detail).toContain('/studio');
+    expect(result).toMatchObject({ state: 'gap', status: 404 }); expect(result.detail).toContain('/api/studio-experience/app');
   });
   it('degrades on a refused page or feed instead of passing or failing', () => {
     const pages = healthyPages(); pages[0] = page('/portal', 401, '', 'application/json');
@@ -58,5 +59,15 @@ describe('experience shells Lab step', () => {
     expect(scenario.id).toBe('experience-shells');
     for (const test of scenario.regressionTests || []) expect(existsSync(test.path), test.path).toBe(true);
     expect(scenario.steps).toHaveLength(1);
+  });
+  it('registers lifecycle regressions and keeps its installed probe read-only', async () => {
+    const scenario = EXPERIENCE_SCENARIOS.find(row => row.id === 'experience-composite-roles')!;
+    for (const test of scenario.regressionTests || []) expect(existsSync(test.path), test.path).toBe(true);
+    const seen: RequestInit[] = [];
+    const probe = (async (_url: string, init: RequestInit) => { seen.push(init); return Response.json({ revision: 0, experiences: [], assignments: [] }); }) as typeof fetch;
+    expect((await experienceCompositeRolesStep('session=fixture', probe)).state).toBe('pass');
+    expect(seen).toHaveLength(1); expect(seen[0].method).toBeUndefined(); expect(seen[0].headers).toEqual({ cookie: 'session=fixture' });
+    const refused = (async () => new Response('', { status: 403 })) as typeof fetch;
+    expect((await experienceCompositeRolesStep('', refused)).state).toBe('degraded');
   });
 });

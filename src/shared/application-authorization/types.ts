@@ -3,11 +3,12 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose distinct core access-management role templates and effective capabilities.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the read-only "configure by package" grant plan: one application plus the applications it declares it cannot run without, each classified into the ONE change /access would make for it. A plan is a description, never a grant — it creates no assignment, bumps no revision and writes no audit entry.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: the management service may list reviewable catalog migrations and approve one through the same previewId + idempotencyKey apply shape as an access change; applied-change history gains the `catalog-migration` action an installation records when it re-stamps assignments onto a new catalog revision.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 import type { AuthorizationCatalogMigrationPreview, AuthorizationCatalogMigrationReceipt } from './catalog-migration';
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
@@ -61,6 +62,12 @@ export interface AuthorizationResourceAdapter {
   authorize(input: { actor: AuthorizationActor; operation: AuthorizationOperation; grant: AuthorizationGrant; fields: string[] }): Promise<boolean>;
 }
 export interface AuthorizationAppRegistration {
+  /** Installer-built declarations only. They neither assign roles nor replace member catalogs. */
+  compositeRoles?: {
+    templates: import('@/shared/experience-contract').ExperienceRoleTemplate[];
+    requiredApps: string[];
+    optionalApps: string[];
+  };
   app: string;
   source: string;
   version: string;
@@ -182,10 +189,13 @@ export interface AuthorizationCatalogResult extends AuthorizationInventory {
   managementRoles?: AuthorizationManagementRoleDefinition[];
   canReadGlobalAudit?: boolean;
   assignments: Array<{ id: string; app: string; targetSub?: string; targetIssuer?: string; tenantId?: string;
-    role?: string; permission?: string; deny: boolean; expiresAt?: string;
+    role?: string; permission?: string; deny: boolean; expiresAt?: string; managed?: boolean;
     group?: { issuer: string; tenantId: string; id: string } }>;
 }
 export interface ApplicationAuthorizationManagementService {
+  listCompositeRoles?(actor: AuthorizationActor, input?: { app?: string; tenantId?: string }): Promise<import('./composite-types').CompositeRoleCatalog>;
+  previewCompositeRole?(actor: AuthorizationActor, input: import('./composite-types').CompositeRoleInput): Promise<import('./composite-types').CompositeRolePreview>;
+  applyCompositeRole?(actor: AuthorizationActor, input: import('./composite-types').CompositeRoleApplyInput): Promise<import('./composite-types').CompositeRoleReceipt>;
   /** @description Read redacted applied changes after current caller revalidation.
    * @param actor Verified caller. @param input Application/tenant filters and cursor. @returns A bounded history page.
    */

@@ -3,21 +3,22 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Provide durable preview reads without retaining a policy writer lock.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: two more control-plane tables under the same forced operator-only RLS (content-addressed catalog snapshots and reviewable catalog migrations). The locked policy state now carries the migrations, and a transaction records the activating catalog in the same commit as any assignment re-stamp and its audit event.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 /** Durable control-plane state; this store never opens application business data. */
 import type { Pool, PoolClient } from 'pg';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import type { AuthorizationAudit, AuthorizationAuditQuery, AuthorizationCatalogSnapshot, AuthorizationState, AuthorizationStore,
-  AuthorizationTransaction, StoredAuthorizationPreview, StoredCatalogMigration } from './types';
+  AuthorizationTransaction, StoredAuthorizationPreview, StoredCatalogMigration, StoredCompositeRolePreview } from './types';
 import { readPostgresAudit } from './audit-store';
 
 /** Every control-plane table; each is forced under the operator-only policy. */
-const AUTHORIZATION_TABLES = ['state', 'assignments', 'previews', 'audit', 'applications', 'catalogs', 'catalog_migrations'];
+const AUTHORIZATION_TABLES = ['state', 'assignments', 'previews', 'audit', 'applications', 'catalogs', 'catalog_migrations', 'composite_assignments', 'composite_previews'];
 export const AUTHORIZATION_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS oshal_authorization_state (singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(singleton), revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0))`,
   `INSERT INTO oshal_authorization_state(singleton,revision) VALUES(TRUE,0) ON CONFLICT DO NOTHING`,
@@ -31,6 +32,8 @@ export const AUTHORIZATION_SCHEMA = [
   `ALTER TABLE oshal_authorization_applications ADD COLUMN IF NOT EXISTS tool_names TEXT[] NOT NULL DEFAULT '{}'`,
   `CREATE TABLE IF NOT EXISTS oshal_authorization_catalogs (catalog_revision TEXT PRIMARY KEY, app_name TEXT NOT NULL, payload JSONB NOT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
   `CREATE TABLE IF NOT EXISTS oshal_authorization_catalog_migrations (id TEXT PRIMARY KEY, app_name TEXT NOT NULL, payload JSONB NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS oshal_authorization_composite_assignments (id TEXT PRIMARY KEY, payload JSONB NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS oshal_authorization_composite_previews (id TEXT PRIMARY KEY, payload JSONB NOT NULL)`,
   ...AUTHORIZATION_TABLES.flatMap(name => [
     `ALTER TABLE oshal_authorization_${name} ENABLE ROW LEVEL SECURITY`,
     `ALTER TABLE oshal_authorization_${name} FORCE ROW LEVEL SECURITY`,
@@ -49,6 +52,12 @@ export async function ensureApplicationAuthorizationSchema(pool: Pool): Promise<
 /** Policy changes serialize on one revision row; each audit and change commits atomically. */
 export class PostgresAuthorizationStore implements AuthorizationStore {
   constructor(private readonly pool: Pool) {}
+  /** @description Load the reserved parent review outside the writer lock for approval verification.
+   * @param id Opaque review id. @returns Durable parent review or null; the service revalidates ownership. */
+  readCompositePreview(id: string): Promise<StoredCompositeRolePreview | null> {
+    return runWithSystemIdentity(async () => (await this.pool.query<{ payload: StoredCompositeRolePreview }>(
+      'SELECT payload FROM oshal_authorization_composite_previews WHERE id=$1', [id])).rows[0]?.payload ?? null);
+  }
   /** @description Load an actor-bound preview for pre-lock approval and identity revalidation.
    * @param id Opaque preview identifier. @returns Its persisted state, or null; the service still checks ownership and freshness.
    */
@@ -108,6 +117,8 @@ export class PostgresAuthorizationStore implements AuthorizationStore {
         await persistRows(client, 'assignments', before.assignments, state.assignments);
         await persistRows(client, 'previews', before.previews.map(p => ({ ...p, id: p.previewId })), state.previews.map(p => ({ ...p, id: p.previewId })));
         await persistMigrations(client, before.migrations ?? [], state.migrations ?? []);
+        await persistRows(client, 'composite_assignments', before.compositeAssignments ?? [], state.compositeAssignments ?? []);
+        await persistRows(client, 'composite_previews', before.compositePreviews ?? [], state.compositePreviews ?? []);
         if (state.revision !== revision) await client.query('UPDATE oshal_authorization_state SET revision=$1 WHERE singleton=TRUE', [state.revision]);
         for (const event of audit) await client.query('INSERT INTO oshal_authorization_audit(id,revision,payload) VALUES($1,$2,$3::jsonb)', [event.id, event.revision, JSON.stringify(event)]);
         for (const snapshot of catalogs) await client.query(`INSERT INTO oshal_authorization_catalogs(catalog_revision,app_name,payload) VALUES($1,$2,$3::jsonb)
@@ -126,6 +137,8 @@ async function loadState(client: PoolClient, lock: boolean): Promise<Authorizati
   const assignments = await client.query('SELECT payload FROM oshal_authorization_assignments ORDER BY id');
   const previews = lock ? await client.query('SELECT payload FROM oshal_authorization_previews ORDER BY id') : { rows: [] };
   const state: AuthorizationState = { revision, assignments: assignments.rows.map(row => row.payload), previews: previews.rows.map(row => row.payload) };
+  state.compositeAssignments = (await client.query('SELECT payload FROM oshal_authorization_composite_assignments ORDER BY id')).rows.map(row => row.payload);
+  if (lock) state.compositePreviews = (await client.query('SELECT payload FROM oshal_authorization_composite_previews ORDER BY id')).rows.map(row => row.payload);
   if (lock) state.migrations = (await client.query('SELECT payload FROM oshal_authorization_catalog_migrations ORDER BY id')).rows.map(row => row.payload);
   return state;
 }
@@ -140,7 +153,7 @@ async function persistMigrations(client: PoolClient, before: StoredCatalogMigrat
       ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload`, [row.id, row.app, serialized]);
   }
 }
-async function persistRows(client: PoolClient, table: 'assignments' | 'previews', before: Array<{ id: string }>, after: Array<{ id: string }>): Promise<void> {
+async function persistRows(client: PoolClient, table: 'assignments' | 'previews' | 'composite_assignments' | 'composite_previews', before: Array<{ id: string }>, after: Array<{ id: string }>): Promise<void> {
   const original = new Map(before.map(row => [row.id, JSON.stringify(row)]));
   const current = new Set(after.map(row => row.id));
   for (const row of before) if (!current.has(row.id)) await client.query(`DELETE FROM oshal_authorization_${table} WHERE id=$1`, [row.id]);
@@ -193,14 +206,20 @@ export class MemoryAuthorizationStore implements AuthorizationStore {
     this.applicationPostures.set(app, { protected: Boolean(previous?.protected || protectedApp),
       agentIds: [...new Set([...(previous?.agentIds ?? []), ...agentIds])], toolNames: [...new Set([...(previous?.toolNames ?? []), ...toolNames])] });
   }
-  private state: AuthorizationState = { revision: 0, assignments: [], previews: [], migrations: [] };
+  private state: AuthorizationState = { revision: 0, assignments: [], previews: [], migrations: [], compositeAssignments: [], compositePreviews: [] };
   private tail: Promise<void> = Promise.resolve();
   readonly auditEvents: AuthorizationAudit[] = [];
   async read(): Promise<AuthorizationState> {
     await this.tail;
     // Match the durable unlocked read: migration reviews load only under the writer lock.
-    const { migrations: _locked, ...state } = this.state;
+    const { migrations: _locked, compositePreviews: _reviews, ...state } = this.state;
     return structuredClone(state);
+  }
+  /** @description Match the durable unlocked review read without exposing fixture state by reference.
+   * @param id Opaque review id. @returns Independent parent review or null. */
+  async readCompositePreview(id: string): Promise<StoredCompositeRolePreview | null> {
+    await this.tail;
+    return structuredClone(this.state.compositePreviews?.find(row => row.id === id) ?? null);
   }
   async transaction<T>(operation: (transaction: AuthorizationTransaction) => Promise<T>): Promise<T> {
     const previous = this.tail; let release!: () => void;

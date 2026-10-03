@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin @/features/location, the location kernel skill. Core routes import it too (the two account-erasure routes), but the package-facing contract must not depend on that: this re-export keeps it in dist for every package that declares uses: location.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Pin the anonymous-route validation contract into the runtime build.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 
 /**
@@ -125,6 +126,8 @@ export * as packageAnonymousRoutes from '@/shared/package-anonymous-routes';
 export * as packageTesting from '@/shared/package-testing';
 export * as appDependencies from '@/shared/app-dependencies';
 export * as experience from '@/shared/experience-contract';
+export * as experienceRoles from '@/shared/application-authorization';
+export * as experienceRoleLifecycle from '@/features/application-authorization';
 export * as specialistContext from '@/shared/specialist-context';
 
 export * as jarvisBriefings from '@/shared/briefings';

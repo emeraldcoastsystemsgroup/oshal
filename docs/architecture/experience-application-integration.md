@@ -12,9 +12,9 @@ application-hosting baseline.
 | E1 inventory and contracts | Source inventory and delivery contract recorded here | The tables below identify source owners and migration gates |
 | E2a declaration validation | Implemented in `src/shared/experience-contract/`, called by the manifest loader | `tests/unit/experience-package-contract.spec.ts` |
 | E2b hosting and discovery | Implemented locally; deployed proof pending | Loader/service/runtime fixtures prove two installed packages with distinct callers, entry denial, private scope and member visibility; 36 browser cases pass, including the chooser at four widths |
-| E3 composite roles | Semantics specified; assignment implementation pending | Exact-role preview, provenance, overlap-safe removal and reviewed upgrades |
-| E4 Home pilot | Pending; operational headings updated in the existing runtime | Installed household journeys and negative API/database cases |
-| E5 remaining six | Pending | Individual package releases and acceptance receipts |
+| E3 composite roles | Implemented locally; deployed proof pending | Exact-role preview, atomic PostgreSQL apply, durable receipts, source-safe revoke, reviewed upgrades, current authority/identity/expiry/deny/approval and real Access UI tests |
+| E4 Home pilot | Source package implemented; release and installed proof pending | Actual package hosting/authorization and source UI checks pass; shopping add/complete/reload, optional school refusal and phone household actions verified |
+| E5 remaining six | Six source packages implemented; release and installed proof pending | All seven owned source entries load through the existing runtime; browser checks cover role views, named member screens, phone/keyboard operation and saved drafts |
 | E6 installed acceptance | Pending | Deployed revisions, fixture cleanup and registered Test Lab results |
 
 The `experience` compatibility floor now supplies package hosting and discovery:
@@ -23,7 +23,18 @@ The `experience` compatibility floor now supplies package hosting and discovery:
 changed installation before redirecting. Page entries use package routes; rail entries
 reuse the existing focused cockpit profile. The portal and cockpit menu consume this
 catalog. Discovery failure offers no static fallback. Installation and deployed acceptance
-are separate gates, and E3–E6 remain open.
+are separate gates, and release/installed acceptance for E3–E6 remain open.
+
+The `experience-roles` floor requires migration 185 and the existing Access management
+authority. `GET /api/authorization/composites` lists current readable templates and
+redacted lifecycle records. The same-origin JSON endpoints `/composites/preview` and
+`/composites/apply` bind every constituent to one reserved review and one durable policy
+transaction. Ordinary apply cannot split the set. Receipts survive restart; revocation
+removes only that assignment's provenance, including retired installation edges.
+The Access screen supports explicit optional choices, expiry, member review, existing
+approval references, reviewed edits/upgrades and revocation. Unknown apply outcomes retain
+the idempotency key for receipt retrieval. The registered Test Lab metadata probe is read-only;
+it does not stand in for installed package/lifecycle acceptance.
 
 ## Existing mechanisms to reuse
 
@@ -56,7 +67,7 @@ manifests, never frozen into a permanent list of applications.
 | Orbit / `orbit-experience` | `/orbit`; `orbit.html`, same shared engines | Suite/application map, inspector, relationships, focus and operational panels | Installed catalog, viewer-scoped app detail/dependencies/assistants and member profiles |
 | Commons / `commons-experience` | `/commons`; `commons.html`, same shared engines | Suite/Game rooms, pins, room conversation, work board, household/team and roster | Installed catalog, Jarvis threads, work items, tenant membership and permitted directory reads |
 
-The IDs above are reserved by this plan, not published packages. `home` continues to
+All seven IDs above now have source packages in the store development branch; publication and installed acceptance remain pending. `home` continues to
 mean Smart Home; `little-monsters` continues to mean Education. Neither is renamed.
 
 ### Homebase surface and authority matrix
@@ -211,3 +222,40 @@ Operational headings prioritize Today, Today's Schedule, Recent Work and Applica
 `Top Items Today` is reserved for a real attention list: authorized overdue/due-today or
 human-action-required records, ordered deterministically with owner deep links. A renamed
 hero alone does not implement that list. Preview/gallery designs remain reference assets.
+
+## Source acceptance and coordinated release
+
+All seven packages own an entry, configuration, layout assets, skin, own app.open
+catalog, readiness and Test Lab declaration. Home requires Purchasing; Classroom
+requires Little Monsters. Business uses optional named members. Studio, Jarvis, Orbit
+and Commons read the existing dynamic admitted catalog and grant only their own host
+role; selecting a suite, room, pin or application does not assign member access.
+
+Source checks: 21 package contracts, 14 actual loader/mounter/policy lifecycle checks,
+15 package browser cases and 26 wider Homebase regressions passed. Browser evidence
+uses owned package documents over synthetic member APIs; runtime evidence uses the
+actual source package and existing authorization machinery. These checks do not claim
+installed household/school/business API or database parity. Core PostgreSQL lifecycle
+checks separately prove durable receipts, forced RLS and atomic provenance.
+
+Legacy entry and raw legacy HTML routes now redirect through the corresponding
+installed package open operation. Seven alias/lock checks and the registered Test Lab
+probe cover this transition. The Lab probes actual package entries; missing packages
+remain deployment gaps. Nexus, Simple and shared authenticated assets retain their
+behavior. Source templates remain for the gallery and explicit renderer fixtures.
+
+Before rollout, the live bind-mounted cockpit document stays aligned with the current
+backend. The new dynamic menu is preserved at the published core revision and is
+restored only with coordinated backend/package availability. Do not add an outage
+fallback that silently serves an unadmitted experience.
+
+Core hosting PR #937 merged at 151f2d0c after independent exact-source review and
+the published gate. The later composite lifecycle, operational UX and alias changes
+have independent working-source review and are being verified for publication.
+The normal store pre-push gate passed all 87 checks at ee1651b2 with zero failures,
+partial results or skips, using disposable Linux/PostgreSQL/physics prerequisites.
+Independent store review still required CRM mapping, UTF-8 preservation and source
+documentation corrections; the amended source requires its own normal gate and
+exact-revision review. No skip acceptance or hook bypass was used. Coordinated
+deployment, exact-commit package audits, registered installed Test Lab results,
+negative member API/database checks and cleanup receipts remain outstanding.

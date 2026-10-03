@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 reviewed catalog migration on real PostgreSQL under the non-superuser runtime role with FORCE row-level security: a Little Monsters-shaped 1.4.3 -> 1.4.4 upgrade carries every assignment in one transaction with its audit row (read back by a restarted service from the durable snapshot, not memory); a widening change refuses with a stored review and activates only after approval; a removed grant never revives; concurrent activations and approvals serialize to one migration and one approval; an audit failure rolls the re-stamp back.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import type { Pool } from 'pg';
@@ -20,7 +21,7 @@ vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), w
 
 const RUNTIME = 'authorization_runtime';
 const database = new DisposablePostgres({ purpose: 'authorization-catalog-migration', roles: [{ name: RUNTIME, max: 4 }],
-  migrations: ['127-application-authorization.sql', '131-authorization-audit-indexes.sql', '173-authorization-catalog-migrations.sql'] });
+  migrations: ['127-application-authorization.sql', '131-authorization-audit-indexes.sql', '173-authorization-catalog-migrations.sql', '185-experience-composite-roles.sql'] });
 const ISSUER = 'https://identity.fixture.test';
 const APP = CLASSROOM_APP;
 const admin: AuthorizationActor = { sub: 'fixture-admin', issuer: ISSUER, isActive: true, isSwarmAdmin: true };
