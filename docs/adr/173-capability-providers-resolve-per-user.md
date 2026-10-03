@@ -644,8 +644,11 @@ functionality"). Database claims are proved against the real enforcing role and 
   - As built, S1a (2026-10-03, locally tested, not live-proven). The swarm table is `oshal_capability_swarm_rows`
     (migration `183`, `(scope_id, capability)`, forced row-level security: every identity reads, only the operator
     identity or system work writes). The shared resolver is `resolveCapabilityProvider` (`src/shared/capability-providers`):
-    an explicit provider (required, D10), then the caller's own default (rung 3: the saved text-to-speech choice in
-    `voice_user_prefs` until S2), then the `fleet-default` row, then the seed (`config-seed/global-config.json`, or for images
+    a provider server code names (required, D10) or one a request names, such as the `providerId` in the body of
+    `POST /api/voice/synthesize` (a preference, D10's default: when it is not registered or not available the next rung
+    answers, as that route did before, with a warning naming the provider and the reason), then the caller's own default
+    (rung 3: the saved text-to-speech choice in `voice_user_prefs` until S2), then the `fleet-default` row, then the seed
+    (`config-seed/global-config.json`, or for images
     `selectStoryboardImageSeed`: `STORYBOARD_IMAGE_PROVIDER`, `codex`, or the render bot's harness), then a refusal naming the
     missing piece. Every resolution logs `capability provider resolved` with its rung. Each provider declares its cost class
     (speech providers on the class, images in `STORYBOARD_IMAGE_COST_CLASSES`, video in `VIDEO_PROVIDER_COST_CLASSES`), and one

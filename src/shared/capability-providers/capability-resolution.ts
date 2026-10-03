@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: the one resolver the four capabilities share. It requires a principal (D8) and refuses without one; walks the rungs that exist today — a provider the calling code names itself (a required preference, D10), the caller's own default (rung 3, the existing text-to-speech saved choice until S2), the swarm default (rung 4: the operator's row, else the provider the file or selector names today, D6) — and refuses at rung 5 naming the missing piece. A rung is used only when its provider is available to this caller, asked through the capability's ONE availability function, the same one the options list asks (D3). A skip never lands on a different payer (D5): the landing provider must be free or bill the same payer as every provider skipped on the way down. A text-to-speech voice travels only with its own provider and only when that provider lists it; otherwise the landing provider's default voice is used (D9). The bot rungs (S3) and the application block (S4) slot in above the user default without changing this walk. Every resolution writes one log line naming the rung that answered.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): a provider the request names (`requested`) is a preference, not a requirement. It answers at the app rung when available; when it is not registered or not available the walk falls through to the caller's own default and then the swarm default, as POST /api/voice/synthesize did before ADR-173, and a warning names the provider, what is missing and why. A provider server code names (`explicit`) is still required.
  */
 
 /**
@@ -195,6 +196,10 @@ async function tryCandidate(
   const missing = availability.available ? 'no-cost-class' : availability.missing ?? 'not-registered';
   const detail = availability.available ? `${candidate.choice.providerId} declares no cost class` : availability.detail;
   state.skipped.push({ rung: candidate.rung, providerId: candidate.choice.providerId, missing, detail });
+  if (candidate.source === 'request') {
+    logger.warn({ capability: adapter.capability, providerId: candidate.choice.providerId, missing, detail },
+      'requested capability provider is not usable — falling through to the next rung (ADR-173 D10)');
+  }
   if (declaration?.costClass) {
     state.skippedClasses.push({ providerId: declaration.providerId, rung: candidate.rung, costClass: declaration.costClass });
   }
@@ -225,7 +230,8 @@ function logResolution(request: CapabilityResolveRequest, resolution: Capability
 
 /**
  * @description The rungs above the swarm default that this request carries: an explicit provider
- * (required, and then the only rung), else the caller's own default for a signed-in person.
+ * (required, and then the only rung); else a provider the request names (a preference that falls
+ * through, D10's default), then the caller's own default for a signed-in person.
  * @param request - The request.
  * @returns The candidates, top first.
  */
@@ -233,10 +239,14 @@ function upperCandidates(request: CapabilityResolveRequest): Candidate[] {
   if (request.explicit?.providerId) {
     return [{ rung: 'app', source: 'explicit', required: true, choice: request.explicit }];
   }
-  if (request.principal.kind === 'user' && request.userDefault?.providerId) {
-    return [{ rung: 'user-default', source: 'user', required: false, choice: request.userDefault }];
+  const candidates: Candidate[] = [];
+  if (request.requested?.providerId) {
+    candidates.push({ rung: 'app', source: 'request', required: false, choice: request.requested });
   }
-  return [];
+  if (request.principal.kind === 'user' && request.userDefault?.providerId) {
+    candidates.push({ rung: 'user-default', source: 'user', required: false, choice: request.userDefault });
+  }
+  return candidates;
 }
 
 /**
