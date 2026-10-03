@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Gemini TTS provider — uses generativelanguage.googleapis.com with the GOOGLE_API_KEY; wraps raw PCM in WAV header so browsers can play the result without client-side decoding; becomes the new swarm default because it authenticates with an API key (unlike Cloud TTS which needs OAuth)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (swarm-paid) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -76,6 +77,8 @@ export class GeminiTTSProvider implements TTSProvider {
   public readonly id = 'gemini-tts';
   public readonly displayName = 'Gemini TTS (Google AI Studio)';
   public readonly kind = 'server' as const;
+  /** ADR-173 D4: the swarm's Google API key carries the call (a free tier on it is still the swarm's credential). */
+  public readonly costClass = 'swarm-paid' as const;
 
   constructor(private readonly config: GeminiTTSConfig) {}
 

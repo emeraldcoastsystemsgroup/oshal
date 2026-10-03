@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added decomposed route groups (UI documents, providers & connectors, devops & judge, budgets & queues, content & assistant, observability & voice, agent directory, governance, and workflow studio) to satisfy decomposition threshold (<800 lines).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/experience/availability behind requiresAuth in the content and assistant group: the caller's own busy windows (no event content) for the central assistant's Calendar view (routes/experience-availability-routes.ts).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Mount /api/calendar behind requiresAuth in content and assistant group: full CRUD for Google Calendar meetings and events.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mount /api/capability-providers behind requiresAuth beside /api/voice (ADR-173 S1): the operator surface that reads and writes the capability swarm rows; every route inside refuses anyone but an operator session.
  * -----------------------------------------------------------------------------
  */
 
@@ -67,6 +68,11 @@ import { registerSwarmExtensionRoutes } from '@/app/extensions';
 import { createTaskRoutes } from './routes/task-routes';
 import { createStreamRoutes } from './routes/stream-routes';
 import { createVoiceRoutes } from './routes/voice-routes';
+import { createCapabilityProviderRoutes } from './routes/capability-provider-routes';
+import { capabilityProviderAdapters } from './composition/capability-provider-runtime';
+import { CapabilitySwarmRowStore } from '@/features/capability-providers';
+import { VoiceService } from '@/features/voice';
+import { installedCapabilityRowSnapshot } from '@/shared/capability-providers';
 import { createVerificationRoutes } from './routes/verification-routes';
 import { createAgentProfileRoutes } from './routes/agent-profile-routes';
 import { createAgentToolRoutes } from './routes/agent-tool-routes';
@@ -275,6 +281,13 @@ export function mountCoreObservabilityAndVoiceRoutes(
   app.use('/api/tasks', requiresAuth, createTaskRoutes(ctx));
   app.use('/api/stream', requiresAuth, createStreamRoutes(ctx));
   app.use('/api/voice', requiresAuth, createVoiceRoutes(ctx));
+  // ADR-173 S1: the operator surface for the capability swarm rows (operator sessions only inside).
+  app.use('/api/capability-providers', requiresAuth, createCapabilityProviderRoutes({
+    store: ctx.pool ? new CapabilitySwarmRowStore(ctx.pool) : undefined,
+    snapshot: installedCapabilityRowSnapshot,
+    adapters: capabilityProviderAdapters,
+    voice: new VoiceService(),
+  }));
 }
 
 /**

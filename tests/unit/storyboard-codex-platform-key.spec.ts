@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the codex image provider's platform-realm-only credential resolution. The mounted ChatGPT-subscription OAuth token (live auth.json) must keep powering the chat harness via getSwarmApiKey, but must NEVER satisfy the image rail: /v1/images rejects subscription tokens (ADR-082, re-verified live 2026-08-21), so an OAuth-only box has to fail closed at resolve time with the paste-a-platform-key hint — not read as configured and then 401 on every generation. Real temp credential files + the real resolvers; only the logger is doubled.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: resolution runs the codex vendor key probe (D3 step 4, cached), so the default-selection case answers that one probe in-process (tests/helpers/vendor-key-probe-stub.ts) instead of calling the vendor, and a new case pins that a key the vendor rejects fails closed at selection naming the health check. The probe cache is cleared around every case.
  */
 
 import * as fs from 'fs';
@@ -20,9 +21,11 @@ import {
   hasSwarmPlatformApiKey,
 } from '../../src/features/llm-provider/services/swarm-credentials';
 import {
+  clearStoryboardImageHealthCache,
   createCodexImageProvider,
   resolveStoryboardImageProvider,
 } from '../../src/features/video-generation/services/storyboard-image-providers';
+import { answerVendorKeyProbes } from '../helpers/vendor-key-probe-stub';
 
 const FAKE_OAUTH = 'fake-codex-oauth-access-token';
 const ENV_KEYS = [
@@ -61,9 +64,12 @@ describe('codex image provider — platform realm only, OAuth-only box fails clo
     // The unset-env default is demo-aware (ADR-130): codex-cli under DEMO_MODE, codex otherwise.
     // These cases assert the NON-demo default, so the shell's DEMO_MODE must not leak in.
     delete process.env.DEMO_MODE;
+    clearStoryboardImageHealthCache();
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    clearStoryboardImageHealthCache();
     for (const k of ENV_KEYS) {
       const v = savedEnv[k];
       if (v === undefined) delete process.env[k];
@@ -102,9 +108,20 @@ describe('codex image provider — platform realm only, OAuth-only box fails clo
   it('a platform env key satisfies the DEFAULT selection (unset env resolves to codex)', async () => {
     process.env.OPENAI_API_KEY = 'sk-test-platform-key';
     expect(getSwarmPlatformApiKey('openai')).toBe('sk-test-platform-key');
+    // ADR-173 D3 step 4: resolution now runs the vendor key probe; answer it in-process.
+    const probes = answerVendorKeyProbes(200);
     const provider = await resolveStoryboardImageProvider();
     expect(provider.id).toBe('codex');
     expect(typeof provider.healthCheck).toBe('function');
+    expect(probes.mock.calls.map((call) => String(call[0]))).toEqual(['https://api.openai.com/v1/models']);
+  });
+
+  it('ADR-173 D3: a platform key the vendor rejects fails closed at selection, naming the health check', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test-revoked-platform-key';
+    answerVendorKeyProbes(401);
+    const err = await resolveStoryboardImageProvider().then(() => null, (e: unknown) => e);
+    expect((err as Error).message).toMatch(/storyboard image provider 'codex' failed its health check — platform key rejected: HTTP 401/);
+    expect((err as Error).message).toMatch(/Refusing to fall back/);
   });
 
   it('a named openAiApiKey in the seed wins for the platform realm even with OAuth mounted', () => {

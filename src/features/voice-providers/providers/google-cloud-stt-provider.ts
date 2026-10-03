@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Honored caller abort signals so diarization-aligned STT has a bounded remote request lifetime.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Corrected the provider to Chirp 3 V2 Recognize with project/location routing, auto decoding, word offsets, and a base64-safe inline limit.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Removed arbitrary provider-body logging and documented service-account cloud-platform authentication.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D4: declares its cost class (swarm-paid) so the capability resolver and the options list can say who pays, and a skip never lands on a different payer (D5).
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -52,6 +53,8 @@ export class GoogleCloudSTTProvider implements STTProvider {
   public readonly id = 'google-cloud-stt';
   public readonly displayName = 'Google Cloud Speech-to-Text V2';
   public readonly kind = 'server' as const;
+  /** ADR-173 D4: the swarm's Google service account carries the call. */
+  public readonly costClass = 'swarm-paid' as const;
 
   constructor(
     private readonly config: GoogleCloudSTTConfig,

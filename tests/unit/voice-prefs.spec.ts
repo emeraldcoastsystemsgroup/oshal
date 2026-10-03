@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 guards over a real express app (registry + pool faked — no live TTS/network/DB). tts-picker-persists-and-honored: a saved provider+voice round-trips through GET /prefs AND changes which provider's synthesize() is CALLED (and with which voiceId) when the body names none — delete the prefs resolution and the default provider answers, going red. unconfigured-provider-not-selectable: POST /prefs for a provider whose getStatus reports configured:false is a 400 provider_not_configured and nothing persists; /providers lists it configured:false with the honest reason.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: the fake providers declare a cost class and the fake registry names the seed of the swarm default, as the real ones now do. New case: a saved provider that has become unavailable is skipped (rung 3) and the swarm default answers with its own voice, never the saved one (D1, D5, D9) — red on the previous controller, which substituted the saved provider as an explicit one and called it anyway.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { type Request, type Response, type NextFunction } from 'express';
@@ -16,6 +17,8 @@ const fixture = vi.hoisted(() => {
     id,
     displayName: id === 'default-tts' ? 'Default TTS' : id === 'fake-tts' ? 'Fake TTS' : 'Locked TTS',
     kind: 'server' as const,
+    // ADR-173 D4: every provider declares who pays; one that declares nothing is never resolved.
+    costClass: 'swarm-paid' as const,
     async getStatus() { return { configured, providerId: id, reason }; },
     async synthesize(req: { text: string; voiceId?: string }) {
       synthCalls.push({ providerId: id, voiceId: req.voiceId, text: req.text });
@@ -34,6 +37,9 @@ const fixture = vi.hoisted(() => {
     list: () => [defaultProvider, fakeProvider, lockedProvider],
     get: (id: string) => [defaultProvider, fakeProvider, lockedProvider].find((p) => p.id === id),
     resolveForApp: () => defaultProvider,
+    // ADR-173 S1: the seed of the swarm default and each provider's own default voice (none here).
+    configuredDefaultId: () => 'default-tts',
+    configuredDefaultVoice: () => null,
   };
   return { synthCalls, registry };
 });
@@ -167,6 +173,17 @@ describe('unconfigured-provider-not-selectable', () => {
     fixture.synthCalls.length = 0;
     await post('/api/voice/synthesize', { text: 'still default' });
     expect(fixture.synthCalls[0].providerId).toBe('default-tts');
+  });
+
+  it('ADR-173 D1/D5/D9: a saved provider that is now unavailable falls to the swarm default, and its voice does not travel', async () => {
+    // A choice saved while the provider worked (the route refuses saving it now): rung 3 is skipped
+    // because locked-tts is unavailable, and the swarm default answers with its OWN voice — never v2.
+    pool.prefs.set('auth0|voice-user', { tts_provider: 'locked-tts', tts_voice: 'v2' });
+    fixture.synthCalls.length = 0;
+    const res = await post('/api/voice/synthesize', { text: 'saved but gone' });
+    expect(res.status).toBe(200);
+    expect(res.data.data).toMatchObject({ providerId: 'default-tts', rung: 'swarm-default' });
+    expect(fixture.synthCalls).toEqual([{ providerId: 'default-tts', voiceId: undefined, text: 'saved but gone' }]);
   });
 
   it('an unknown provider id is a 404', async () => {
