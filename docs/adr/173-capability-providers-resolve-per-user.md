@@ -1,7 +1,7 @@
 # ADR-173: Capability providers resolve per user — text to speech, speech to text, image and video
 
 Date: 2026-10-03
-Status: **Accepted — 2026-10-03, operator decision.** The operator approved D1 to D12 as written ("Approve all 12 as written"). Slice S1 is in build: its first part (S1a: the registry with cost classes, one availability function per capability, the swarm rows, the operator route, the resolver with a required principal, the STT failover rewritten to D5 and the D9 voice rule) is built and locally tested; spend recording and the config-admin card (S1b) and the S1 live proof are not done yet. Slices S2 to S5 are not built.
+Status: **Accepted — 2026-10-03, operator decision.** The operator approved D1 to D12 as written ("Approve all 12 as written"). Slice S1 is built and locally tested (S1a: the registry with cost classes, one availability function per capability, the swarm rows, the operator route, the resolver with a required principal, the STT failover rewritten to D5 and the D9 voice rule; S1b: the offer table with unit prices, TTS and STT spend recorded with the bot and the caller, and the config-admin card); its live proof has not run yet. Slices S2 to S5 are not built.
 
 The Context records core `main` `3f06817f` and store `main` `25c87a29`, with read-only observations of the operator's box on 2026-10-03. Core `main` has since taken a docs-only commit (`f096898f`) and `3642c1f1` (PR #1033), which moves the lines this ADR cites in `storyboard-image-providers.ts`, `storyboard-antigravity-image-provider.ts`, `storyboard-cli-image-wiring.ts` and `storyboard-frames.ts` but not what they are cited for; those line numbers are at `3f06817f`. Paths marked `store:` are in the `oshal-applications` repository.
 
@@ -657,6 +657,17 @@ functionality"). Database claims are proved against the real enforcing role and 
     bot until S4), the ambient speaker transcription, and storyboard images (`resolveStoryboardImageProvider`). Video has an
     adapter and no caller yet (S4). The live case is `node scripts/operations/live-acceptance.js capability-stt --allow-paid`.
     Not yet: the offer table with unit prices, TTS and STT spend events, and the config-admin card (S1b).
+  - As built, S1b (2026-10-03, locally tested, not live-proven). The offer table is `oshal_capability_provider_offers`
+    (migration `184`, `(capability, provider_id)`, the same forced row-level security): `unit_price_usd` per character (tts),
+    audio second (stt), image or video second, a `quota_label` the listing shows, and `offered_to`, which nothing writes or
+    reads before S2. A successful `swarm-paid` or `user-paid` TTS or STT call through `VoiceService` records one cost event
+    (`chat_tasks` rollup per capability, provider, caller, bot and UTC day, plus one `oshal_cost_events` row) with the accountable bot
+    and the caller; the amount is the call's units (characters, counted as code points; audio seconds measured from the clip's
+    WAV, Ogg or WebM container, else the transcript's last segment) times the offer price. A `free` call records nothing; a call with no price
+    or unmeasurable units is recorded at zero, marked estimated. A person's row is written under the request identity, so it
+    stays theirs; the system's or an unattributed caller's spend is the swarm's own row. The operator route adds `PUT`/`DELETE
+    /offers/:capability/:providerId`, and the config-admin card (`config-admin-capability-providers.js`) writes the swarm
+    default per capability (with a voice for TTS) and each provider's price.
 - **S2. User defaults.** The per-user table with `voice_user_prefs` copied across, routes mirroring
   `/api/settings/llm-default`, the "My defaults" card, the offer rows and the operator's grant control; the Spoken voice
   panel's `GET`/`POST /api/voice/prefs` read and write the per-user table through the same availability function (D3, D4).
