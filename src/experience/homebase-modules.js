@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Homebase modules built from the design study over live data, rendered in the homebase's own classes: the opt-in check-in panel (the caller's own place from ADR-169 location state, household members with no check-in shown because no group presence read exists, the "share from this browser" switch and who can see the caller), the room strip (the home assistant and the household), the Family admin card with its People & roles and Devices dialogs (household members and roles from the caller's group, location devices with stop reporting), a learner's level progress and Little Monsters notices.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Routines (Jarvis briefing sources and the caller's schedules, added by asking Jarvis), search in this home (what the page read plus the caller-scoped global search), files (Jarvis task files and saved drafts), tasks (open work and open classwork), the day-grouped agenda with a read-only event dialog, the assistant bubble and inline composer, the room tabs and the "Make it yours" choices (how the assistant offers help, what greets you, what stays close at hand).
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Match shared search and assistant wording to the active home, workspace or classroom.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Name the active space in the people strip accessibility label.
  */
 (function (root, factory) {
   var api = factory();
@@ -80,7 +81,7 @@
       const snap = ctx.snapshot(), rows = members().length ? members() : [{ self: true, role: '' }];
       const host = `<div class="room-person" data-person="assistant"><span class="room-avatar"><span class="assistant-orb" aria-hidden="true"></span>${snap.botsOnline ? '<span class="presence-dot" aria-hidden="true"></span>' : ''}</span><div><strong>${esc(ctx.preset.assistantLabel)}</strong><small>Room host · ${snap.botsOnline} of ${snap.bots.length} assistants online</small></div></div>`;
       const people = rows.slice(0, 5).map((m, i) => `<div class="room-person"><span class="room-avatar">${avatar(LIVE.initials(memberName(m)), i)}</span><div><strong>${esc(memberName(m))}${m.self ? ' · you' : ''}</strong><small>${m.role === 'admin' ? 'Admin' : m.role === 'member' ? 'Member' : 'Signed in'}</small></div></div>`).join('');
-      return `<section class="room-strip" data-module="room" aria-label="People in this home">${host}${people}</section>`;
+      return `<section class="room-strip" data-module="room" aria-label="People in this ${space}">${host}${people}</section>`;
     }
     /** @description The household line on the Family admin card: its name and size, or how to start one. */
     function groupLine() {
