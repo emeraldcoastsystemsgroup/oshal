@@ -12,10 +12,11 @@
  *      bias-aware classification all apply identically), and
  *  (d) returns a run summary; the `world_pulls` ledger is the per-run record (its whole purpose).
  *
- * The classify step runs the swarm's Claude creds in-process exactly like the interactive world route
- * already does — this path introduces no NEW controller-side LLM call, it triggers the established one
- * on a timer instead of on a bot tool call. Work is bounded: at most MAX_SUBJECTS subjects per fire,
- * LIMIT items per feed variant.
+ * The classify step runs on the swarm's accounted bot rail: the first fire registers the platform's
+ * classify backend (world-classify-provider.ts — one direct turn per chunk to the classify bot on its
+ * configured provider, the swarm default), so the controller makes no model call of its own. Work is
+ * bounded: at most MAX_SUBJECTS subjects per fire, LIMIT items per feed variant, and the global
+ * classify budget.
  *
  * The shared scheduler stays generic: schedule-runtime only branches here when isWorldSchedule matches.
  *
@@ -27,6 +28,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Log the global classify-budget snapshot in the completion line — the 2026-06-29 burn ran 9 HOURS before a human noticed because spend was invisible; now every cycle's record says how much of the LLM budget the world layer has used and whether it was denied any.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Bound the rollup fan-out from config (WORLD_ROLLUP_CONCURRENCY, default 4 instead of a compiled-in 8) and record what each fire costs the series store: entity count, statements issued, statements coalesced and wall time at INFO, plus a WARN once a pulse crosses a configured fraction of its window. On 2026-09-14 the 184-entity fan-out put 19 concurrent aggregates on oshal-local-tsdb (282% CPU) because an abandoned dispatch keeps running while the next fire starts, and the only evidence a human had was pg_stat_activity while it was happening.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Run the depth cycle's feed collectors (market events, congress, insider, short volume, gov contracts) BEFORE the sequential subject sweep instead of after it. They sat behind a sweep that took about 33 minutes on 2026-06-26 (that run's congress rows carry ts 00:33 UTC, the write time the collector stamped before seq 2 of political-trades.ts, for the 00:00 UTC fire), while the scheduler abandons a dispatch after 240 s and the run then lives only as long as the api process, so a restart inside the sweep can end it before the collectors; running them first removes that exposure. It is not shown to be why no congress row was written after 06-26: the default congress feed answered HTTP 401 on 2026-09-28 (political-trades.ts seq 4), and a run that reached the collector while the feed answered 401 wrote nothing either, so the series store cannot tell the two apart. A collector turned off by WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED now logs a WARN on every depth fire instead of being skipped silently.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Each fire makes sure the platform's classify backend is registered (ensureWorldClassifyRail(ctx), once per process; boot registers it first): the accountable bot rail on the swarm's configured provider under an accountable owner, so classification inside ingestFeeds / the firehose deep dive stops depending on a controller-local CLI provider SEC-05 refuses. The context parameter is used for the first time; the header and the dispatch JSDoc now describe the as-built rail instead of "the swarm's Claude creds in-process".
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Each fire begins its own slice of the classify budget (beginClassifyPulse, WORLD_CLASSIFY_BUDGET_PER_PULSE): the hour's bot-rail calls spread across the pulses instead of landing in the first one, which overran the 240 s dispatch budget three times on 2026-10-02 and stacked fires.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Honour the operator's source switches (World sources screen): a fire reads the switched-off set once; a switched-off depth collector is skipped with a WARN naming its source id, the firehose pass (switch `firehose`) or any one firehose feed is left out, and the completion record lists what was switched off. Every depth collector's run is recorded (ok / failed / skipped with the reason, a refused or failed congress feed counting as failed) so the screen can show when each last ran and how it ended.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a collector's run outcome follows the feed outcome it reports (ok, partial, failed; a refused congress feed counts as failed), and the firehose pass moved into runFirehose() so dispatchWorldSchedule stops growing.
  *
  * @module world-schedule-dispatch
  */
@@ -43,13 +48,15 @@ import {
   collectGovContracts,
   DEFAULT_FEED_IDS, FINANCE_FEED_IDS, PULSE_FEED_IDS,
   firehoseEnabled, firehoseFeeds, firehoseLimit, firehoseEveryNPulses,
-  deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs, classifyBudgetSnapshot,
+  deepDiveEnabled, deepDiveBudget, deepDiveMetered, feedBudgetMs, classifyBudgetSnapshot, beginClassifyPulse,
   seriesReadStats, seriesReadConcurrency, type SeriesReadStats,
   DEFAULT_WORLD_TOPICS, tickerSubject, type WorldSubject,
   MARKET_SUBJECTS,
+  FIREHOSE_SWITCH_ID, type WorldCollectorId, type WorldCollectorOutcome,
 } from '@/features/world-data';
 import { DEFAULT_UNIVERSE } from '@/features/trading';
 import { createChildLogger } from '@/shared/logger';
+import { ensureWorldClassifyRail } from './world-classify-provider';
 
 const logger = createChildLogger({ module: 'world-schedule-dispatch' });
 
@@ -221,6 +228,8 @@ interface FireOutcome {
   elapsedMs: number;
   seriesBefore: SeriesReadStats;
   totals: { fetched: number; newItems: number; errors: number };
+  /** Source ids the operator switched off on the World sources screen when this fire started. */
+  switchedOff: string[];
 }
 
 /**
@@ -241,7 +250,7 @@ function logFireOutcome(o: FireOutcome): void {
     deepSlice: o.deepSlice, rolled: o.rolled, elapsedMs: o.elapsedMs, seriesStatements,
     seriesCoalesced: series.coalesced - o.seriesBefore.coalesced,
     seriesMaxInFlight: series.maxInFlight, seriesReadConcurrency: seriesReadConcurrency(),
-    classifyBudget: classifyBudgetSnapshot(), ...o.totals,
+    classifyBudget: classifyBudgetSnapshot(), switchedOff: o.switchedOff, ...o.totals,
   }, 'world refresh complete');
   if (!o.pulse) return;
   const budget = pulseOverrun(o.elapsedMs);
@@ -256,18 +265,85 @@ function logFireOutcome(o: FireOutcome): void {
 type WorldService = NonNullable<ReturnType<typeof createWorldIntelligenceService>>;
 
 /**
- * @description Run one depth-cycle collector, isolated: its failure is logged and never stops the
- * collectors after it or the subject sweep.
+ * @description Record a run for collectors a .env flag turned off, so the sources screen shows why
+ * they did not run.
+ * @param svc - The world service.
+ * @param ids - The collectors the flag covers.
+ * @param flag - The flag's name.
+ * @returns Nothing.
+ */
+async function recordFlagSkip(svc: WorldService, ids: WorldCollectorId[], flag: string): Promise<void> {
+  for (const id of ids) await svc.sourceControl().recordCollectorRun(id, 'skipped', { reason: `${flag}=false` });
+}
+
+/**
+ * @description The run outcome a collector's reported feed outcome stands for. A collector that reports
+ * none counts as ok; `world-disabled` (no service) as skipped; `refused` or `failed` as failed.
+ * @param feed - The `feed` field of the collector's result.
+ * @returns The outcome recorded for the sources screen.
+ */
+function runOutcome(feed: unknown): WorldCollectorOutcome {
+  if (feed === undefined || feed === 'ok') return 'ok';
+  if (feed === 'partial') return 'partial';
+  if (feed === 'world-disabled') return 'skipped';
+  return 'failed';
+}
+
+/**
+ * @description The ticker pulse's publisher firehose, every Nth pulse: the speed read (lexicon, no LLM)
+ * and the metered deep dive, over the feeds the operator has not switched off. Skipped entirely when
+ * WORLD_FIREHOSE_ENABLED is off or the operator switched the pass (`firehose`) off.
+ * @param svc - The world service.
  * @param scheduleId - The firing schedule (log correlation).
+ * @param switchedOff - The source ids switched off when the fire started.
+ * @returns Nothing; each half logs its own outcome.
+ */
+async function runFirehose(svc: WorldService, scheduleId: string, switchedOff: ReadonlySet<string>): Promise<void> {
+  if (!firehoseEnabled() || switchedOff.has(FIREHOSE_SWITCH_ID)) return;
+  const tick = Math.floor(Date.now() / (5 * 60 * 1000));
+  if (tick % firehoseEveryNPulses() !== 0) return;
+  const feeds = firehoseFeeds().filter((f) => !switchedOff.has(f.id));
+  try {
+    const sr = await speedReadFirehose(svc, feeds, { limit: firehoseLimit(), feedBudgetMs: feedBudgetMs() });
+    logger.info({ scheduleId, feeds: sr.perFeed.length, fresh: sr.perFeed.reduce((n, f) => n + f.fresh, 0), attached: sr.perFeed.reduce((n, f) => n + f.attached, 0) }, 'world firehose speed-read');
+  } catch (e) { logger.warn({ err: e, scheduleId }, 'world firehose speed-read failed'); }
+  if (!deepDiveEnabled()) return;
+  try {
+    const dd = await deepDiveFirehose(svc, feeds, { budget: deepDiveBudget(), metered: deepDiveMetered() });
+    logger.info({ scheduleId, deepened: dd.deepened }, 'world firehose deep-dive');
+  } catch (e) { logger.warn({ err: e, scheduleId }, 'world firehose deep-dive failed'); }
+}
+
+/**
+ * @description Run one depth-cycle collector, isolated: its failure is logged and never stops the
+ * collectors after it or the subject sweep. A collector the operator switched off is skipped with a
+ * WARN, like one a flag turned off. Every outcome is recorded for the sources screen; a collector that
+ * reports a feed outcome other than `ok` (the congress feed refused or failed) counts as failed.
+ * @param svc - The world service.
+ * @param scheduleId - The firing schedule (log correlation).
+ * @param id - The collector's source id.
  * @param name - Log prefix (`<name> collected` / `<name> failed`).
  * @param collect - The collector call.
- * @returns Nothing; the outcome is logged.
+ * @param switchedOff - The source ids switched off when the fire started.
+ * @returns Nothing; the outcome is logged and recorded.
  */
-async function runDepthCollector(scheduleId: string, name: string, collect: () => Promise<object>): Promise<void> {
+async function runDepthCollector(
+  svc: WorldService, scheduleId: string, id: WorldCollectorId, name: string,
+  collect: () => Promise<object>, switchedOff: ReadonlySet<string>,
+): Promise<void> {
+  const control = svc.sourceControl();
+  if (switchedOff.has(id)) {
+    logger.warn({ scheduleId, sourceId: id }, `${name} collector skipped — switched off on the World sources screen`);
+    await control.recordCollectorRun(id, 'skipped', { reason: 'switched off' });
+    return;
+  }
   try {
-    logger.info({ scheduleId, ...(await collect()) }, `${name} collected`);
+    const result = await collect() as Record<string, unknown>;
+    logger.info({ scheduleId, ...result }, `${name} collected`);
+    await control.recordCollectorRun(id, runOutcome(result.feed), result);
   } catch (e) {
     logger.warn({ err: e, scheduleId }, `${name} failed`);
+    await control.recordCollectorRun(id, 'failed', { error: (e as Error).message });
   }
 }
 
@@ -287,26 +363,32 @@ async function runDepthCollector(scheduleId: string, name: string, collect: () =
  * @param svc - The world service.
  * @param scheduleId - The firing schedule (log correlation).
  * @param env - Environment carrying WORLD_EVENTS_ENABLED / WORLD_FLOW_ENABLED / WORLD_GOV_ENABLED.
- * @returns Nothing; every outcome, including a skip, is logged.
+ * @param switchedOff - The source ids the operator switched off (World sources screen).
+ * @returns Nothing; every outcome, including a skip, is logged and recorded.
  */
-async function collectDepthSignals(svc: WorldService, scheduleId: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+async function collectDepthSignals(
+  svc: WorldService, scheduleId: string, env: NodeJS.ProcessEnv = process.env, switchedOff: ReadonlySet<string> = new Set(),
+): Promise<void> {
   if (env.WORLD_EVENTS_ENABLED === 'false') {
     logger.warn({ scheduleId, flag: 'WORLD_EVENTS_ENABLED' }, 'market events collector skipped — disabled by flag');
+    await recordFlagSkip(svc, ['market-events'], 'WORLD_EVENTS_ENABLED');
   } else {
-    await runDepthCollector(scheduleId, 'market events', () => collectMarketEvents(svc));
+    await runDepthCollector(svc, scheduleId, 'market-events', 'market events', () => collectMarketEvents(svc), switchedOff);
   }
   if (env.WORLD_FLOW_ENABLED === 'false') {
     logger.warn({ scheduleId, flag: 'WORLD_FLOW_ENABLED', skipped: ['congress trades', 'insider trades', 'short interest', 'gov contracts'] },
       'flow signal collectors skipped — disabled by flag');
+    await recordFlagSkip(svc, ['congress-trades', 'insider-trades', 'short-interest', 'gov-contracts'], 'WORLD_FLOW_ENABLED');
     return;
   }
-  await runDepthCollector(scheduleId, 'congress trades', () => collectPoliticalTrades(svc));
-  await runDepthCollector(scheduleId, 'insider trades', () => collectInsiderTrades(svc));
-  await runDepthCollector(scheduleId, 'short interest', () => collectShortInterest(svc));
+  await runDepthCollector(svc, scheduleId, 'congress-trades', 'congress trades', () => collectPoliticalTrades(svc), switchedOff);
+  await runDepthCollector(svc, scheduleId, 'insider-trades', 'insider trades', () => collectInsiderTrades(svc), switchedOff);
+  await runDepthCollector(svc, scheduleId, 'short-interest', 'short interest', () => collectShortInterest(svc), switchedOff);
   if (env.WORLD_GOV_ENABLED === 'false') {
     logger.warn({ scheduleId, flag: 'WORLD_GOV_ENABLED' }, 'gov contracts collector skipped — disabled by flag');
+    await recordFlagSkip(svc, ['gov-contracts'], 'WORLD_GOV_ENABLED');
   } else {
-    await runDepthCollector(scheduleId, 'gov contracts', () => collectGovContracts(svc));
+    await runDepthCollector(svc, scheduleId, 'gov-contracts', 'gov contracts', () => collectGovContracts(svc), switchedOff);
   }
 }
 
@@ -318,18 +400,29 @@ async function collectDepthSignals(svc: WorldService, scheduleId: string, env: N
  *    fan-out, so deep breadth still runs continuously while any single pulse stays short. Concurrent.
  *  - DEPTH REFRESH (`...refresh`, every 6h): topics/macro + tracked NON-ticker subjects only (tickers are
  *    owned by the pulse). Sequential, but small — finishes in minutes.
- * Re-ingests each deterministically (no LLM decides whether to loop); classification uses the swarm
- * Claude creds inside ingestFeeds, exactly like the interactive route.
- * @param _ctx - App context (unused; the world service builds its own graph + TSDB handles).
+ * Re-ingests each deterministically (no LLM decides whether to loop); classification inside ingestFeeds
+ * runs on the platform backend registered below — the accountable bot rail on the swarm's configured
+ * provider — never on a controller-local model provider.
+ * @param ctx - App context: the chokepoint's pool (budget gate) and inline orchestrator ride with the
+ *   classify backend; the world service builds its own graph + TSDB handles.
  * @param schedule - The due schedule record (taskData may carry sources/limit/maxSubjects overrides).
  * @returns Dispatch result for scheduler accounting.
  */
-export async function dispatchWorldSchedule(_ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
+export async function dispatchWorldSchedule(ctx: AppContext, schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
   const svc = createWorldIntelligenceService();
   if (!svc) {
     logger.info({ scheduleId: schedule.id }, 'world refresh skipped — world intelligence disabled (ENABLE_WORLD_INTELLIGENCE / ARANGO_URL / TSDB_URL)');
     return { success: true, scheduleId: schedule.id };
   }
+  // The classify backend is the platform's (operator decision 2026-09-21). Boot registers it; this is the
+  // same once-per-process call, so a dispatcher driven without server.ts still classifies on the rail.
+  await ensureWorldClassifyRail(ctx);
+  // This fire's slice of the classify budget (WORLD_CLASSIFY_BUDGET_PER_PULSE): the hour's calls spread
+  // across the pulses instead of landing in the first one, which on 2026-10-02 pushed the ticker pulse
+  // past the scheduler's 240 s dispatch budget three times (an abandoned pulse keeps running and stacks).
+  beginClassifyPulse();
+  // The operator's source switches (World sources screen), read once for the whole fire.
+  const switchedOff = await svc.sourceControl().switchedOff();
 
   const startedAt = Date.now();
   const seriesBefore = seriesReadStats();
@@ -354,7 +447,7 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
     }
 
     // DEPTH: the feed collectors run BEFORE the subject sweep, never after it (see collectDepthSignals).
-    if (!pulse) await collectDepthSignals(svc, schedule.id);
+    if (!pulse) await collectDepthSignals(svc, schedule.id, process.env, switchedOff);
 
     // Pulse: refresh the universe concurrently so all 100 names land inside the 5-min window (deep slice
     // gets the full fan-out, the rest lean). Depth: sequential (no rush at 6h, gentler on feeds + LLM).
@@ -369,22 +462,7 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
     //    attention + breaking news, fast. Always (every Nth pulse).
     //  - DEEP DIVE: spend the metered LLM budget on the freshest un-deepened items, allocated across feeds
     //    by the learned novelty meter. Both run before the rollup so their items fold into the features.
-    if (pulse && firehoseEnabled()) {
-      const tick = Math.floor(Date.now() / (5 * 60 * 1000));
-      if (tick % firehoseEveryNPulses() === 0) {
-        const feeds = firehoseFeeds();
-        try {
-          const sr = await speedReadFirehose(svc, feeds, { limit: firehoseLimit(), feedBudgetMs: feedBudgetMs() });
-          logger.info({ scheduleId: schedule.id, feeds: sr.perFeed.length, fresh: sr.perFeed.reduce((n, f) => n + f.fresh, 0), attached: sr.perFeed.reduce((n, f) => n + f.attached, 0) }, 'world firehose speed-read');
-        } catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'world firehose speed-read failed'); }
-        if (deepDiveEnabled()) {
-          try {
-            const dd = await deepDiveFirehose(svc, feeds, { budget: deepDiveBudget(), metered: deepDiveMetered() });
-            logger.info({ scheduleId: schedule.id, deepened: dd.deepened }, 'world firehose deep-dive');
-          } catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'world firehose deep-dive failed'); }
-        }
-      }
-    }
+    if (pulse) await runFirehose(svc, schedule.id, switchedOff);
 
     // Feature rollup (trading signal dataset §1): turn the raw archive we just refreshed into the queryable
     // signal-vector metrics in world_metrics. No feeds and no LLM — but four indexed aggregates per entity
@@ -398,7 +476,7 @@ export async function dispatchWorldSchedule(_ctx: AppContext, schedule: Schedule
 
     logFireOutcome({
       scheduleId: schedule.id, pulse, entities: subjects.length, deepSlice: deep.size, rolled,
-      elapsedMs: Date.now() - startedAt, seriesBefore, totals,
+      elapsedMs: Date.now() - startedAt, seriesBefore, totals, switchedOff: [...switchedOff].sort(),
     });
     return { success: true, scheduleId: schedule.id, taskId: `world-refresh-${schedule.id}` };
   } catch (e) {

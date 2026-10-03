@@ -4,18 +4,18 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — projects the ten deck themes onto Word and Excel (ADR-103 AI Office). One palette + type system governs .pptx, .docx and .xlsx, so "the executive look" means the same thing in every format the engine emits. Deliberately a THIN projection: deck themes stay the single source of truth; this file only reshapes them into what the docx/exceljs renderers consume.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand looks (backlog 2026-09-14, approved 2026-09-22): docxTheme and xlsxTheme take the same input as resolveTheme — a built-in look id, resolved exactly as before (exact own key; anything else is the house look), or a brand look object, checked by resolveTheme and projected with its own colors and faces, or refused with a BrandLookError.
  */
 
-import type { DeckThemeId } from '@/shared/types';
-import { DECK_THEMES, type DeckTheme } from './deck-themes';
+import { DECK_THEMES, isThemeId, resolveTheme, type DeckTheme } from './deck-themes';
 
 /**
  * @description A theme reshaped for the Word renderer. Sizes are in half-points (docx's
  * native unit) so the renderer never does unit math inline.
  */
 export interface DocxTheme {
-  /** Theme id — same vocabulary as the deck. */
-  id: DeckThemeId;
+  /** Theme id — same vocabulary as the deck (a built-in id, or `brand:<base>`). */
+  id: DeckTheme['id'];
   /** Heading font family. */
   headingFont: string;
   /** Body font family. */
@@ -52,8 +52,8 @@ export interface DocxTheme {
  * @description A theme reshaped for the Excel renderer (ARGB hex, exceljs's format).
  */
 export interface XlsxTheme {
-  /** Theme id — same vocabulary as the deck. */
-  id: DeckThemeId;
+  /** Theme id — same vocabulary as the deck (a built-in id, or `brand:<base>`). */
+  id: DeckTheme['id'];
   /** Font family for all cells. */
   font: string;
   /** Header-row fill (ARGB). */
@@ -86,12 +86,27 @@ function pageInk(t: DeckTheme): { ink: string; inkSoft: string; line: string; pa
 }
 
 /**
- * @description Project a deck theme onto Word.
- * @param id - deck theme id (unknown ids fall back like the deck renderer does).
- * @returns the docx-shaped theme.
+ * @description The look a Word or Excel projection draws. An id resolves exactly as these
+ * projections always have (an exact built-in id; anything else is the house look). A look
+ * object goes through resolveTheme, so it is drawn exactly or refused — never defaulted.
+ * @param look - a built-in look id, or a brand look.
+ * @returns the look.
+ * @throws BrandLookError when a look object is invalid.
  */
-export function docxTheme(id?: string | null): DocxTheme {
-  const t = DECK_THEMES[(id ?? '') as DeckThemeId] ?? DECK_THEMES.midnight;
+function officeLook(look?: string | DeckTheme | null): DeckTheme {
+  if (look !== null && typeof look === 'object') return resolveTheme(look);
+  return isThemeId(look) ? DECK_THEMES[look] : DECK_THEMES.midnight;
+}
+
+/**
+ * @description Project a deck theme onto Word.
+ * @param look - deck theme id (unknown ids fall back like the deck renderer does), or a brand
+ *   look from `brandTheme`, projected with its own colors and faces.
+ * @returns the docx-shaped theme.
+ * @throws BrandLookError when a look object is invalid.
+ */
+export function docxTheme(look?: string | DeckTheme | null): DocxTheme {
+  const t = officeLook(look);
   const page = pageInk(t);
   const serif = ['Cambria', 'Constantia', 'Garamond', 'Georgia'].includes(t.fonts.heading);
   return {
@@ -116,11 +131,13 @@ export function docxTheme(id?: string | null): DocxTheme {
 
 /**
  * @description Project a deck theme onto Excel.
- * @param id - deck theme id (unknown ids fall back like the deck renderer does).
+ * @param look - deck theme id (unknown ids fall back like the deck renderer does), or a brand
+ *   look from `brandTheme`, projected with its own colors and faces.
  * @returns the exceljs-shaped theme.
+ * @throws BrandLookError when a look object is invalid.
  */
-export function xlsxTheme(id?: string | null): XlsxTheme {
-  const t = DECK_THEMES[(id ?? '') as DeckThemeId] ?? DECK_THEMES.midnight;
+export function xlsxTheme(look?: string | DeckTheme | null): XlsxTheme {
+  const t = officeLook(look);
   const page = pageInk(t);
   // The header row carries the theme: deep surface + its ink, exactly like the deck's cover.
   return {

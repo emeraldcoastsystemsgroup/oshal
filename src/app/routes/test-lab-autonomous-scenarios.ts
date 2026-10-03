@@ -21,6 +21,10 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Register the two ADR-052 addendum parity guards on the isolated nightly scenario: the per-position exit-plan table spec (immutable terms at the database, supersede/close/amend paths, (user_sub, book_id) scoping, owner RLS against a NOSUPERUSER NOBYPASSRLS role) and the parity fire spec (real dispatchTradingSchedule fires: the market-gap hold of every entry leg with its counterfactual rows and kept rotation slot, and plans stamped, honored, expired and closed with their doors). Both start and destroy their own PostgreSQL and read no address, so this runner is the gate that executes them.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Register the ADR-052 addendum P6 yield-sleeve fire spec on the isolated nightly scenario: real dispatchTradingSchedule fires that sell the armed sleeve before the entries it funds (scan and rotation), keep it out of every exit leg, park idle cash on a quiet fire, idle it while its own order works, and read the Test Lab sleeve ledger back from the same database. It starts and destroys its own PostgreSQL and reads no address, so this runner is the gate that executes it.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Register the two replay ledger guards on the protected remote application execution scenario: the store's own spec, which was on disk and in no scenario, and its real-Redis companion for the first connect under concurrent callers. The companion starts and removes its own Redis and reads no address, so the scenario's fixed runner is the gate that executes it, and the description names Redis among the fixtures.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Register the database-free Vitest discovery guard beside the tree-walk suites whose default scheduling it protects.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the two-tenant isolation proof for provision-tenant.sh (isolated tier, ADR-035 amendment) on the isolated nightly scenario: it renders two tenants with the shipped script, applies each rendering with the real psql on a PostgreSQL it starts and destroys, and requires a cross-tenant database connection and a cross-tenant row read to be refused. It reads no database address, so the scenario's fixed local runner is the gate that executes it.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Register the logic spec of the tenant-isolation cluster acceptance (accept-tenant-isolation.sh over a stateful kubectl stand-in: accepts only proven isolation with both created namespaces confirmed deleted, refuses before creating anything) on the same isolated nightly scenario. It needs Git Bash and reaches no cluster.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Register the nightly-saturation guards on the isolated nightly scenario: the worker quiesce (only named, running, non-critical workers stop, silenced; restored after pass, fail, SIGTERM, SIGINT, and from the state file after SIGKILL), the RESOURCE-EXHAUSTED outcome (decided by measured host memory, never by words in gate output) and the duration measurement the backlog's done-when is read with. Git Bash and stand-ins only; no engine.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -55,11 +59,12 @@ async function briefingSources(cookie: string): Promise<StepResult> {
 /** @description Discover autonomous regression suites without granting the browser host execution authority. */
 export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   id: 'nightly-isolated-regression', title: 'Isolated nightly regressions', group: 'tool',
-  description: 'Disposable PostgreSQL alert, topology, backup round-trip and trading-guard coverage with bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
+  description: 'Disposable PostgreSQL alert, topology, backup round-trip, tenant-isolation and trading-guard coverage with bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/alert-incident-cutover.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-incident-reopen.spec.ts' },
     { level: 'integration', path: 'tests/unit/topology-traversal.spec.ts' },
+    { level: 'unit', path: 'tests/unit/vitest-db-serialization.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-postgres-isolation.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-event-replay-idempotency.spec.ts' },
     { level: 'integration', path: 'tests/unit/alert-consolidate-landed-postgres.spec.ts' },
@@ -73,6 +78,9 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan-planted-fixture.spec.ts' },
     { level: 'integration', path: 'tests/unit/ci-local-secret-scan-unreadable-path.spec.ts' },
     { level: 'unit', path: 'tests/unit/ci-gate-streak.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-quiesce.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ci-local-resource-exhausted.spec.ts' },
+    { level: 'unit', path: 'tests/unit/ci-run-durations.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-engine-cost-basis-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-event-plans.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-earnings-rules.spec.ts' },
@@ -81,6 +89,8 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/trading-position-plans-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-parity-fire.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-dispatch-yield-sleeve-fire.spec.ts' },
+    { level: 'integration', path: 'tests/unit/provision-tenant-isolation-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/accept-tenant-isolation.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Local isolated runner', run: async () => ({
     app: 'test-lab', label: 'Local isolated runner', state: 'degraded',

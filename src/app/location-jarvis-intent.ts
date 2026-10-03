@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5 (D5, D7): the Jarvis "next time I'm at X" intent, a deterministic matcher on the /ask path in the same family as the time-reminder intent (never a model turn, so a location sentence yields a predictable rule). "Remind me to buy milk next time I'm at the grocery store" resolves "the grocery store" to the person's saved places with that name or label (their own and their groups'), and arms a once-only reminder at each (up to five); with none, Jarvis offers to save the place the next time they are there (no category places in v1). "I'm at the grocery store, remind me next time to buy milk", "... next time I'm here" or "... at this store" uses the current fix: when the person's latest fix, fresh within OSHAL_LOCATION_HERE_MAX_AGE_SEC (default 300 s), already falls in a matching saved place the rule is armed there; otherwise Jarvis proposes a new place at that fix and asks them to confirm its name, label and radius ("yes", "call it ...", "make it 200 m", "cancel"). The proposal is held in memory for ten minutes per person and conversation, is cleared by the location state eraser, and a confirmed place is created with the reminder armed and the person seeded inside it, so it fires on the NEXT visit, not now. A fix stored at city or place-only precision cannot pin a place and is declined. Only a signed-in browser session with a verified issuer may use it (the same rule as every /api/location route); the service-secret rail and token sessions are told to use their browser. No coordinate, place geometry or reminder text is logged.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | "Where am I" / "what's my location" (ADR-169 D3, which names Jarvis as a caller of the model-safe current-place read): a deterministic turn that answers from the person's latest stored position by reference only - the saved place it fell in, or that it fell in none - with how old it is, and points to Settings, Location when there is no position yet. No coordinate enters the answer, so none reaches chat history; there is no geocoder in v1 (ADR-169 "Geocoding: none in v1"). Asked live on 2026-10-01, the question fell through to the model, which has no location tool and answered that it had no GPS access. The latest-position read is shared with the "here" reminder path.
  *
  * @module app/location-jarvis-intent
  */
@@ -47,7 +48,8 @@ export interface LocationProposalReply {
 
 /** @description One detected location turn. */
 export type JarvisLocationTurn =
-  | { kind: 'refused' }
+  | { kind: 'refused'; about?: 'where' }
+  | { kind: 'where'; principal: LocationPrincipal }
   | ({ kind: 'reminder'; principal: LocationPrincipal; key: string } & LocationReminderParse)
   | ({ kind: 'reply'; principal: LocationPrincipal; key: string } & LocationProposalReply);
 
@@ -83,6 +85,21 @@ const TRIGGER = /\b(?:the\s+)?(?:next\s+time|when(?:ever)?)\s+i(?:'m|\s+am|m)?\s
  */
 function normalise(message: string): string {
   return String(message || '').replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * "Where am I", "what's my location", "can you tell me where I am": the person's own position, asked on
+ * its own. Anchored, and it must end there (or at "now"), so "where am I meeting Sam" is not one.
+ */
+const WHERE_AM_I = /^(?:(?:hey\s+)?jarvis[,\s]+)?(?:(?:can|could)\s+you\s+tell\s+me\s+|do\s+you\s+know\s+)?(?:where\s+am\s+i|where\s+i\s+am|what(?:'s|\s+is)\s+my\s+(?:current\s+)?(?:location|position)|my\s+(?:current\s+)?(?:location|position))(?:\s+(?:right\s+)?now)?\s*(?:[?.!,…]|$)/i;
+
+/**
+ * @description Is this a question about where the person is right now?
+ * @param message - The message.
+ * @returns True for "where am I" and its close variants.
+ */
+export function parseWhereAmI(message: string): boolean {
+  return WHERE_AM_I.test(normalise(message));
 }
 
 /**
@@ -212,6 +229,7 @@ export function detectJarvisLocationTurn(message: string, req: Request, sessionI
   if (reminder) {
     return principal ? { kind: 'reminder', principal, key: proposalKey(principal, sessionId), ...reminder } : { kind: 'refused' };
   }
+  if (parseWhereAmI(message)) return principal ? { kind: 'where', principal } : { kind: 'refused', about: 'where' };
   if (!principal) return null;
   const key = proposalKey(principal, sessionId);
   if (!liveProposal(key, nowMs)) return null;
@@ -262,6 +280,24 @@ async function reminderAtSavedPlaces(db: LocationDb, turn: Extract<JarvisLocatio
 }
 
 /**
+ * @description The person's latest stored fix, of any age, with the place it fell in.
+ * @param db - The pool.
+ * @param principal - The person.
+ * @returns The fix or null.
+ */
+async function latestFix(db: LocationDb, principal: LocationPrincipal): Promise<Record<string, unknown> | null> {
+  const row = await withLocationOwnerSession(db, principal, async (client, who) => (await client.query(`SELECT c.lat, c.lon, c.precision_class,
+      c.received_at, c.place_id, p.name AS place_name, p.label AS place_label
+    FROM location_current c LEFT JOIN location_places p ON p.place_id = c.place_id
+    WHERE c.tenant_id IS NULL AND c.owner_sub = $1 AND c.principal_issuer = $2 AND c.subject_ref = $1`, [who.sub, who.principalIssuer])).rows[0]);
+  return row ?? null;
+}
+
+/** When a fix was stored, in epoch milliseconds. */
+const receivedMs = (fix: Record<string, unknown>): number =>
+  (fix.received_at instanceof Date ? fix.received_at.getTime() : new Date(String(fix.received_at)).getTime());
+
+/**
  * @description The person's latest fix, if fresh, with the place it fell in.
  * @param db - The pool.
  * @param principal - The person.
@@ -271,13 +307,52 @@ async function reminderAtSavedPlaces(db: LocationDb, turn: Extract<JarvisLocatio
 async function freshFix(db: LocationDb, principal: LocationPrincipal, nowMs: number): Promise<Record<string, unknown> | null> {
   const maxAge = Number(process.env.OSHAL_LOCATION_HERE_MAX_AGE_SEC);
   const maxAgeMs = (Number.isFinite(maxAge) && maxAge > 0 ? Math.min(maxAge, 3600) : 300) * 1000;
-  const row = await withLocationOwnerSession(db, principal, async (client, who) => (await client.query(`SELECT c.lat, c.lon, c.precision_class,
-      c.received_at, c.place_id, p.name AS place_name, p.label AS place_label
-    FROM location_current c LEFT JOIN location_places p ON p.place_id = c.place_id
-    WHERE c.tenant_id IS NULL AND c.owner_sub = $1 AND c.principal_issuer = $2 AND c.subject_ref = $1`, [who.sub, who.principalIssuer])).rows[0]);
-  if (!row) return null;
-  const received = row.received_at instanceof Date ? row.received_at.getTime() : new Date(String(row.received_at)).getTime();
-  return nowMs - received <= maxAgeMs ? row : null;
+  const row = await latestFix(db, principal);
+  return row && nowMs - receivedMs(row) <= maxAgeMs ? row : null;
+}
+
+/** Past this age a "where am I" answer leads with how old the position is. */
+const WHERE_STALE_MS = 30 * 60_000;
+/** Where a person turns location on, sees their position and saves places. */
+const LOCATION_SETTINGS = 'Settings, Location (/cockpit/tools/location.html)';
+
+/**
+ * @description A position's age in words.
+ * @param ms - The age.
+ * @returns "just now", "4 min", "3 hours" or "2 days".
+ */
+export function describeFixAge(ms: number): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? `${hours} hour${hours === 1 ? '' : 's'}` : `${Math.floor(hours / 24)} days`;
+}
+
+/**
+ * @description Answer "where am I" from the latest stored position, by reference only: the saved
+ * place it fell in, or that it fell in none. Never a coordinate (ADR-169 D3), so none reaches chat history.
+ * @param db - The pool.
+ * @param principal - The person.
+ * @param nowMs - The clock.
+ * @returns The answer.
+ */
+async function whereAmI(db: LocationDb, principal: LocationPrincipal, nowMs: number): Promise<string> {
+  const fix = await latestFix(db, principal);
+  log.info({ op: 'jarvis-where', outcome: !fix ? 'none' : fix.place_id ? 'at-place' : 'no-place' }, 'location where-am-I answered');
+  if (!fix) {
+    return `I don't have a position for you yet. Turn location on for this device in ${LOCATION_SETTINGS}; `
+      + 'after that it keeps your position current while this assistant or that page is open.';
+  }
+  const ageMs = nowMs - receivedMs(fix);
+  const age = describeFixAge(ageMs);
+  const where = fix.place_id ? `at ${String(fix.place_name)}` : 'not at one of your saved places';
+  const save = fix.place_id ? '' : ` You can save where you are as a place in ${LOCATION_SETTINGS}.`;
+  if (ageMs > WHERE_STALE_MS) {
+    const was = fix.place_id ? `you were at ${String(fix.place_name)}` : 'you were not at one of your saved places';
+    return `As of ${age} ago, ${was}. No device has reported since; open this assistant on the device you carry to update it.${save}`;
+  }
+  return `You're ${where} (updated ${age === 'just now' ? age : `${age} ago`}).${save}`;
 }
 
 /**
@@ -357,15 +432,20 @@ async function answerProposal(db: LocationDb, turn: Extract<JarvisLocationTurn, 
  * @returns The answer to show and speak.
  */
 export async function runJarvisLocationTurn(db: LocationDb, turn: JarvisLocationTurn, nowMs: number = Date.now()): Promise<string> {
-  if (turn.kind === 'refused') return 'I can set location reminders only from oshal open in your signed-in browser. Ask me there.';
+  if (turn.kind === 'refused') {
+    return turn.about === 'where' ? 'I can tell where you are only from oshal open in your signed-in browser. Ask me there.'
+      : 'I can set location reminders only from oshal open in your signed-in browser. Ask me there.';
+  }
   try {
+    if (turn.kind === 'where') return await whereAmI(db, turn.principal, nowMs);
     if (turn.kind === 'reply') return await answerProposal(db, turn, nowMs);
     if (turn.action.length < 3) return 'What should I remind you about when you get there?';
     return turn.here ? await reminderHere(db, turn, nowMs) : await reminderAtSavedPlaces(db, turn);
   } catch (error) {
     if (error instanceof LocationRequestError) return `I couldn't set that up: ${error.message}`;
     log.error({ op: 'jarvis-turn', outcome: 'failed', err: locationSafeError(error) }, 'location Jarvis turn failed');
-    return 'I couldn\'t set that location reminder up just now. Try again in a moment.';
+    return turn.kind === 'where' ? 'I couldn\'t read your location just now. Try again in a moment.'
+      : 'I couldn\'t set that location reminder up just now. Try again in a moment.';
   }
 }
 

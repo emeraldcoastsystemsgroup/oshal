@@ -8,12 +8,15 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added /css and /js static aliases so legacy ui-enhanced engineering pages resolve absolute asset references
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Mount a fixed authenticated allowlist for locked local startup dependencies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-164 experience shells: resolve the experience directory like cockpitDir (src/ or the image copy) so /portal, /studio, /jarvis, /orbit, /commons, /homebase and /nexus serve from the built container; the dist-relative guess, the layout-prefixed cockpit duplicates and the store-checkout Little Monsters mount are gone, and /little-monsters redirects to the classroom preset.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Serve /simple (simple.html, docs/architecture/simple-chat.md) behind requiresAuth like every experience entry page: the opt-in plain text screen over the caller's Jarvis thread.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): with the optional `shellLock` ports, a non-operator on a deployment whose landing names an application is redirected from the plain cockpit document (incl. index.html, decided before the static mount) and every experience entry page to that landing; operators, focused ?app= requests and assets are untouched. A customer's staff opened the product they were sold and found the operator cockpit one click away.
  */
 
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createChildLogger } from '@/shared/logger';
+import { OPERATOR_SURFACES, shellRedirectFor } from '@/app/experience-shell-lock';
 import { registerCockpitVendorAssets } from './cockpit-vendor-assets';
 
 const logger = createChildLogger({ module: 'cockpit-static-routes' });
@@ -30,6 +33,15 @@ export interface CockpitStaticRoutesOptions {
   sharedUiCssDir: string;
   /** Shared surface JS (surface-theme.js) — served public, see the mount comment. */
   sharedUiJsDir: string;
+  /**
+   * Shell lock (ADR-164 amendment): on a deployment whose landing names an application, a signed-in
+   * non-operator asking for the plain cockpit document or an experience entry page is redirected to
+   * that landing. Omitted = no lock (every surface served as before).
+   */
+  shellLock?: {
+    isOperator(req: express.Request): boolean;
+    landingPath(req: express.Request): string;
+  };
 }
 
 /** Entry pages served from the experience directory: every path an experience chooser links to. */
@@ -41,6 +53,8 @@ const EXPERIENCE_PAGES: ReadonlyArray<readonly [string[], string]> = [
   [['/jarvis', '/jarvis/'], 'jarvis.html'],
   [['/orbit', '/orbit/'], 'orbit.html'],
   [['/commons', '/commons/'], 'commons.html'],
+  // Simple chat (docs/architecture/simple-chat.md): the plain text screen over the caller's Jarvis thread.
+  [['/simple', '/simple/'], 'simple.html'],
 ];
 
 /**
@@ -90,6 +104,22 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
     res.setHeader('Cache-Control', 'no-store, must-revalidate');
     next();
   };
+
+  // Shell lock: registered ONCE over every operator surface, ahead of every static mount, so
+  // neither `/cockpit/index.html` nor the `/experience/` directory index can bypass the document
+  // routes. Assets never pass through it (they are not surfaces).
+  const shellLockGuard: express.RequestHandler = (req, res, next) => {
+    const lock = options.shellLock;
+    if (!lock) { next(); return; }
+    const redirect = shellRedirectFor({
+      operator: lock.isOperator(req), landingPath: lock.landingPath(req), pathname: req.path,
+      requestedApp: req.query.app ?? req.query.profile,
+    });
+    if (!redirect) { next(); return; }
+    logger.info({ path: req.path, redirect }, 'Operator surface requested by a non-operator on a focused-landing deployment; redirecting to the landing');
+    res.redirect(302, redirect);
+  };
+  options.app.get([...OPERATOR_SURFACES], options.requiresAuth, shellLockGuard);
 
   registerCockpitVendorAssets(options.app, options.requiresAuth, noCache);
   options.app.use('/cockpit', options.requiresAuth, noCache, express.static(options.cockpitDir));

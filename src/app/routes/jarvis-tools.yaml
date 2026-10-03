@@ -1,6 +1,7 @@
 # Jarvis routing metadata. Version 1.
 # CHANGE LOG: 1 | maintainer@emeraldcoastsystemsgroup.com | Move catalog into validated semantic metadata; preserve internal role restrictions.
 # CHANGE LOG: 2 | maintainer@emeraldcoastsystemsgroup.com | Advertise the synthetic phone-call test tool without implying live call authority.
+# CHANGE LOG: 3 | maintainer@emeraldcoastsystemsgroup.com | Declare explicit credentialOwner, executionActor, provisioningOwner, fallbackPolicy, and simulationOnly dimensions (ADR-065).
 version: 1
 tools:
   - kind: shell
@@ -80,6 +81,11 @@ tools:
       - hold music
     useWhen: Test a synthetic insurance phone tree, music handling, or handoff without dialing anyone.
     context: Simulation only; never use as proof a live insurer call was placed.
+    simulationOnly: true
+    credentialOwner: none
+    executionActor: user
+    provisioningOwner: none
+    fallbackPolicy: none
   - kind: shell
     script: oshal-tmdb.js
     usage: Movies & TV. `search "<q>"` · `trending` · `where-to-watch <movie|tv> <id>`

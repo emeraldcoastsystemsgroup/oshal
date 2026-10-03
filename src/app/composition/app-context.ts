@@ -21,6 +21,8 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Expose an activation-scoped package specialist reader port without the global registry or arbitrary caller inputs.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Expose only the activation-scoped fixed-name package tool registration port.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Expose the fixed read-only Yahoo inbox reader (`imapMail`) — the outlookMail seam shape: core resolves the caller's personal app-password grant and spends it on the fixed imap.mail.yahoo.com:993, packages receive only MailSummary metadata.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Expose the fixed one-recipient Outlook send (`outlookMailSend`) so an installed package can mail a lead from a named shared mailbox (Sales heads-up emails) without a token, a Graph proxy or a mailbox guess.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | `outlookMailSend` also takes `provider: 'google'` (Gmail API), so a test box without a Microsoft app registration can run a package's whole mail process on a Google account.
  */
 
 import type { Pool } from 'pg';
@@ -47,6 +49,7 @@ import type { ConnectorSpecToolService } from '@/app/connectors/runtime/spec-too
 import type { ConnectorMarketplaceService } from '@/app/connectors/runtime/marketplace';
 import type { BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
 import type { OutlookMailReader, OutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
+import type { OutlookMailSender } from '@/app/routes/outlook-mail-sender';
 import type { RingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
 import type { ImapMailReader } from '@/app/routes/imap-mail-reader';
 import type { ApplicationAuthorizationRuntime, PackageAuthorizationContext } from './application-authorization-runtime';
@@ -115,6 +118,13 @@ export interface AppContext {
    * package's authorized address set. Same token-safe seam shape as outlookMail.
    */
   outlookMailSync?: OutlookMailSyncReader;
+  /**
+   * Fixed one-recipient mail send for trusted application packages (sales heads-up emails):
+   * the named user's own personal grant, exact login-email match, the delegated send scope
+   * required, Reply-To resolved in core from another user's own grant. `provider: 'google'`
+   * sends the same message through Gmail. Same token-safe seam shape as outlookMail.
+   */
+  outlookMailSend?: OutlookMailSender;
   /**
    * Fixed, owner-scoped RingCentral call-log read for trusted application packages —
    * the same seam shape as outlookMail: the token is resolved and spent inside core.

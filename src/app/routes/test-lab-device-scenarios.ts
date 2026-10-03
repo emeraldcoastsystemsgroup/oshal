@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the remote-node binding card (BACKLOG "Node enrolment is the blocker for every remote-node capability"). A node's enrolment succeeds or fails on one fact - did the computer come up BOUND to a person - and a node that installed, connected and heartbeats but bound to nobody looks identical to a working one while receiving no owner-scoped work at all. The live step reads the caller's own device list and checks the surface can say, per computer, who it is bound to, without any owner subject id inside what it renders. Read-only: it registers nothing, adopts nothing and dispatches nothing.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the node chat reply guard (a refused turn reaches the node with its reason, not "empty reply") as an integration regression test of the remote-node card.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the node-runs-its-own-chat guards (the real route handing the turn to the requesting node; the node's Antigravity executor).
  *
  * @module routes/test-lab-device-scenarios
  */
@@ -68,6 +70,10 @@ export const DEVICE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/remote-client-device-ownership.spec.ts' },
     { level: 'unit', path: 'tests/unit/device-access-dispatch.spec.ts' },
     { level: 'unit', path: 'tests/unit/node-enrolment-device-binding.spec.ts' },
+    { level: 'integration', path: 'tests/unit/remote-client-chat-reply-error.spec.ts' },
+    { level: 'integration', path: 'tests/unit/remote-client-node-chat.spec.ts' },
+    { level: 'unit', path: 'tests/unit/oshal-node-antigravity-executor.spec.ts' },
+    { level: 'unit', path: 'tests/unit/oshal-node-local-tools.spec.ts' },
   ],
   steps: [{ id: 'bindings', app: APP, label: LABEL, run: bindingsStep }],
 }];

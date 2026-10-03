@@ -4,6 +4,8 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 
 ## Building app packages (the app store)
 
+- [package-anonymous-routes.md](./package-anonymous-routes.md) — exact GET/HEAD opt-ins on public
+  mounts under authorization enforce; catalogs and signed callbacks remain protected.
 - [reusable-components.md](./reusable-components.md) — existing tools, renderers,
   themes and integration contracts to compose before writing another implementation.
 - [authoring-app-packages.md](./authoring-app-packages.md) — how to author, validate, and
@@ -37,6 +39,10 @@ Documentation for individual OSHAL applications (the `?app=` bundles) and app mi
 
 ## Per-app folders
 
+- [bot-forge-edit-in-place.md](./bot-forge-edit-in-place.md) — **BUILT; proven live 2026-10-01:** what the
+  Bot Forge does when a deployed pack is edited and deployed again (same agentIds and ticketType, one
+  patch up, one manifest, "Updated in place"), the guard spec with a recorded run and its mutation
+  check, and the automated live case `node scripts/operations/live-acceptance.js forge-edit`.
 - [sat-ops.md](./sat-ops.md) — **BUILT + DEPLOYED (ADR-102):** Sat Ops operator guide —
   `?app=sat-ops` fleet plane (3D orbit console, TLE catalog, conjunction screening, pass
   windows, approve-gated ADCS commands, drafting concierge) and how to run sat nodes

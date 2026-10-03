@@ -7,17 +7,35 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Forward the trusted call-time framework-tool bridge binding to the native CLI wrapper.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Advertise explicit support for the execution-bound framework-tool bridge so routers can keep its credential away from unrelated providers.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Forward hostToolsOnly to the wrapper. The agentic host loop sets it for an interactive (direct) turn, whose tools the loop itself brokers; the wrapper then runs agy with no native tools instead of letting it chase the answer with file reads and commands a headless run cannot be granted.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Forward imageTurn to the wrapper (ADR-130 amendment 2026-10-02): a storyboard render dispatched onto the Antigravity harness is an image turn, so the wrapper collects generate_image's output into the task workspace before the private HOME is removed. The collected image's metadata (file, real mime type, bytes, sha256, locator) rides on antigravityMetadata.image.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | A refused image turn's untrusted diagnostic (the image tool's error text and the model's final reply, which Guard A appends behind DIAGNOSTIC_MARKER) no longer reaches the thrown error's message or stderr. ProviderFailoverProvider classifies both (isProviderRecoverableRuntimeFailure: 429, quota, rate limit, resource_exhausted, unauthorized, ...), and bot-node-runtime wraps this provider in that failover whenever a fallback order is configured, so a throttle word in the tool's or the model's text sent the render to the fallback rung for a second model turn (verifier finding on core PR #1031). On an image turn the message and stderr now carry Guard A's own words only and the diagnostic rides on error.diagnostic, which the bot-node handler re-attaches behind the marker where the error leaves the node. Every other turn's error is unchanged.
  */
 
 'use strict';
 
 const AntigravityCLIWrapper = require('../codebase/AntigravityCLIWrapper');
+const { DIAGNOSTIC_MARKER } = require('../codebase/agy-image-turn');
 const { formatProviderFailure, isProviderRuntimeBanner } = require('./providerFailureClassifier');
 const { assertCliToolBoundary } = require('./assert-cli-tool-boundary');
 
 function positiveMs(value, fallback) {
   const parsed = Number.parseInt(String(value || ''), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * @description A failed turn's stderr, split at Guard A's DIAGNOSTIC_MARKER on an image turn: Guard A's
+ * own words, and the untrusted diagnostic after them (the image tool's error, the model's reply). Only
+ * the own words may reach the error's message and stderr, which provider failover classifies; any
+ * other turn's stderr is left whole.
+ * @param {string} stderr - The wrapper's stderr.
+ * @param {boolean} imageTurn - Whether the turn was an image turn.
+ * @returns {{own: string, diagnostic: string}} The two parts ('' when there is no diagnostic).
+ */
+function splitImageTurnFailure(stderr, imageTurn) {
+  const text = String(stderr || '');
+  const at = imageTurn ? text.indexOf(DIAGNOSTIC_MARKER) : -1;
+  return at < 0 ? { own: text, diagnostic: '' } : { own: text.slice(0, at), diagnostic: text.slice(at + DIAGNOSTIC_MARKER.length) };
 }
 
 class AntigravityProvider {
@@ -52,12 +70,16 @@ class AntigravityProvider {
       extraEnv: options.extraEnv,
       toolBridge: options.toolBridge,
       hostToolsOnly: options.hostToolsOnly === true,
+      imageTurn: options.imageTurn === true,
     });
     if (!result.success) {
-      const error = new Error(`Antigravity CLI error: ${result.stderr || result.text || 'no output'}`);
+      // Guard A's untrusted diagnostic stays off the message and stderr: provider failover classifies both.
+      const failure = splitImageTurnFailure(result.stderr, options.imageTurn === true);
+      const error = new Error(`Antigravity CLI error: ${failure.own || result.text || 'no output'}`);
       error.provider = 'antigravity-cli';
       error.model = gatedModel;
-      error.stderr = result.stderr || '';
+      error.stderr = failure.own;
+      if (failure.diagnostic) error.diagnostic = failure.diagnostic;
       error.exitCode = result.exitCode;
       error.durationMs = result.durationMs;
       throw error;
@@ -89,7 +111,7 @@ class AntigravityProvider {
       provider: 'antigravity-cli',
       providerRecords: [],
       providerRecordCapture: 'antigravity-command-events-v1',
-      antigravityMetadata: { durationMs: result.durationMs, exitCode: result.exitCode, success: result.success },
+      antigravityMetadata: { durationMs: result.durationMs, exitCode: result.exitCode, success: result.success, ...(result.image ? { image: result.image } : {}) },
     };
   }
 

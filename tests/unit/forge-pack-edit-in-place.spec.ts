@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Bot Forge edit-in-place guard: re-deploying an edited pack must re-emit the SAME pack (same bot agentIds, same ticketType, one manifest, bumped version) instead of minting a duplicate identity set. Drives the REAL swarm-pack router over HTTP against a real on-disk pack tree and the real emitted manifest.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A pack slug belongs to whoever deployed it. The pack tree is per-user but the emitted manifest path is not, so a second authenticated user deploying the same slug inherited the incumbent agent ids and ticket queue and overwrote their manifest - loadApp then registered the newcomer persona under the row the incumbent tickets point at. The emission now records packOwnerKey and a deploy that would take over another owner slug is refused 409. A manifest written before owners were stamped carries none and is adopted, because breaking the packs already deployed here would cost more than it saves.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Asserts the deploy loads the manifest AS THE CALLER. It called loadApp with no scope, so withInstallOwner stamped OSHAL_INSTALL_OWNER_SUB and any authenticated user's own pack became the install owner's, with that owner made its administrator. The fake loader now captures the scope, which is the boundary that failed - the pure adoption rule was correct all along and a test of it would have stayed green.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The "same path reloaded" check compares the edit test's OWN two loads. It read loaded[0] and loaded[1], which were the edit's two deploys until entry 3 put a test that loads before it; since then it compared that earlier load with the edit's first one, and an edit reloaded from a second manifest path stayed green. Both loads must now be the one manifest path deployed-apps/<slug>.yaml.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -134,6 +135,7 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
   }
 
   it('keeps every carried-over bot identity, the ticket type and the single manifest across an edit', async () => {
+    const loadsBefore = loaded.length; // earlier cases also load; judge only this case's two deploys
     writePack(
       { name: SLUG, mode: 'swarm', description: 'first cut', ticketType: 'pack-edit-guard', bots: ['worker'] },
       [{ name: 'worker', role: 'Worker', perspective: 'You audit expense reports.', capabilities: ['audit'] }],
@@ -170,7 +172,8 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
     expect(secondManifest.ticketType).toBe('pack-edit-guard');
     // 4. Exactly ONE manifest for this pack — no `<slug>-2.yaml` sibling, and the same path reloaded.
     expect(fs.readdirSync(deployedDir).filter((f) => f.startsWith(SLUG))).toEqual([`${SLUG}.yaml`]);
-    expect(loaded[1]).toBe(loaded[0]);
+    const one = path.join(deployedDir, `${SLUG}.yaml`);
+    expect(loaded.slice(loadsBefore), 'the edit was loaded from a manifest path other than the one manifest').toEqual([one, one]);
     // 5. The edited content really did re-emit (the guard must not be passing on a stale manifest).
     expect(secondManifest.description).toBe('second cut');
     const workerPersona = yaml.load(

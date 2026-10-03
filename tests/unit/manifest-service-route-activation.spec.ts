@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | ADR-157 S1: prove the runner at the boundary that broke — the real registry dispatching a real compiled package handler through the real execution guard. A protected app with no activation skips at INFO (asserted against the shipped logger's own JSON log file, not a mocked logger) and logs no ERROR; a system activation runs as the service principal; a user activation runs as that person with userSub pinned; a run-time denial suspends the activation instead of failing every cadence.
  * 2   | maintainer@emeraldcoastsystemsgroup.com     | Read only logger bytes appended by the current case; rereading the full long-running OSHAL log on every poll timed out once the file approached 1 GB.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | State the activation fixture's legacy posture explicitly; the independently doubled execution policy still exercises protected runner identity and suspension.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -109,7 +110,7 @@ beforeEach(() => {
   activations = new MemoryApplicationServiceActivationStore();
   service = new ApplicationServiceActivationService({
     activations, policy: new MemoryAuthorizationStore(),
-    describeApp: () => ({ source: 'fixture-store', catalogRevision: 'rev-1', catalog: null }),
+    describeApp: () => ({ source: 'fixture-store', catalogRevision: 'rev-1', catalog: null, mode: 'legacy' }),
     declaredServices: async () => [{
       app: APP, id: LOCAL_ID, scheduleId: SCHEDULE_ID, cron: '15 6 * * *',
       runsAs: undefined, requires: [], queue: APP,

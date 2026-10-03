@@ -5,21 +5,23 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the in-memory `api` port the live-acceptance case specs drive: routes keyed `METHOD /path` (query string stripped, `:param` segments matched), every call recorded with its body and extra headers, and an unrouted call answering 404 like an unmounted package. It doubles only the HTTP transport; each spec says which product boundary it stands in for, and the live run through scripts/operations/live-acceptance.js is the real companion.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A reply may carry raw `bytes`; every reply now also reports `byteLength` and `sha256` of its body (the bytes, else the text), as the two real bindings do, so a case that proves a binary route served exact bytes (vids-publish) can be driven here.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every reply also carries its raw body as `bytes` (the given bytes, else the text), as the two real bindings now do, so a case that decodes a binary answer (the create-region-edit PNGs) can be driven here.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Every recorded call also keeps the `options` the case passed (beyond the headers already kept), so a spec can prove a case bounded one call with its own `timeoutMs` the way the real runner honours it.
  */
 import { createHash } from 'node:crypto';
 
-/** One recorded call. */
-export interface RecordedCall { method: string; path: string; query: string; body: unknown; headers: Record<string, string> }
+/** One recorded call. `options` is everything the case passed as the fourth argument (headers, timeoutMs). */
+export interface RecordedCall { method: string; path: string; query: string; body: unknown; headers: Record<string, string>; options: Record<string, unknown> }
 /** What a route handler returns; `json` becomes the reply body, `text` defaults to its JSON, `bytes` is a binary body. */
 export interface FakeReply { status: number; json?: unknown; text?: string; bytes?: Uint8Array; contentType?: string; location?: string | null }
 
 /**
- * @description The digest fields the real bindings add to every reply.
+ * @description The raw-body fields the real bindings add to every reply.
  * @param body - The raw body.
- * @returns Its byte length and sha256.
+ * @returns The body as a Buffer, its byte length and sha256.
  */
-function digestOf(body: Uint8Array): { byteLength: number; sha256: string } {
-  return { byteLength: body.length, sha256: createHash('sha256').update(body).digest('hex') };
+function digestOf(body: Uint8Array): { bytes: Buffer; byteLength: number; sha256: string } {
+  return { bytes: Buffer.from(body), byteLength: body.length, sha256: createHash('sha256').update(body).digest('hex') };
 }
 
 /** A route handler. */
@@ -38,9 +40,9 @@ export function fakeApi(routes: Record<string, FakeHandler>) {
     const re = new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/:(\w+)/g, (_m, name: string) => { names.push(name); return '([^/]+)'; })}$`);
     return { method, re, names, handler };
   });
-  const api = async (method: string, route: string, body?: unknown, options: { headers?: Record<string, string> } = {}) => {
+  const api = async (method: string, route: string, body?: unknown, options: { headers?: Record<string, string>; timeoutMs?: number } = {}) => {
     const [pathPart, query = ''] = route.split('?');
-    const call: RecordedCall = { method, path: pathPart, query, body, headers: options.headers || {} };
+    const call: RecordedCall = { method, path: pathPart, query, body, headers: options.headers || {}, options: { ...options } };
     calls.push(call);
     for (const entry of table) {
       const match = entry.method === method ? pathPart.match(entry.re) : null;

@@ -45,6 +45,27 @@ full framework ribbon) under a **verified OIDC session**:
 The local orb is hidden while the cockpit is open and returns only if the cockpit closes or cannot
 open; the worker keeps pulling tasks regardless of which surface is in front.
 
+## Simple chat window
+
+For a node that should be a plain text bot, set **Config → Window style → Simple chat** (or seed it with
+`OSHAL_VIEW=chat`). The orb stays the default; nothing changes for a node that never selects this.
+
+- **This window** shows a simple chat in place of the orb: the box at the bottom, the conversation above it, a short
+  help card with example prompts the first time, and nothing else. Turns use the node's existing chat route and the
+  reply arrives on the usual poll, with no speech. The history stays on this computer (the last 200 turns), because
+  that route has no history read. Swarm tasks this machine runs show in the history as short notes; log lines do not.
+- **Where the answer comes from:** when the swarm's AI for this chat is a CLI (the fleet default is Antigravity), the
+  swarm's controller will not run it, so it hands the model call back to THIS computer: the node runs `agy` (or `codex` /
+  `claude`) with your own sign-in and the swarm keeps the conversation. The node advertises `antigravity.exec` only when
+  `agy` is installed (`%LOCALAPPDATA%` → `agy` → `bin` → `agy.exe`, or `ANTIGRAVITY_CLI_PATH`, or on PATH); `ANTIGRAVITY_MODEL`
+  picks the model, else agy's own default. The swarm's configured model is not yet carried to the node.
+- **The Full Jarvis window** opens the hosted simple chat at `/simple` instead of the cockpit. `/simple` is the same
+  conversation as Jarvis and the experience shells, so its history comes from the swarm.
+
+`OSHAL_VIEW` accepts `chat` or `orb`; any other value leaves the saved choice alone. The renderer's
+`simple-chat.js`/`.css` are byte copies of the shared kit in `src/shared/ui/`, and a spec fails if they differ. See
+[simple-chat.md](../../docs/architecture/simple-chat.md).
+
 ## Native background wake word (page closed)
 
 OSHAL Node can remain in the system tray and listen for one exact local phrase while the hosted
@@ -91,7 +112,8 @@ privacy invariants, tests, and the Windows acceptance procedure are documented i
 ## Worker node — how tasks run locally
 
 The node exposes an allowlisted set of **local MCP tools** ([src/main/local-tools.ts](src/main/local-tools.ts)):
-`codex.exec`, `claude.exec`, and `swarm.exec` (auto-picks whichever CLI is signed in). The swarm
+`codex.exec`, `claude.exec`, `antigravity.exec`, and `swarm.exec` (auto-picks whichever CLI is signed in: codex, then
+claude, then Antigravity). A CLI executor is advertised only while its CLI is installed and signed in here. The swarm
 invokes them with the `mcp.call-tool` intent; a plain swarm execution envelope routed to this node
 is auto-converted to a `swarm.exec` call (see `toTaskEnvelope` in
 [remote-client-routes.ts](../../src/app/routes/remote-client-routes.ts)). Only the named tools can
@@ -286,8 +308,9 @@ that secret is fully trusted (this matches the existing remote-client/A2A model)
 | `src/main/preload.ts` | contextBridge `window.oshal` API |
 | `src/main/mesh-client.ts` | A2A daemon: register / heartbeat / chat / poll (advertises worker capabilities) |
 | `src/main/worker.ts` | worker loop: pull tasks → run locally → complete/fail |
-| `src/main/local-tools.ts` | allowlisted local MCP tool registry (codex/claude/swarm.exec + gated system tools) |
+| `src/main/local-tools.ts` | allowlisted local MCP tool registry (codex/claude/antigravity/swarm.exec + gated system tools) |
 | `src/main/executors.ts` | spawn codex/claude CLIs against the user's real `~/.` creds |
+| `src/main/antigravity-executor.ts` | spawn the Antigravity CLI (`agy`) with the person's own sign-in; JSON envelope judged like the swarm's adapter |
 | `src/main/system-tools.ts` | gated screen/shell/input control (PowerShell P/Invoke) |
 | `src/main/workspace-sync.ts` | scoped pull/additive-push of the held task's shared folder |
 | `src/main/auth-manager.ts` | local-account status probes + browser-popup CLI login |

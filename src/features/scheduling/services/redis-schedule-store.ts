@@ -4,11 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added Redis-backed schedule persistence store for self-scheduling runtime
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Operator overrides for application-manifest schedules: one hash (`<prefix>:manifest-overrides`, field `<app>-<scheduleId>`) beside the records. It is not deleted with a record, so an override outlives the app toggle that deletes the record and is applied again when the manifest registers.
  */
 
 import Redis from 'ioredis';
 import { createChildLogger } from '@/shared/logger';
-import { ScheduleRecordSchema, type ScheduleRecord } from '../types';
+import {
+  ManifestScheduleOverrideSchema,
+  ScheduleRecordSchema,
+  type ManifestScheduleOverride,
+  type ScheduleRecord,
+} from '../types';
 
 const logger = createChildLogger({ module: 'redis-schedule-store' });
 const DEFAULT_KEY_PREFIX = 'oshal:scheduler';
@@ -198,6 +204,57 @@ export class RedisScheduleStore {
     await this.redis.zrem(this.nextRunKey(), ...ids);
     logger.info({ dueCount: ids.length }, 'Popped due schedules from Redis index');
     return ids;
+  }
+
+  /**
+   * @description Reads the operator override for one application-manifest schedule.
+   *
+   * @param manifestScheduleId - `<app>-<scheduleId>`, the id the manifest registrar uses.
+   * @returns The override, or null when none is stored. A stored value that no longer parses is
+   * logged and treated as absent, so the manifest's own values apply.
+   */
+  async getManifestOverride(manifestScheduleId: string): Promise<ManifestScheduleOverride | null> {
+    await this.ensureReady();
+    const raw = await this.redis.hget(this.manifestOverrideKey(), manifestScheduleId);
+    if (!raw) return null;
+    try {
+      return ManifestScheduleOverrideSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      logger.error({ err: error, manifestScheduleId }, 'Stored manifest schedule override does not parse — ignored');
+      return null;
+    }
+  }
+
+  /**
+   * @description Stores the operator override for one application-manifest schedule.
+   *
+   * @param manifestScheduleId - `<app>-<scheduleId>`.
+   * @param override - The validated override to store.
+   */
+  async saveManifestOverride(manifestScheduleId: string, override: ManifestScheduleOverride): Promise<void> {
+    await this.ensureReady();
+    await this.redis.hset(this.manifestOverrideKey(), manifestScheduleId, JSON.stringify(override));
+    logger.info({ manifestScheduleId, enabled: override.enabled, cron: override.cron }, 'Saved manifest schedule override');
+  }
+
+  /**
+   * @description Removes the operator override for one application-manifest schedule.
+   *
+   * @param manifestScheduleId - `<app>-<scheduleId>`.
+   * @returns True when an override existed.
+   */
+  async deleteManifestOverride(manifestScheduleId: string): Promise<boolean> {
+    await this.ensureReady();
+    const removed = await this.redis.hdel(this.manifestOverrideKey(), manifestScheduleId);
+    logger.info({ manifestScheduleId, removed }, 'Deleted manifest schedule override');
+    return removed > 0;
+  }
+
+  /**
+   * @description Redis hash holding every application-manifest schedule override.
+   */
+  private manifestOverrideKey(): string {
+    return `${this.keyPrefix}:manifest-overrides`;
   }
 
   /**

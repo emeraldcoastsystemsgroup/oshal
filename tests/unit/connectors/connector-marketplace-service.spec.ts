@@ -194,4 +194,47 @@ describe('ConnectorMarketplaceService', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('preserves declared credentialOwner, executionActor, provisioningOwner, and fallbackPolicy in onboarding', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-connector-metadata-'));
+    const specDir = path.join(root, 'connectors');
+    const statePath = path.join(root, 'state.json');
+    fs.mkdirSync(specDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(specDir, 'twilio.yaml'),
+      [
+        'provider: twilio',
+        'displayName: Twilio',
+        'version: 1.0.0',
+        'metadata:',
+        '  category: Communications',
+        '  credentialOwner: hybrid',
+        '  executionActor: user',
+        '  provisioningOwner: operator',
+        '  fallbackPolicy: prompt',
+        'baseUrl: https://api.twilio.test',
+        'auth: { type: basic }',
+        'resources:',
+        '  - { name: messages, tool: twilio-messages, method: GET, path: /messages }',
+      ].join('\n'),
+    );
+
+    try {
+      const service = new ConnectorMarketplaceService({ specDir, statePath });
+      const entry = service.get('twilio');
+      expect(entry).toBeDefined();
+      expect(entry?.onboarding).toMatchObject({
+        mode: 'hybrid',
+        label: 'Shared default with user BYO option',
+        credentialScope: 'hybrid',
+        credentialOwner: 'hybrid',
+        executionActor: 'user',
+        provisioningOwner: 'operator',
+        fallbackPolicy: 'prompt',
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
+

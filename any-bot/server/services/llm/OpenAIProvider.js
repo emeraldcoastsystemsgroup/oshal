@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The direct conversational path now DECLARES the tools it was given and runs the exchange to a real answer. generateResponse read only model and max_tokens, so options.tools, options.enforceToolBoundary and options.authorizedScopes - all three passed by TaskController:418-422 and AgenticController:410-413 - arrived and were discarded: the system prompt promised N tools while the request declared none, which is the upstream cause entry 4 recovers from. Tools are now formatted through the same formatFunctions sendRequest already used, and a tool_calls response is executed through a caller-supplied executeTool channel and fed back until the model answers (MAX_DECLARED_TOOL_ROUNDS legs, then one final leg after a truthful budget-exhausted result). enforceToolBoundary and authorizedScopes became the enforcement ADR-122 and the SEC-05 dispatch-capability pair describe: nothing executes unless the caller asserted enforceToolBoundary, the name is in the exact declared set, the exact tool:<name> / control:attempt_completion scope is held, and an execution channel exists - every other call is refused and the refusal is told to the model rather than executed. Absence is never authority, matching normalizeAllowedTools/normalizeAuthorizedScopes. A request with no declared tools behaves exactly as before, including entry 4's unsolicited-call recovery.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add the optional invariant-prompt cache seam. It keys only the system/tool preamble, strips no task history, sends provider handles through `extra_body.cached_content`, and falls back to the full prompt on expiry, unsupported endpoints or cache errors.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Wire the seam to Gemini and make it correct on the wire. (1) A provider built for the Gemini OpenAI-compatible base URL now uses the process-shared Gemini context cache by default (gemini-context-cache.js; env kill switch), so TaskController's per-request BYO provider gets it with no change there. (2) The handle goes out as the documented `extra_body.google.cached_content`, not the flat `extra_body.cached_content` entry 7 sent. (3) A handle-carrying request no longer re-declares `tools`/`tool_choice`: the cache holds the tool declarations, Gemini refuses a request that sets tools beside a cached content, and re-sending them was the half of the preamble the cache exists to remove. The LOCAL boundary is untouched - runDeclaredToolExchange still authorizes every call against the same resolved boundary, so a model naming an undeclared tool is refused exactly as before. (4) If the FIRST leg carrying a handle fails, the handle is invalidated (negatively cached) and the turn is re-sent once with the full system message and tools; a later leg's failure is not retried, because tools may already have executed. (5) The credential in the cache key is the provider's own apiKey, so one shared cache serves many BYO keys without crossing them. (6) addUsage now reads the endpoint-reported `prompt_tokens_details.cached_tokens` into cacheReads, the call log prints input/output/cached tokens and the cache state (hit, created, refused, none, disabled, fallback), and the result carries `promptCache` so the controller can record it.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Allow strict one-request callers to configure the OpenAI SDK retry count and request timeout, including maxRetries:0. Add an explicit unknown-cost mode for compatible endpoints whose vendor pricing is not OpenAI's; sendRequest reports zero there instead of applying GPT fallback rates. Existing callers retain SDK defaults and priced behavior.
  */
 
 /**
@@ -50,6 +51,9 @@ class OpenAIProvider extends LLMService {
    * @param {string} [config.model] - Model id to target; defaults to 'gpt-4-turbo-preview'.
    * @param {number} [config.maxTokens] - Max completion tokens; defaults to 4096.
    * @param {number} [config.temperature] - Sampling temperature; defaults to 0.7.
+   * @param {number} [config.maxRetries] - OpenAI SDK transport retries; zero disables retries.
+   * @param {number} [config.requestTimeoutMs] - OpenAI SDK request timeout in milliseconds.
+   * @param {'priced'|'unknown'} [config.costMode] - Whether sendRequest may apply OpenAI pricing.
    */
   constructor(config) {
     super('openai', config);
@@ -60,9 +64,15 @@ class OpenAIProvider extends LLMService {
     // gateway that speaks the chat-completions API (a user's Bring-Your-Own-LLM
     // endpoint, LiteLLM, LM Studio, Ollama, Together, Groq, …) is driven by passing
     // its base URL here. Omit it and the SDK defaults to api.openai.com.
+    const maxRetries = Number.isInteger(config.maxRetries) && config.maxRetries >= 0
+      ? config.maxRetries : undefined;
+    const requestTimeoutMs = Number.isInteger(config.requestTimeoutMs) && config.requestTimeoutMs > 0
+      ? config.requestTimeoutMs : undefined;
     this.client = new OpenAI({
       apiKey: config.apiKey,
       ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
+      ...(maxRetries !== undefined ? { maxRetries } : {}),
+      ...(requestTimeoutMs !== undefined ? { timeout: requestTimeoutMs } : {}),
     });
     this.baseUrl = config.baseUrl || null;
     this.endpointLabel = safeEndpointLabel(this.baseUrl);
@@ -72,6 +82,7 @@ class OpenAIProvider extends LLMService {
     this.model = config.model || 'gpt-4-turbo-preview';
     this.maxTokens = config.maxTokens || 4096;
     this.temperature = config.temperature !== undefined ? config.temperature : 0.7;
+    this.costMode = config.costMode === 'unknown' ? 'unknown' : 'priced';
     // Most OpenAI-compatible endpoints do not implement context caching, so the default is
     // resolved from the base URL: the Gemini compat surface gets the process-shared Gemini cache
     // (unless the env kill switch is set), everything else gets none. An explicit
@@ -590,13 +601,16 @@ class OpenAIProvider extends LLMService {
       });
     }
 
-    // Calculate cost
-    const cost = this.calculateCost(
+    // OpenAI's fallback prices are valid only when this adapter actually fronts OpenAI. A caller
+    // targeting a compatible vendor with unknown pricing reports zero rather than fabricating GPT
+    // spend in the downstream ledger.
+    const costKnown = this.costMode !== 'unknown';
+    const cost = costKnown ? this.calculateCost(
       response.usage.prompt_tokens,
       response.usage.completion_tokens
-    );
+    ) : 0;
 
-    logger.info(`OpenAI response: ${response.usage.completion_tokens} tokens, $${cost.toFixed(6)}`);
+    logger.info(`OpenAI response: ${response.usage.completion_tokens} tokens, ${costKnown ? `$${cost.toFixed(6)}` : 'cost unknown (reported as $0)'}`);
 
     return {
       content,
@@ -607,6 +621,7 @@ class OpenAIProvider extends LLMService {
         cacheWrites: 0, // OpenAI doesn't expose cache stats
         cacheReads: 0,
         cost,
+        ...(costKnown ? {} : { costKnown: false }),
       },
       model: response.model,
     };
@@ -703,9 +718,10 @@ class OpenAIProvider extends LLMService {
       logger.warn('OpenAI usage not provided in stream, using estimates');
     }
 
-    const cost = this.calculateCost(usage.prompt_tokens, usage.completion_tokens);
+    const costKnown = this.costMode !== 'unknown';
+    const cost = costKnown ? this.calculateCost(usage.prompt_tokens, usage.completion_tokens) : 0;
 
-    logger.info(`OpenAI streaming complete: ${usage.completion_tokens} tokens, $${cost.toFixed(6)}`);
+    logger.info(`OpenAI streaming complete: ${usage.completion_tokens} tokens, ${costKnown ? `$${cost.toFixed(6)}` : 'cost unknown (reported as $0)'}`);
 
     return {
       content,
@@ -716,6 +732,7 @@ class OpenAIProvider extends LLMService {
         cacheWrites: 0,
         cacheReads: 0,
         cost,
+        ...(costKnown ? {} : { costKnown: false }),
       },
       model: this.model,
     };

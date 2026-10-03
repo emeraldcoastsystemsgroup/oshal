@@ -5,14 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Expose same-origin exact-owner local schedule controls without accepting caller identity or execution commands.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the shared context type compatible with selected-package history resolution.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Share the scoped request-authority type with the run routes (schedule controls still resolve unscoped).
  */
 import { Router, type Request, type Response } from 'express';
-import type { TestLabRunContext } from './test-lab-run-types';
+import type { TestLabRequestAuthority, TestLabRunContext } from './test-lab-run-types';
 import type { TestLabScheduleService } from './test-lab-schedule-service';
 
 export interface TestLabScheduleRouteOptions {
   scheduleService?: TestLabScheduleService;
-  runContext?: (req: Request, appName?: string) => Promise<TestLabRunContext>;
+  runContext?: TestLabRequestAuthority;
 }
 function mutation(req: Request): void {
   if (req.get('origin') !== `${req.protocol}://${req.get('host')}` || req.get('x-oshal-test-lab') !== '1' || !req.is('application/json')) {

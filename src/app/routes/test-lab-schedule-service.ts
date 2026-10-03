@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Re-discover current installed Node suites for exact-owner local schedules and reuse durable run authorization and evidence.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include unavailable browser/framework recipes in batch reporting without changing selected executable levels.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Scope each fresh batch and runner authority check to its saved single-package selection.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | In a wildcard batch, decide each case's checks (its start, polls and the run's own re-checks) for that case's application only; discovery alone still decides every installed application.
  */
 import { createHash } from 'node:crypto';
 import type { InstalledAppTestCatalog, InstalledAppTestCase } from '@/features/swarm-apps';
@@ -150,9 +151,11 @@ export class TestLabScheduleService {
     void this.perform(claim).catch(() => undefined).finally(() => this.running.delete(claim.batch.id));
   }
   private batchContext(claim: TestLabScheduleClaim, cancelled: () => boolean): TestLabScheduleContext {
-    return () => context(async () => {
+    // A named schedule always decides its own application. A wildcard batch decides what the check names:
+    // every application for discovery, one case's application for that case, or the owner's identity alone.
+    return scope => context(async () => {
       if (this.stopped || cancelled() || !await this.options.store.heartbeat(claim.batch)) refusal('Schedule is no longer active.');
-      const current = await this.options.resolveScheduledContext(claim.batch.actor,claim.schedule.appName === '*' ? undefined : claim.schedule.appName);
+      const current = await this.options.resolveScheduledContext(claim.batch.actor,claim.schedule.appName === '*' ? scope : claim.schedule.appName);
       if (!same(current.actor,claim.batch.actor)) refusal('Scheduled owner changed.');
       this.selection(claim.schedule,current); return current;
     });
@@ -187,14 +190,14 @@ export class TestLabScheduleService {
     }
   }
   private async runOne(claim: TestLabScheduleClaim, test: InstalledAppTestCase, summary: TestLabBatchSummary, resolve: TestLabScheduleContext): Promise<void> {
-    await resolve();
+    await resolve(test.appName);
     const run = await this.options.runs.start({ caseId: test.id,revision: test.revision,executionRevision: test.executionRevision!,
       requestId: runRequest(claim.batch.id,test.id) },resolve);
     const entry = { appName: test.appName,caseId: test.id,runId: run.id,state: run.state }; summary.runs.push(entry);
     await this.options.store.checkpoint(claim.batch,summary);
     while (active.has(entry.state)) {
       await new Promise<void>(done => setTimeout(done,1000));
-      await resolve(); entry.state = (await this.options.runs.read(run.id,resolve)).state;
+      await resolve(test.appName); entry.state = (await this.options.runs.read(run.id,resolve)).state;
     }
     await this.options.store.checkpoint(claim.batch,summary);
   }

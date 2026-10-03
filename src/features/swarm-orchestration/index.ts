@@ -18,6 +18,9 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | FSD deep-import burn-down: re-exported service members consumers were reaching via deep paths (rca-mode, prompt-layer builders, phase/queue/failure/metrics services, trace analyzer, workflow-pipeline registry, comment formatter, TicketTraceReport). All within the barrel's pre-existing service subgraph — no new import cycle.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exported SEC-05 prompt containment and authority-binding contracts.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Export the queued evidence/result contract through the feature boundary.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Exported RoundOwner and LocalRoundExecutor so the app layer can install the in-process build-lane planning executor on MultiRoundDispatchService.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Exported createSignedChildDispatcher, BUILD_EXECUTION_TARGETS and their types for the composition root.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Exported pushOnDispatchFields for the build-lane planning dispatch in the app layer.
  */
 
 export { SwarmOrchestrationController } from './controllers';
@@ -58,6 +61,16 @@ export {
   createLLMExecutionHandler,
   type LLMExecutionHandlerDeps,
   SwarmVerificationService,
+  parseTestOutput,
+  workspaceTestVerdict,
+  TESTED_WORK_TYPES,
+  type WorkspaceTestRun,
+  type WorkspaceTestRunRequest,
+  type WorkspaceTestRunner,
+  type WorkspaceTestVerdict,
+  createNodeWorkspaceTestRunner,
+  WORKSPACE_TESTS_INTENT,
+  type NodeWorkspaceTestRunnerDeps,
   SubtaskLifecycleService,
   type TrackedSubtask,
   type ParentWithSubtasks,
@@ -102,6 +115,14 @@ export {
   type AgentSelectorFn,
   type PhaseDispatchResult,
   type RoundExecutionResult,
+  type RoundOwner,
+  type LocalRoundExecutor,
+  createSignedChildDispatcher,
+  BUILD_EXECUTION_TARGETS,
+  pushOnDispatchFields,
+  type SignedChildDispatcher,
+  type SignedChildDispatchDeps,
+  type SignedChildDispatchInput,
   ensureInternalTicketForWorkItem,
 } from './services';
 

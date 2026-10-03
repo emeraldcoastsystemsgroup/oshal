@@ -75,6 +75,7 @@
 #                      |                          | through tsx before it
 #                      |                          | advertises the prerequisite.
 # 12 | maintainer@emeraldcoastsystemsgroup.com  | Release identity (ADR-167): ARG/ENV OSHAL_RELEASE and the oshal.release label, declared at the tail beside GIT_SHA so a release cut reuses every heavy layer. A production box can now say which named core release it runs (/api/version `release`) instead of only a commit. IMAGE_VERSION is left alone: it is declared before the heavy RUN layers, so a per-release value there would rebuild the image from the apk layer up.
+# 13 | maintainer@emeraldcoastsystemsgroup.com  | Take the published fixes behind the 2026-10-02 nightly trivy red instead of budgeting them (operator decision 2026-09-21: fix first, budget last). (1) Version floors `pcre2>=10.49-r0` and `python3>=3.12.15-r0` in the runtime `apk add`: both fixes were in Alpine v3.23/main, but the nightly's `apk upgrade` and `apk add` layers were CACHED, so a rebuild kept pcre2 10.48-r0 and python3 3.12.14-r0; the floor re-runs the layer and fails the build if the index cannot satisfy it. The comment above `apk upgrade` no longer claims the nightly rebuild self-heals OS CVEs. (2) A layer after `npm install -g npm@11` swaps npm's own bundled brace-expansion 5.0.9 and undici 6.28.0 for the fixed in-range releases (>=5.0.11, >=6.28.1): no npm release that runs on node 20 carries them, and both satisfy the ranges npm's tree declares. It fails the build if a copy stays below its floor or npm's minimatch stops expanding braces, and it is a no-op once npm ships the fixes.
 # =============================================================================
 #
 # Why this image exists:
@@ -87,7 +88,7 @@
 # =============================================================================
 
 FROM debian:bookworm-slim AS antigravity-cli
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 ARG AGY_VERSION=1.2.8
 ARG AGY_AMD64_URL=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.8-4907747922280448/linux-x64/cli_linux_x64.tar.gz
 ARG AGY_AMD64_SHA512=28d0f8661316850d1e1ff541dc5f7727e5df6ea9f2d28a0c9b5567aa638a778b21d9229123c65ee5b5c646d4390b589245b1fdc0004e98f0cd1774aa38147762
@@ -96,10 +97,11 @@ ARG AGY_ARM64_SHA512=4a26e6cb40f68995d3a556a5141eb66b1de23fa1a8a6476e0a2e6976ab1
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl libgcc-s1 libstdc++6 && \
     rm -rf /var/lib/apt/lists/* && \
-    case "$TARGETARCH" in \
+    arch="${TARGETARCH:-amd64}" && \
+    case "$arch" in \
       amd64) agy_url="$AGY_AMD64_URL"; agy_sha="$AGY_AMD64_SHA512"; triplet=x86_64-linux-gnu; loader=/lib64/ld-linux-x86-64.so.2 ;; \
       arm64) agy_url="$AGY_ARM64_URL"; agy_sha="$AGY_ARM64_SHA512"; triplet=aarch64-linux-gnu; loader=/lib/ld-linux-aarch64.so.1 ;; \
-      *) echo "Unsupported Antigravity target architecture: $TARGETARCH" >&2; exit 1 ;; \
+      *) echo "Unsupported Antigravity target architecture: $arch" >&2; exit 1 ;; \
     esac && \
     curl -fsSL "$agy_url" -o /tmp/agy.tar.gz && \
     echo "$agy_sha  /tmp/agy.tar.gz" | sha512sum -c - && \
@@ -123,8 +125,12 @@ FROM antigravity-runtime AS oshal-runtime
 
 # Patch the base OS at build time: alpine ships CVE fixes (musl, zlib, ...)
 # faster than the node base image re-tags them (2026-07-09: musl 1.2.5-r21 and
-# zlib 1.3.1-r2 carried 3 fixable HIGHs the Trivy gate caught). The daily local
-# CI rebuild re-runs this, so fixable OS CVEs self-heal without manual bumps.
+# zlib 1.3.1-r2 carried 3 fixable HIGHs the Trivy gate caught). This layer re-runs
+# only when its build-cache entry is gone (a new base digest, a changed line, or a
+# builder prune). Otherwise the nightly rebuild reuses it: the 2026-10-02 nightly
+# build log shows it, and the `apk add` below, as CACHED. So a fixable OS CVE does
+# NOT reliably self-heal on a rebuild; a published OS fix is taken with a version
+# floor in the `apk add` below.
 RUN apk upgrade --no-cache
 
 # Build metadata — override at build time:
@@ -139,7 +145,16 @@ ARG CONFIG_NAME=issue-rca-build-swarm
 #  every deploy into a full multi-GB rebuild — proven 2026-07-25, first --build-arg GIT_SHA
 #  deploy rebuilt from the apk layer and the engine dropped mid-build.)
 
+# Version floors for OS fixes that a cached rebuild never picks up. The 2026-10-02
+# nightly trivy report (image built from a88a8a63) found pcre2 10.48-r0
+# (CVE-2026-103111, fixed in 10.49-r0; pulled in by git, wget and glib) and python3
+# 3.12.14-r0 with its pyc subpackages (CVE-2026-19553, CVE-2026-82049, fixed in
+# 3.12.15-r0). Both fixes are published in Alpine v3.23/main and neither package is
+# in the node:20-alpine base, so a newer base digest cannot carry them. A floor
+# changes this layer's text, so the next build re-runs it, and apk fails the BUILD
+# when the index cannot satisfy it instead of quietly installing the vulnerable one.
 RUN apk add --no-cache \
+    'pcre2>=10.49-r0' \
     bash \
     git \
     curl \
@@ -155,7 +170,7 @@ RUN apk add --no-cache \
     docker-cli-compose \
     sqlite \
     graphviz \
-    python3 \
+    'python3>=3.12.15-r0' \
     py3-pip \
     aws-cli \
     tesseract-ocr \
@@ -169,6 +184,36 @@ RUN apk add --no-cache \
 # Pinned to npm 11 - @latest is npm 12, which requires node >=22 (EBADENGINE
 # on this node:20 base, CI run 29047937748).
 RUN npm install -g npm@11
+
+# npm 11.21.0, the newest npm that runs on node 20 (npm 12 needs node >=22), still
+# bundles brace-expansion 5.0.9 (CVE-2026-102276, CVE-2026-102278; fixed in 5.0.11)
+# and undici 6.28.0 (CVE-2026-19534; fixed in 6.28.1). No npm release carries either
+# fix yet, but both fixed releases sit inside the ranges npm's own tree declares: its
+# minimatch 10.2.5 wants brace-expansion ^5.0.5, its node-gyp wants undici ^6.25.0,
+# and brace-expansion's one dependency (balanced-match ^4.0.2) is already 4.0.4
+# there. So each copy below its floor is swapped IN npm's tree, the same drop-in
+# shape as the fast-uri swap in cline's tree further down. The tarball is fetched
+# with `npm pack` and unpacked over the directory, because `npm install` inside
+# npm's own package would reify npm's whole manifest. The layer fails the BUILD when
+# a copy is still below its floor or npm's minimatch stops expanding braces, and
+# every later npm command in this file (the CLI installs, npm ci, npm prune) runs on
+# the patched npm. A copy already at or above its floor is left alone, so a future
+# npm 11 that ships the fixes makes this layer a no-op; delete it then.
+RUN npm_dir="$(npm root -g)/npm"; \
+    at_floor='const [pj, floor] = process.argv.slice(1); const v = require(pj).version; const a = v.split(".").map(Number), f = floor.split(".").map(Number); console.log(v); process.exit(a[0] > f[0] || (a[0] === f[0] && (a[1] > f[1] || (a[1] === f[1] && a[2] >= f[2]))) ? 0 : 1)'; \
+    for spec in brace-expansion@5.0.11 undici@6.28.1; do \
+      p="${spec%@*}"; floor="${spec#*@}"; pj="$npm_dir/node_modules/$p/package.json"; \
+      if ! node -e "$at_floor" "$pj" "$floor" >/dev/null; then \
+        npm pack --loglevel=error --pack-destination /tmp "$p@^$floor" >/dev/null && \
+        rm -rf "$npm_dir/node_modules/$p" && mkdir "$npm_dir/node_modules/$p" && \
+        tar -xzf /tmp/"$p"-*.tgz -C "$npm_dir/node_modules/$p" --strip-components=1 && \
+        rm -f /tmp/"$p"-*.tgz || exit 1; \
+      fi; \
+      v="$(node -e "$at_floor" "$pj" "$floor")" || { echo "npm-bundled $p is $v, still below $floor" >&2; exit 1; }; \
+      echo "npm-bundled $p $v (fixed in $floor)"; \
+    done; \
+    node -e 'const d = process.argv[1]; const { minimatch } = require(d + "/node_modules/minimatch"); if (!minimatch("src/a.ts", "src/*.{js,ts}")) throw new Error("npm minimatch no longer expands braces"); require(d + "/node_modules/undici"); console.log("npm minimatch expands braces; npm undici loads")' "$npm_dir" && \
+    npm --version
 
 # yq for persona YAML parsing and config work
 RUN wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && \

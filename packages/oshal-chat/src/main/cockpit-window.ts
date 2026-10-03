@@ -13,6 +13,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | The window the operator was actually stuck in was the SIGN-IN window (main.ts signIn): 520x680, frame:false, modal:true with the console as parent — and it never got the injected chrome, so it had no drag region and no close button while ALSO blocking input to its parent, which is why neither window responded. At 520px wide the cockpit renders its mobile layout, so after the OIDC redirect it reads as "a Jarvis window without a container", and it only closes when GET /api/user returns a sub — otherwise it sits there indefinitely. Extracted attachFramelessControls() so every frameless window showing swarm pages gets the same pill; the sign-in window takes the two-button variant (no Config, since a modal blocks the parent it would raise).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Operator report: with the node console raised over an open cockpit, NEITHER window could be moved or closed. Both are frame:false, and the cockpit window's only controls were CSS+a button injected into the SWARM-SERVED page: the drag handle was `header.header-bar`, which `body.zen-mode` (the header's own arrows-out button, persisted in sessionStorage) sets to display:none — so one click permanently removed the drag region, leaving an 8px invisible strip, and the lone close button was a 30x26 near-transparent glyph sitting in the same row as the cockpit's own header icons. Replaced with an always-present control pill (its body is the drag handle, so a window is movable even with every page chrome hidden) carrying Config / minimize / close. Minimize and Config reach the main process WITHOUT a preload — the remote page keeps zero Node access — by opening an `oshal:` URL that setWindowOpenHandler intercepts and denies. Guard: tests/unit/node-window-controls.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Per-app windows (openCockpitApp): any cockpit app (?app=<name>) opens as its OWN frameless window keyed by name — open/focus semantics per app, several apps side by side, each alt-tabbable with its app title. createCockpitWindow generalized to build-and-return (title + close callback params); openFullJarvis keeps its dedicated window + the native-wake delivery contract unchanged.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com  | Simple chat (docs/architecture/simple-chat.md): fullJarvisPath() opens /simple when the node is set to Simple chat (viewMode 'chat'); every other node opens its configured cockpit path exactly as before.
  */
 
 import { BrowserWindow, type BrowserWindowConstructorOptions, type WebContents } from 'electron';
@@ -21,6 +22,19 @@ import type { ConfigStore } from './config';
 
 /** Default cockpit path — the Jarvis-shaped ribbon. `/cockpit/` gives the full framework ribbon. */
 export const DEFAULT_COCKPIT_PATH = '/cockpit/?app=jarvis';
+/** The hosted simple chat (docs/architecture/simple-chat.md): what the Full Jarvis window opens when the node is set to Simple chat. */
+export const SIMPLE_CHAT_PATH = '/simple';
+
+/**
+ * @description The path the Full Jarvis window loads. Simple chat opens the hosted simple chat; otherwise the configured
+ * cockpit path (or the default Jarvis cockpit) is used exactly as before.
+ * @param config The node settings that choose the window.
+ * @returns A path that starts with '/'.
+ */
+export function fullJarvisPath(config: { viewMode?: string; cockpitPath?: string }): string {
+  const path = config.viewMode === 'chat' ? SIMPLE_CHAT_PATH : (config.cockpitPath || DEFAULT_COCKPIT_PATH);
+  return path.startsWith('/') ? path : `/${path}`;
+}
 
 let cockpitWin: BrowserWindow | null = null;
 /** One window per launched cockpit app, keyed by sanitized app name (open = focus). */
@@ -272,10 +286,9 @@ export async function openFullJarvis(
     return { ok: true };
   }
 
-  const path = config.cockpitPath || DEFAULT_COCKPIT_PATH;
   cockpitWin = createCockpitWindow(
-    `${base}${path.startsWith('/') ? path : `/${path}`}`,
-    'OSHAL — Jarvis',
+    `${base}${fullJarvisPath(config)}`,
+    config.viewMode === 'chat' ? 'OSHAL — Chat' : 'OSHAL — Jarvis',
     hooks,
     () => { cockpitWin = null; },
   );

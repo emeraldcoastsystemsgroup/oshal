@@ -39,14 +39,21 @@
 # 31 | maintainer@emeraldcoastsystemsgroup.com   | New `typecheck-tests` gate: typechecks the test tree against tsconfig.tests.json via scripts/ci/check-tests-typecheck.mjs, enforcing that all new or edited tests are typecheck-clean and pre-existing errors remain quarantined with explicit reasons in tests/typecheck-quarantine.json.
 # 32 | maintainer@emeraldcoastsystemsgroup.com   | Timeout-bounded export step. The `git archive | tar` export that follows the purge in prepare_head_src and gate_secrets had no timeout of its own, so a hang there held ci-local.lock indefinitely without writing an outcome line. Both now export through export_tree (scripts/ci/ci-export.sh), which runs under a watchdog and logs an export: OK|FAIL line, failing the gate and letting the run reach its outcome line on timeout.
 # 34 | maintainer@emeraldcoastsystemsgroup.com   | gate_ai_usage_ledger (ADR-170 D10) beside repo-separation, against $GATE_SRC: a stale docs/apps/ai-usage-ledger.md or an unrated kernel manifest fails the run.
+# 35 | maintainer@emeraldcoastsystemsgroup.com   | Gate the JavaScript runtime against console/Winston regressions and run the real structured-logging proofs against selected source.
+# 36 | maintainer@emeraldcoastsystemsgroup.com   | Integrate init_run_log and finish_run_log from scripts/ci/ci-run-log.sh to retain per-run logs in ci-runs/<ts>-XXXXXX/full.log.
+# 37 | maintainer@emeraldcoastsystemsgroup.com   | The nightly stops measuring the host as if it were the code (BACKLOG "The nightly gate runs against a saturated box"; operator decision 2026-09-21). (1) run_gate gains a third outcome, RESOURCE-EXHAUSTED, decided by measurement in scripts/ci/ci-resource.sh: a gate is not started while host free memory stays below OSHAL_CI_MIN_FREE_MB, and a gate that fails while the host was measured below it is resource-exhausted rather than FAIL. Those gates go to EXHAUSTED_GATES, never FAILED_GATES: the outcome line names them separately, skip markers inherit the cause of the gate they depend on, the image is never published from such a run, the alert subject says RESOURCE-EXHAUSTED, and a run whose only problem is exhaustion exits 3 (not 0, not 1). (2) Scheduled runs (and --quiesce) stop the workers the operator named in OSHAL_CI_QUIESCE_WORKERS through scripts/ci/ci-quiesce.sh - only running `oshal.tier=worker` containers that are not routing-critical, with their SwarmContainerDown alert silenced - and restore exactly those: at the end of the run, in on_exit on failure or interruption, and, for a run killed outright, from the state file at the start of the next run that takes the lock. The stale-lock window becomes CI_LOCK_STALE_SECONDS so the silence is sized by the same bound.
+# 38 | maintainer@emeraldcoastsystemsgroup.com   | gate_trivy posture kept current after the 2026-10-02 red (29 findings, all fixed, no new budget line). The comment now records the trap that red exposed: gate_image builds with the Docker build cache, so the `apk upgrade` / `apk add` layers stay CACHED and a published Alpine fix never lands by itself; an OS fix is taken with a version floor in Dockerfile.oshal's `apk add`. Comment only, no behaviour change.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
-#                                  [--publish-image] [--cluster-gates]
+#                                  [--publish-image] [--cluster-gates] [--quiesce]
 #         bash scripts/ci-local.sh --k8s-only [--cluster-gates]
 #   --scheduled   quiet mode for the Windows task: full output to the run log,
 #                 email alert on failure only (never on success). Fetches + pins
 #                 origin/main; a fetch failure is an explicitly degraded HEAD fallback.
+#                 Implies --quiesce.
+#   --quiesce     stop the workers named in OSHAL_CI_QUIESCE_WORKERS for the run and restore
+#                 them afterwards (scripts/ci/ci-quiesce.sh). Unset = nothing is stopped.
 #   --head        run the node gates (typecheck/unit/lint/connectors/manifests/e2e) from a clean
 #                 git-archive HEAD export instead of the working tree. In this
 #                 multi-agent repo the working tree is routinely mid-edit by
@@ -77,8 +84,13 @@
 #   - e2e needs port 3456 free (green-set specs hardcode it) and blanks every
 #     broker/trading credential so the mock-auth test server can never touch a
 #     live account even though src/app/server.ts loads the repo .env.
-#   - Exit: 0 = all gates green, 1 = gate failure, 2 = another run holds the lock.
+#   - Exit: 0 = all gates green, 1 = gate failure, 2 = another run holds the lock,
+#     3 = no gate failed but at least one was RESOURCE-EXHAUSTED (not judged; see run_gate).
 #   - Logs: %LOCALAPPDATA%\oshal\ci-local.log (summary) + ci-local-last-run.log (full).
+#   - Settings by name, from the environment or the checkout's .env (scripts/ci/ci-config.sh):
+#     OSHAL_CI_MIN_FREE_MB, OSHAL_CI_RESOURCE_WAIT_SECONDS, OSHAL_CI_RESOURCE_SAMPLE_SECONDS,
+#     OSHAL_CI_QUIESCE_WORKERS, OSHAL_CI_QUIESCE_ALERTMANAGER_URL,
+#     OSHAL_CI_QUIESCE_RESUME_GRACE_SECONDS. See docs/runbooks/local-ci.md.
 #
 # Register the daily task (23:30 local, windowless):
 #   schtasks /create /tn "OSHAL Local CI" /sc daily /st 23:30 /f ^
@@ -99,10 +111,11 @@ RUN_LOG="$STATE_DIR/ci-local-last-run.log"
 mkdir -p "$STATE_DIR"
 
 SCHEDULED=0; SKIP_E2E=0; SKIP_IMAGE=0; DO_INSTALL=0; HEAD_MODE=0; PUBLISH_IMAGE=0
-CLUSTER_GATES=0; K8S_ONLY=0
+CLUSTER_GATES=0; K8S_ONLY=0; QUIESCE=0
 for arg in "$@"; do
   case "$arg" in
-    --scheduled)  SCHEDULED=1; HEAD_MODE=1 ;;
+    --scheduled)  SCHEDULED=1; HEAD_MODE=1; QUIESCE=1 ;;
+    --quiesce)    QUIESCE=1 ;;
     --head)       HEAD_MODE=1 ;;
     --skip-e2e)   SKIP_E2E=1 ;;
     --skip-image) SKIP_IMAGE=1 ;;
@@ -127,7 +140,8 @@ if [ "$K8S_ONLY" = "1" ]; then
   exit $?
 fi
 
-if [ "$SCHEDULED" = "1" ]; then exec >"$RUN_LOG" 2>&1; else : >"$RUN_LOG"; fi
+. "$REPO_DIR/scripts/ci/ci-run-log.sh"
+init_run_log
 
 log() { printf '[%s] %s\n' "$(date +%FT%T)" "$*" | tee -a "$LOG"; }
 
@@ -139,16 +153,23 @@ if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi
 . "$REPO_DIR/scripts/ci/ci-purge.sh"
 . "$REPO_DIR/scripts/ci/ci-export.sh"
 . "$REPO_DIR/scripts/ci/ci-secret-scan.sh"
+# The measured resource check behind run_gate's RESOURCE-EXHAUSTED outcome, and the worker
+# quiesce with its restore. Both read their operator settings by name (scripts/ci/ci-config.sh).
+. "$REPO_DIR/scripts/ci/ci-resource.sh"
+. "$REPO_DIR/scripts/ci/ci-quiesce.sh"
 
 # ── Single-instance lock (atomic mkdir). Without it, overlapping runs rm -f
 # each other's e2e datastores and share port 3456. Stale (>4h) locks from a
 # killed run are stolen - every external call below is timeout-bounded, so a
 # legitimate run can never be that old.
 LOCK="$STATE_DIR/ci-local.lock"
+# The longest a legitimate run can last. It also sizes the quiesce's alert silence, so a run killed
+# outright cannot leave its workers' alerts silenced past the point the next run would steal the lock.
+CI_LOCK_STALE_SECONDS=14400
 acquire_lock() {
   if mkdir "$LOCK" 2>/dev/null; then date +%s >"$LOCK/ts"; return 0; fi
   local ts; ts=$(cat "$LOCK/ts" 2>/dev/null || echo 0)
-  if [ $(( $(date +%s) - ts )) -gt 14400 ]; then
+  if [ $(( $(date +%s) - ts )) -gt "$CI_LOCK_STALE_SECONDS" ]; then
     rm -rf "$LOCK" && mkdir "$LOCK" 2>/dev/null && { date +%s >"$LOCK/ts"; log "stale lock stolen"; return 0; }
   fi
   return 1
@@ -188,6 +209,12 @@ CLEANED=0
 on_exit() {
   [ "$CLEANED" = "1" ] && return 0
   CLEANED=1
+  # Workers first, and before the run log is copied: a run that fails, is interrupted or exits
+  # early still restores what it stopped, and the restore's own lines land in this run's log. A
+  # container that will not start keeps the state file for the next run (or --resume).
+  ci_resource_watch_stop
+  ci_quiesce_resume || log "quiesce: restore on exit FAILED - see $CI_QUIESCE_STATE"
+  finish_run_log
   docker rm -f "$SMOKE" oshal-ci-trivy >/dev/null 2>&1 || true
   [ "$DS_UP" = "1" ] && docker rm -f "$E2E_PG" "$E2E_REDIS" >/dev/null 2>&1
   docker network rm "$CI_NET" >/dev/null 2>&1 || true
@@ -200,14 +227,43 @@ trap on_exit EXIT
 trap 'on_exit; exit 130' INT TERM
 
 FAILED_GATES=()
-# Runs one gate, records PASS/FAIL, never aborts - a full report of every broken
-# gate beats stopping at the first one.
+# Gates the host could not run (scripts/ci/ci-resource.sh). Never a pass, never a silent skip, and
+# never a code failure: they are reported on their own, so a starved night cannot read as a regression.
+EXHAUSTED_GATES=()
+# Runs one gate, records PASS/FAIL/RESOURCE-EXHAUSTED, never aborts - a full report of every
+# broken gate beats stopping at the first one. RESOURCE-EXHAUSTED is decided by MEASUREMENT: the
+# gate was not started because host free memory stayed below OSHAL_CI_MIN_FREE_MB, or it failed
+# while the host was measured below that floor. A failure on a healthy host stays FAIL.
 run_gate() {
   local name="$1"; shift
   log "GATE $name: start"
-  local t0=$SECONDS
-  if "$@"; then log "GATE $name: PASS ($((SECONDS - t0))s)"
+  local t0=$SECONDS ok=1
+  if ! ci_resource_admit "$name"; then
+    log "GATE $name: RESOURCE-EXHAUSTED ($((SECONDS - t0))s; not started: $CI_RESOURCE_REASON)"
+    EXHAUSTED_GATES+=("$name"); return 0
+  fi
+  ci_resource_watch_start
+  "$@" || ok=0
+  ci_resource_watch_stop
+  if [ "$ok" = 1 ]; then log "GATE $name: PASS ($((SECONDS - t0))s)"
+  elif ci_resource_starved; then
+    log "GATE $name: RESOURCE-EXHAUSTED ($((SECONDS - t0))s; failed while $CI_RESOURCE_REASON)"
+    EXHAUSTED_GATES+=("$name")
   else log "GATE $name: FAIL ($((SECONDS - t0))s)"; FAILED_GATES+=("$name"); fi
+}
+
+# Did a gate fail OR go resource-exhausted? Either way the gates that depend on it cannot run.
+gate_did_not_pass() {
+  [[ " ${FAILED_GATES[*]-} ${EXHAUSTED_GATES[*]-} " == *" $1 "* ]]
+}
+
+# Skip markers carry the cause of the gate they depend on: a chain skipped because the host could
+# not run its first link is resource exhaustion, not a code failure, and is reported as such.
+# $1 = the gate the skipped ones depend on, rest = the skip markers to record.
+record_skipped() {
+  local cause="$1"; shift
+  if [[ " ${EXHAUSTED_GATES[*]-} " == *" $cause "* ]]; then EXHAUSTED_GATES+=("$@")
+  else FAILED_GATES+=("$@"); fi
 }
 
 # Select ONE immutable commit before any committed-source gate runs. Scheduled mode updates the
@@ -402,6 +458,12 @@ gate_security_policy() {
 # pushed. The store half runs too when the sibling checkout is on this box.
 gate_repo_separation() {
   (cd "$GATE_SRC" && timeout 120 node scripts/check-repo-separation.js);
+}
+
+# ADR-171 D1: complete server scan plus real logger/negative-control regression suites.
+gate_javascript_logging() {
+  (cd "$GATE_SRC" && timeout 120 node --max-old-space-size=384 scripts/check-javascript-logging.cjs &&
+    timeout 120 node --max-old-space-size=384 --test --experimental-test-isolation=none --test-concurrency=1 tests/logging/*.test.cjs);
 }
 
 # LEDGER GUARD (ADR-170 D10): every kernel manifest carries a `rating:` block (container memory
@@ -602,7 +664,15 @@ gate_smoke() {
 #     actionable rather than a wall of noise: every finding it still reports has a published
 #     upstream release, so the FIRST response is always to take that release, not to write a line
 #     in .trivyignore. The 2026-09-21 red was eleven findings and eight of them were this tree's
-#     own dependencies, all fixable by a minor bump.
+#     own dependencies, all fixable by a minor bump. The 2026-10-02 red was 29 findings and all 29
+#     were fixed with no new budget line: lockfile updates, three package.json changes (the joi
+#     override, nodemailer ^10, an image-size override), a swap of npm's own bundled deps inside
+#     npm's tree (Dockerfile.oshal), and Alpine version floors.
+#   * An Alpine fix does NOT arrive by itself. gate_image builds with the Docker build cache, so
+#     Dockerfile.oshal's `apk upgrade` and `apk add` layers stay CACHED until something above them
+#     changes or the cache is pruned (the 2026-10-02 build log shows both CACHED while v3.23/main
+#     already carried the fixes). Take an OS fix with a version floor in that `apk add`: it changes
+#     the layer, so the next build re-runs it, and apk fails the build if the index cannot meet it.
 #   * The gate still FAILS the run (--exit-code 1 below). It was not downgraded to advisory and the
 #     base image was not rebased - node:20-alpine is already the slim base, and distroless would
 #     take away the shell scripts/bot-entrypoint.sh needs.
@@ -667,7 +737,7 @@ gate_publish_image() {
   fi
   timeout 3900 bash "$REPO_DIR/scripts/ci/publish-image.sh" \
     --sha "$SOURCE_SHORT_SHA" --local oshal-ci:latest --remote "$remote" \
-    --failed "${FAILED_GATES[*]-}"
+    --failed "${FAILED_GATES[*]-}${EXHAUSTED_GATES[*]:+ ${EXHAUSTED_GATES[*]}}"
 }
 
 # Housekeeping, not a gate: dangling layers from daily rebuilds + build cache
@@ -685,11 +755,22 @@ fi
 NODE_SOURCE='working-tree'
 [ "$HEAD_MODE" = "1" ] && NODE_SOURCE="$SOURCE_REF"
 log "=== LOCAL CI start (scheduled=$SCHEDULED head=$HEAD_MODE skip-e2e=$SKIP_E2E skip-image=$SKIP_IMAGE) node-source=$NODE_SOURCE archive-ref=$SOURCE_REF sha=$SOURCE_SHORT_SHA posture=$SOURCE_POSTURE ==="
+ci_resource_init
+
+# Workers an earlier run stopped and never restored (it was killed outright, or its restore failed)
+# come back first - every run that holds the lock does this, whether or not it quiesces itself.
+# Restoring workers that sat down since then is news, so the run records it; restoring nothing is not.
+ci_quiesce_recover_leftover
+case $? in
+  1) FAILED_GATES+=(quiesce-resume-failed) ;;
+  2) FAILED_GATES+=(quiesce-leftover-restored) ;;
+esac
+[ "$QUIESCE" = "1" ] && ci_quiesce_begin
 
 NODE_GATES_OK=1
 if [ "$HEAD_MODE" = "1" ]; then
   run_gate head-src prepare_head_src
-  [[ " ${FAILED_GATES[*]-} " == *" head-src "* ]] && NODE_GATES_OK=0
+  gate_did_not_pass head-src && NODE_GATES_OK=0
 elif [ "$DO_INSTALL" = "1" ]; then
   run_gate install bash -c "cd '$REPO_DIR' && timeout 1800 npm ci --legacy-peer-deps"
 fi
@@ -705,6 +786,7 @@ if [ "$NODE_GATES_OK" = "1" ]; then
   run_gate workflow-triggers gate_workflow_triggers
   run_gate security-policy gate_security_policy
   run_gate repo-separation gate_repo_separation
+  run_gate javascript-logging gate_javascript_logging
   run_gate ai-usage-ledger gate_ai_usage_ledger
   run_gate spec-database-default gate_spec_database_default
   run_gate worktree-strays gate_worktree_strays
@@ -719,8 +801,8 @@ if [ "$NODE_GATES_OK" = "1" ]; then
     log "$K8S_CLUSTER_GATES_NOT_REQUESTED"
   fi
 else
-  log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (pinned source export failed)"
-  FAILED_GATES+=(node-gates-skipped)
+  log "GATES typecheck/unit/lint/connectors/manifests/kernel-skills/e2e: SKIPPED (pinned source export did not pass)"
+  record_skipped head-src node-gates-skipped
   SKIP_E2E=1
 fi
 run_gate secret-scan gate_secrets
@@ -729,17 +811,22 @@ run_gate unpushed-commits gate_unpushed_commits
 if [ "$SKIP_E2E" != "1" ]; then run_gate e2e-green gate_e2e; fi
 if [ "$SKIP_IMAGE" != "1" ]; then
   run_gate image-build gate_image
-  if [[ ! " ${FAILED_GATES[*]-} " == *" image-build "* ]]; then
+  if ! gate_did_not_pass image-build; then
     run_gate kernel-skills-image gate_kernel_skills_image
     run_gate image-smoke gate_smoke
     run_gate trivy gate_trivy
   else
-    log "GATES kernel-skills-image + image-smoke + trivy: SKIPPED (image build failed)"
-    FAILED_GATES+=(kernel-skills-image-skipped image-smoke-skipped trivy-skipped)
+    log "GATES kernel-skills-image + image-smoke + trivy: SKIPPED (image build did not pass)"
+    record_skipped image-build kernel-skills-image-skipped image-smoke-skipped trivy-skipped
   fi
   prune_scoped
 fi
 run_gate alert-residue gate_alert_residue
+
+# Restore the workers this run stopped BEFORE the publish decision and the outcome line, so a
+# restore that fails is part of the outcome and of the alert rather than a line after them.
+# on_exit repeats it for a run that never gets here; with no state file it does nothing.
+ci_quiesce_resume || FAILED_GATES+=(quiesce-resume-failed)
 
 # Last, and only from a wholly green run. The refusal is checked HERE and again inside
 # publish-image.sh, which is the one that matters because it is the one holding the credential -
@@ -758,14 +845,15 @@ if [ "$PUBLISH_IMAGE" = "1" ]; then
     # and :latest must never name it.
     log "PUBLISH: refused - source is not pinned to origin/main (${SOURCE_POSTURE:-unresolved}); a scheduled publish names the trunk or nothing"
     FAILED_GATES+=(publish-image-refused-unpinned-source)
-  elif [ "${#FAILED_GATES[@]}" -ne 0 ]; then
-    log "PUBLISH: refused - the run is red (${FAILED_GATES[*]}); only an all-green run may publish"
+  elif [ "${#FAILED_GATES[@]}" -ne 0 ] || [ -n "${EXHAUSTED_GATES[*]-}" ]; then
+    # A resource-exhausted gate was never judged; a run with one is not all-green either.
+    log "PUBLISH: refused - the run is red (${FAILED_GATES[*]-}${EXHAUSTED_GATES[*]:+ resource-exhausted: ${EXHAUSTED_GATES[*]}}); only an all-green run may publish"
   else
     run_gate publish-image gate_publish_image
   fi
 fi
 
-if [ "${#FAILED_GATES[@]}" -eq 0 ]; then
+if [ -z "${FAILED_GATES[*]-}" ] && [ -z "${EXHAUSTED_GATES[*]-}" ]; then
   log "=== LOCAL CI: ALL GATES GREEN ==="
   exit 0
 fi
@@ -774,21 +862,38 @@ fi
 # 2026-09-08 run re-executed a block and logged `unpushed-commits` and three *-skipped names twice,
 # which made the alert headline unreadable. The outcome line is the DURABLE record every later
 # streak comparison reads, so a duplicate written here is wrong in the log forever.
-DEDUPED_GATES=()
-for _gate in "${FAILED_GATES[@]}"; do
-  case " ${DEDUPED_GATES[*]-} " in *" $_gate "*) continue ;; esac
-  DEDUPED_GATES+=("$_gate")
-done
-FAILED_GATES=("${DEDUPED_GATES[@]}")
+# $1 = the name of the array to collapse in place.
+dedupe_gates() {
+  local -n _list="$1"
+  local _seen=() _gate
+  for _gate in "${_list[@]}"; do
+    case " ${_seen[*]-} " in *" $_gate "*) continue ;; esac
+    _seen+=("$_gate")
+  done
+  _list=("${_seen[@]}")
+}
+dedupe_gates FAILED_GATES
+dedupe_gates EXHAUSTED_GATES
 
-log "=== LOCAL CI: FAILED gates: ${FAILED_GATES[*]} ==="
+# One line per run, which scripts/ci/ci-gate-streak.mjs parses: code failures and gates the host
+# could not judge are named separately, so an out-of-memory night is never read as a regression.
+# A run whose only problem is exhaustion exits 3 - neither green (0) nor a gate failure (1).
+OUTCOME=""
+RUN_EXIT=1
+[ "${#FAILED_GATES[@]}" -gt 0 ] && OUTCOME="FAILED gates: ${FAILED_GATES[*]}"
+if [ "${#EXHAUSTED_GATES[@]}" -gt 0 ]; then
+  OUTCOME="${OUTCOME:+$OUTCOME; }RESOURCE-EXHAUSTED gates: ${EXHAUSTED_GATES[*]}"
+  [ "${#FAILED_GATES[@]}" -eq 0 ] && RUN_EXIT=3
+fi
+log "=== LOCAL CI: $OUTCOME ==="
 
 # BUG-22: an alert that reads identically every night is wallpaper — the streak ran 38 nights and
 # a gate that broke INSIDE it was invisible. Derive the streak and the newly-red set from the run
 # log (the line above is already in it) so the subject can lead with what CHANGED. Best-effort:
 # a failed summary must never suppress the alert, so fall back to the flat wording.
 ALERT_SUBJECT="OSHAL LOCAL CI FAILED"
-ALERT_BODY="Failed gates: ${FAILED_GATES[*]} (source $SOURCE_REF $SOURCE_SHORT_SHA; posture=$SOURCE_POSTURE). Full log: $RUN_LOG on ${COMPUTERNAME:-this machine}."
+[ "$RUN_EXIT" = 3 ] && ALERT_SUBJECT="OSHAL LOCAL CI RESOURCE-EXHAUSTED"
+ALERT_BODY="$OUTCOME (source $SOURCE_REF $SOURCE_SHORT_SHA; posture=$SOURCE_POSTURE). Full log: $RUN_LOG on ${COMPUTERNAME:-this machine}."
 if [ -f "$REPO_DIR/scripts/ci/ci-gate-streak.mjs" ]; then
   STREAK_OUT="$(timeout 60 node "$REPO_DIR/scripts/ci/ci-gate-streak.mjs" \
     "$LOG" "$SOURCE_REF" "$SOURCE_SHORT_SHA" "$SOURCE_POSTURE" "$RUN_LOG" "${COMPUTERNAME:-this machine}" 2>/dev/null)"
@@ -816,4 +921,4 @@ if [ "$SCHEDULED" = "1" ]; then
     log "alert: api container down - failure recorded in log only"
   fi
 fi
-exit 1
+exit "$RUN_EXIT"

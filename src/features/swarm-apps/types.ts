@@ -36,6 +36,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | P8 makes chatBot the explicit metadata-only concierge pointer for surfaced apps and code-less groups. Groups may reference only a required active member's canonical concierge (activation proves it); they still cannot carry executable bots, workflows, or tools.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | ADR-170 rating label: the closed APP_RATING_TIERS (T1-T4; T0 is code and never declared), APP_RATING_GENERATIONS (none|local|hosted), APP_RATING_DEGRADES (template|hosted|disable|reduced) and APP_RATING_MEMORY_BASES (declared|observed) with guards, the AppRatingMemory/AppRatingFeature/AppRatingDeclaration shapes, and an optional `rating` on SwarmAppManifest (operator 2026-09-29: token rating per application plus container memory low/high).
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | APP_RATING_TIERS gains T0 for a generation-only feature: the store survey found template-prompt image features (Portrait Studio, Create region regenerate, Switchboard compose preview) that drive a hosted image model with no language model, which no T1-T4 value described honestly.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com | Type exact anonymous GET/HEAD route opt-ins on explicit public mounts.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -350,6 +351,8 @@ export interface SwarmAppRouteDeclaration {
   mountPath: string;
   /** Named factory returning a signature verifier for POST-only provider callbacks. */
   callbackVerifier?: string;
+  /** Exact GET/HEAD opt-ins on an explicit public mount; never a catalog or callback bypass. */
+  anonymousRoutes?: import('@/shared/package-anonymous-routes').AnonymousPackageRoute[];
   /** ADR-085 D2: how this route is authenticated —
    *  `oidc` (default, applied on OMISSION) | `service-or-oidc` | `service` | `operator` | `public`.
    *

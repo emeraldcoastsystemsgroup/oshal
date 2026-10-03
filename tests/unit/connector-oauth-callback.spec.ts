@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Real HTTP connector consent, public relay, and authenticated completion using isolated provider/SQL fixtures. Covers domain changes, browser/owner binding, PKCE, replay, expiry, and registered Lab refusals.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise verified issuer provenance, same-subject cross-issuer relay/completion refusal and independent per-principal pending limits over the real routes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { type RequestHandler } from 'express';
@@ -20,6 +21,8 @@ import { getRequestIdentity, runWithRequestIdentity } from '@/shared/services/da
 import { CONNECTOR_OAUTH_SCENARIOS } from '@/app/routes/test-lab-connector-scenarios';
 
 const OWNER = 'auth0|connector-owner';
+const OWNER_ISSUER = 'https://identity.example.test/';
+const SECOND_ISSUER = 'https://second-identity.example.test/';
 const THEME = 'theme.example.test';
 const CENTRAL = 'central.other.test';
 const originalFetch = globalThis.fetch;
@@ -111,10 +114,17 @@ beforeEach(async () => {
   } };
   const app = express();
   app.use((req, _res, next) => {
-    const match = /(?:^|;\s*)session=(owner|other)(?:;|$)/.exec(req.headers.cookie || '');
-    const sub = match ? match[1] === 'owner' ? OWNER : 'auth0|other' : null;
-    (req as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => !!sub, user: { sub, email: `${match?.[1]}@example.test` } };
-    runWithRequestIdentity({ sub, isOperator: false }, next);
+    const match = /(?:^|;\s*)session=(owner|other|sibling|missing-issuer)(?:;|$)/.exec(req.headers.cookie || '');
+    const sub = match ? match[1] === 'other' ? 'auth0|other' : OWNER : null;
+    const principalIssuer = match?.[1] === 'missing-issuer' ? null
+      : match?.[1] === 'sibling' ? SECOND_ISSUER : OWNER_ISSUER;
+    (req as unknown as { oidc: unknown }).oidc = {
+      isAuthenticated: () => !!sub,
+      idTokenClaims: { iss: principalIssuer },
+      // A stale presentation-user issuer must not override a missing protocol claim.
+      user: { sub, email: `${match?.[1]}@example.test`, iss: OWNER_ISSUER },
+    };
+    runWithRequestIdentity({ sub, principalIssuer, isOperator: false }, next);
   });
   const requiresAuth: RequestHandler = (req, res, next) => {
     if ((req as unknown as { oidc: { isAuthenticated: () => boolean } }).oidc.isAuthenticated()) next();
@@ -151,7 +161,7 @@ describe('connector OAuth across cookie-domain families', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].values.slice(0, 3)).toEqual([OWNER, 'owner@example.test', 'google']);
     expect(writes[0].values[11]).toBe('Work');
-    expect(writes[0].identity).toMatchObject({ sub: OWNER, isOperator: false });
+    expect(writes[0].identity).toMatchObject({ sub: OWNER, principalIssuer: OWNER_ISSUER, isOperator: false });
     expect(await decryptToken(pool, OWNER, String(writes[0].values[6]))).toBe('example-access-token');
     expect(complete.cookies[0]).toContain('Expires=Thu, 01 Jan 1970');
     expect(complete.location + complete.body).not.toContain('example-access-token');
@@ -168,6 +178,50 @@ describe('connector OAuth across cookie-domain families', () => {
     expect(tokenRequests).toHaveLength(0);
     expect(writes).toHaveLength(0);
     expect((await call(returned.path, { cookie: `session=owner; ${flow.cookie}` })).status).toBe(302);
+  });
+
+  it('refuses absent verified issuer on initiation despite a presentation-user or query issuer', async () => {
+    const result = await call(`/api/connect/google/start?principalIssuer=${encodeURIComponent(OWNER_ISSUER)}`, {
+      cookie: 'session=missing-issuer',
+    });
+    expect(result.status).toBe(403);
+    expect(JSON.parse(result.body)).toEqual({ error: 'verified_issuer_required' });
+    expect(result.cookies).toEqual([]);
+    expect(tokenRequests).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses another issuer with the identical subject at completion without consuming the original consent', async () => {
+    const flow = await begin();
+    const returned = await relay(flow);
+    expect((await call(returned.path, { cookie: `session=sibling; ${flow.cookie}` })).status).toBe(400);
+    expect(tokenRequests).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    expect((await call(returned.path, { cookie: `session=owner; ${flow.cookie}` })).location).toBe('/utilities?connected=google');
+    expect(tokenRequests).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].identity).toMatchObject({ sub: OWNER, principalIssuer: OWNER_ISSUER });
+  });
+
+  it('refuses a signed-in relay from a different or absent issuer without blocking a later sessionless relay', async () => {
+    const flow = await begin();
+    const path = `/api/connect/google/callback?state=${encodeURIComponent(flow.state)}&code=provider-code`;
+    for (const cookie of ['session=sibling', 'session=missing-issuer']) {
+      expect((await call(path, { host: CENTRAL, cookie })).status).toBe(400);
+    }
+    expect(tokenRequests).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    const returned = await relay(flow);
+    expect((await call(returned.path, { cookie: `session=owner; ${flow.cookie}` })).location).toBe('/utilities?connected=google');
+  });
+
+  it('refuses completion without issuer provenance before exchange and still permits the original identity', async () => {
+    const flow = await begin();
+    const returned = await relay(flow);
+    expect((await call(returned.path, { cookie: `session=missing-issuer; ${flow.cookie}` })).status).toBe(403);
+    expect(tokenRequests).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    expect((await call(returned.path, { cookie: `session=owner; ${flow.cookie}` })).location).toBe('/utilities?connected=google');
   });
 
   it('rejects forged, trailing, foreign-provider and wrong-identity callback state before any provider request', async () => {
@@ -269,6 +323,17 @@ describe('connector OAuth across cookie-domain families', () => {
     expect((await relay(first)).response.status).toBe(302);
   });
 
+  it('gives two issuers with the same subject separate bounded pending-consent budgets', async () => {
+    for (let index = 0; index < 8; index++) await begin();
+    expect((await call('/api/connect/google/start', { cookie: 'session=owner' })).status).toBe(503);
+    for (let index = 0; index < 8; index++) {
+      expect((await call('/api/connect/google/start', { cookie: 'session=sibling' })).status).toBe(302);
+    }
+    expect((await call('/api/connect/google/start', { cookie: 'session=sibling' })).status).toBe(503);
+    expect(tokenRequests).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+  });
+
   it('only exempts the exact GET OAuth callback; every data, completion, and mutation route retains auth', async () => {
     for (const [path, method] of [
       ['/google/start', 'GET'], ['/list', 'GET'], ['/google/access-token', 'GET'], ['/google/complete?ticket=x', 'GET'],
@@ -278,8 +343,9 @@ describe('connector OAuth across cookie-domain families', () => {
     ]) expect((await call(`/api/connect${path}`, { method })).status).toBe(401);
     expect((await call('/api/connect/google/callback?state=x&code=x', { host: CENTRAL })).status).toBe(400);
     expect(tokenRequests).toHaveLength(0);
-    const serverSource = readFileSync('src/app/server.ts', 'utf8');
-    expect(serverSource).toContain("app.use('/api/connect', connectorCallbackAuth(requiresAuth), createConnectorsRoutes(ctx))");
+    const mountedSource = readFileSync('src/app/server-auxiliary-routes.ts', 'utf8');
+    expect(mountedSource.includes("app.use('/api/connect', connectorCallbackAuth(requiresAuth), createConnectorsRoutes(ctx))")).toBe(true);
+    expect(readFileSync('src/app/server.ts', 'utf8').includes('mountProvidersAndConnectorsRoutes(app, ctx, requiresAuth, apiDir)')).toBe(true);
   });
 
   it('registers real anonymous refusal probes and their existing regression suites with the Lab', async () => {

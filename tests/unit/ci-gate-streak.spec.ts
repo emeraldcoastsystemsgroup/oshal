@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - guard for BUG-22's prevention. The defect was not a crash; it was an alert whose wording never changed, so these pin the two claims the alert now makes and that a wrong parse would silently corrupt: the streak count, and which gates are red for the first time tonight.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cases for the duplicate-gate line (verbatim from the corrupted 2026-09-09 run) and for the skipped-is-not-fixed rule, including the inverse: a run that measured the gate still reports FIXED.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Cases for the skipped-baseline rule using the verbatim nights 48-50 log: only the genuinely new gate is NEW, the baseline is named when skipped runs were stepped over, a green run is a valid baseline, and nothing is claimed new when every prior run skipped. The de-duplication fixture lost its `trivy-skipped` marker - it was accidentally exercising baseline selection instead of de-duplication.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Cases for the RESOURCE-EXHAUSTED section ci-local.sh now writes. A starved-only line, a mixed line and the green shape (which gains an empty `exhausted`) parse; a starved night keeps the streak red, is never the baseline, never makes its gates NEW or FIXED, and the CLI subject reads RESOURCE-EXHAUSTED - run through the real CLI, because before this change a starved-only night had no outcome line the parser recognised and the alert described the previous night.
  */
 
 /**
@@ -17,6 +18,10 @@
  * because parsing that real shape is the boundary this guard has to cross - a summary tested
  * only against clean synthetic lines would not have caught a log that grew noisier.
  */
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   parseRunOutcomes,
@@ -44,7 +49,7 @@ describe('parsing the run log', () => {
 
   it('records a green run as an outcome with no failed gates', () => {
     const outcomes = parseRunOutcomes('[2026-09-08T00:13:50] === LOCAL CI: ALL GATES GREEN ===');
-    expect(outcomes).toEqual([{ at: '2026-09-08T00:13:50', failed: [] }]);
+    expect(outcomes).toEqual([{ at: '2026-09-08T00:13:50', failed: [], exhausted: [] }]);
   });
 
   it('survives an empty or absent log rather than throwing inside the notifier', () => {
@@ -272,5 +277,78 @@ describe('the alert body', () => {
   it('never omits the full failing set, so the alert stays self-contained', () => {
     const body = renderAlertBody(summarizeGateStreak(REAL_LOG));
     expect(body).toContain('All failing gates: unit lint secret-scan e2e-green image-smoke trivy.');
+  });
+});
+
+/**
+ * @description Run the real CLI over a log file, as ci-local.sh does, and return its two lines.
+ * @param logText - the ci-local.log contents to summarize.
+ * @returns the alert subject (line 1) and body (line 2).
+ */
+function cliSummary(logText: string): { subject: string; body: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'oshal-gate-streak-'));
+  try {
+    const log = join(dir, 'ci-local.log');
+    writeFileSync(log, `${logText}\n`);
+    const cli = resolve(__dirname, '../../scripts/ci/ci-gate-streak.mjs');
+    const run = spawnSync(process.execPath, [cli, log, 'origin/main', 'abc123', 'scheduled-origin-main'], { encoding: 'utf8', timeout: 20_000 });
+    const [subject = '', body = ''] = (run.stdout ?? '').split('\n');
+    return { subject, body };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('resource-exhausted nights - the host, not the code, decided those gates', () => {
+  const TYPICAL = '[2026-09-29T00:00:00] === LOCAL CI: FAILED gates: typecheck-tests lint unit trivy ===';
+
+  it('parses a starved-only line and a mixed line into separate sections', () => {
+    const outcomes = parseRunOutcomes([
+      '[2026-10-02T01:10:00] === LOCAL CI: RESOURCE-EXHAUSTED gates: unit head-src unit ===',
+      '[2026-10-03T01:10:00] === LOCAL CI: FAILED gates: lint; RESOURCE-EXHAUSTED gates: image-build trivy-skipped ===',
+    ].join('\n'));
+    expect(outcomes).toEqual([
+      { at: '2026-10-02T01:10:00', failed: [], exhausted: ['unit', 'head-src'] },
+      { at: '2026-10-03T01:10:00', failed: ['lint'], exhausted: ['image-build', 'trivy-skipped'] },
+    ]);
+  });
+
+  it('subjects a starved-only night RESOURCE-EXHAUSTED and describes THAT night, not the one before', () => {
+    const { subject, body } = cliSummary(`${TYPICAL}\n[2026-09-30T00:00:00] === LOCAL CI: RESOURCE-EXHAUSTED gates: unit ===`);
+    expect(subject).toBe('OSHAL LOCAL CI RESOURCE-EXHAUSTED - no new failures; FIXED: typecheck-tests lint trivy (night 2); host saturated, not judged: unit');
+    expect(subject).not.toContain('FAILED');
+    expect(body).toContain('RESOURCE-EXHAUSTED, NOT JUDGED');
+    expect(body).toContain('All failing gates: none.');
+  });
+
+  it('keeps FAILED in the subject when a gate also failed, and still names the starved ones', () => {
+    const { subject } = cliSummary(`${TYPICAL}\n[2026-09-30T00:00:00] === LOCAL CI: FAILED gates: typecheck-tests lint unit trivy security-policy; RESOURCE-EXHAUSTED gates: e2e-green ===`);
+    expect(subject).toBe('OSHAL LOCAL CI FAILED - NEW: security-policy (night 2); host saturated, not judged: e2e-green');
+  });
+
+  it('never calls an exhausted gate FIXED, and never calls it NEW', () => {
+    const summary = summarizeGateStreak(`${TYPICAL}\n[2026-09-30T00:00:00] === LOCAL CI: FAILED gates: typecheck-tests lint trivy; RESOURCE-EXHAUSTED gates: unit e2e-green ===`);
+    expect(summary.newlyGreen).toEqual([]);
+    expect(summary.newlyRed).toEqual([]);
+    expect(summary.exhausted).toEqual(['unit', 'e2e-green']);
+    expect(summary.headline).toBe('no change from last run (night 2); host saturated, not judged: unit e2e-green');
+  });
+
+  it('keeps the streak red through a starved night and never uses that night as the baseline', () => {
+    const summary = summarizeGateStreak([
+      TYPICAL,
+      '[2026-09-30T00:00:00] === LOCAL CI: RESOURCE-EXHAUSTED gates: head-src node-gates-skipped ===',
+      '[2026-10-01T00:00:00] === LOCAL CI: FAILED gates: typecheck-tests lint unit trivy security-policy ===',
+    ].join('\n'));
+    expect(summary.streak).toBe(3);
+    expect(summary.baselineAt).toBe('2026-09-29T00:00:00');
+    expect(summary.baselineSkippedRuns).toBe(1);
+    expect(summary.newlyRed).toEqual(['security-policy']);
+  });
+
+  it('reports a starved first link as DID NOT RUN, not as fixed, when it skipped a chain', () => {
+    const summary = summarizeGateStreak(`${TYPICAL}\n[2026-09-30T00:00:00] === LOCAL CI: RESOURCE-EXHAUSTED gates: head-src node-gates-skipped ===`);
+    expect(summary.headline).toBe('no new failures; 4 gate(s) DID NOT RUN (night 2); host saturated, not judged: head-src node-gates-skipped');
+    expect(renderAlertBody(summary)).not.toContain('FIXED SINCE LAST RUN');
   });
 });

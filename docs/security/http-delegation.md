@@ -105,7 +105,7 @@ by a kernel-resident manifest in `swarm-apps/`:
 
 | Ticket type | Declared in | Pipeline | Worker (reviewer) | Routing under signing |
 | --- | --- | --- | --- | --- |
-| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Dedicated node `oshal-local-system-architect`. See the mesh note below - the HTTP decision is fixed, the swarm pipeline's own transport is not. |
+| `build` | `WORKFLOW_PIPELINES`, `swarm-apps/oshal-engineering.yaml` | `swarm` | system-architect | Planning crosses the signed hop to the configured planning node (see [Build-lane planning runs on a build-lane node](#build-lane-planning-runs-on-a-build-lane-node)); execution crosses the signed hop to a [build-lane target](#build-lane-execution-targets). |
 | `incident` | `WORKFLOW_PIPELINES`, `swarm-apps/intelligent-operations.yaml` | `incident-rca` | rca-specialist (queue-bot) | Dedicated nodes `oshal-local-rca-specialist` / `oshal-local-queue-bot`. |
 | `intelligent-processing` | `swarm-apps/intelligent-processing.yaml` | `incident-rca` | rca-specialist (queue-bot) | Same two nodes. |
 | `oshal-dev` | `swarm-apps/oshal-dev.yaml` | manifest-worker | oshal-developer | Dedicated node `oshal-developer` (already `requiresOwnNode`). |
@@ -130,6 +130,31 @@ which that function already logs as a declaration bug
 their own bot-node services in `docker-compose.oshal-local.yml`; for security-analyst that also
 takes untrusted scanner text out of the control-plane container, which is the blast radius
 `src/features/llm-provider/services/controller-inline-scope.ts` describes.
+
+### Build-lane execution targets
+
+While signing is configured, the build pipeline's execution (a child ticket's work, or a root that
+skips planning) crosses this hop through `signed-child-dispatch.ts`, never the mesh. Every node
+refuses unsigned mesh execution then.
+
+- **Who runs.** The request names the ticket's owner and the verified issuer persisted with it, as
+  the incident path does. An ownerless ticket is explicit system work. The body's
+  `workspaceFolderId` is the root ticket's folder.
+- **Where it can go.** The target must be one of nine build-lane bots: code-developer,
+  code-reviewer, documentation-writer, test-engineer, devops-bot, research-bot and tester-bot (each
+  `requiresOwnNode`), plus system-architect and general-bot. Planning text can name any active agent.
+  A target outside the nine is refused with `child_target_not_allowlisted` before a token is issued,
+  and that ticket's execution fails.
+- **While the node works.** The unit work item is refreshed so the routing watchdog does not read a
+  long run as a dropped dispatch. Refreshing stops only when the call returns: a node call cannot be
+  aborted, so `assigned` means a call is in flight whatever the ticket's state. A ticket that has
+  already ended (cancelled, escalated or dead-lettered) is never sent to a node
+  (`child_ticket_stopped`), which keeps a retry after a cancel from reaching one. The node's result is
+  recorded on the unit.
+
+documentation-writer also gains `accessRoles: ['operator', 'swarm']`, because with an endpoint and no
+roles it would become a Jarvis task call-out candidate. Guard:
+`tests/unit/signed-swarm-child-dispatch.spec.ts`.
 
 `tests/unit/signed-delegation-core-ticket-types.spec.ts` enumerates these types from the tree on
 every run and dispatches one ticket per manifest-worker type through the real dispatcher, the real
@@ -173,6 +198,8 @@ Everything below is a bot that resolves to **no** dedicated bot-node endpoint. E
 interactive-only on purpose: its turn runs in-process through `executeBotOrInline`, crossing no
 network hop, so there is nothing for a delegation token to bind to. None of them may own a queued
 ticket type, and after the call-out rule above none of them can acquire one by winning a bid either.
+One queued round runs inline by design, under its own rules: build-lane planning by project-manager,
+specified in [Build-lane planning runs on a build-lane node](#build-lane-planning-runs-on-a-build-lane-node).
 
 Three groups, three different reasons - do not treat them as one list, and do not "fix" a group by
 flipping `requiresOwnNode` without reading why it is inline:
@@ -220,22 +247,87 @@ cannot own a node, that design has to be specified here first - it must demand t
 verified-issuer binding the signed path demands, keep the `isApplicationExecutionProtected` refusal
 and the deterministic-provider-intent refusal, and it must not reintroduce the localhost
 `/api/send-message` leg, which asserts an arbitrary user subject with a machine credential and no
-issuer.
+issuer. Build-lane planning is the one such case, specified next.
 
-### What is still refused, and why it is not this rule
+### Build-lane planning runs on a build-lane node
 
-One refusal survives this routing decision, and it is not fixed by naming a different worker.
-(The `task` lane's call-out was the second; it is closed above under
+The `build` pipeline's Phase-2 planning round belongs to project-manager (`a0…001`), which is
+controller-inline. That round used to cross the Redis mesh to the api's own worker, which ran it on
+project-manager's registry harness: an unattended command-line engine, which the controller refuses
+(SEC-05). No build ticket could be planned, with or without signing.
+
+The round is now sent over the signed bot-node hop (`controller-pm-round-executor.ts`, called by
+`MultiRoundDispatchService`) to a build-lane node, where the installed provider switch rows (per-bot
+row, then the fleet default) choose the engine, exactly as they do for every child. Nothing in the
+controller names a provider, a model or a key for it. These rules decide whether it runs at all:
+
+- **Which round.** Only rounds addressed to project-manager's exact agent id, and only while that
+  id's own registry entry is controller-inline. Any other id, including one the registry does not
+  define, takes the normal path.
+- **Which node.** `OSHAL_PM_PLANNING_NODE` names a bot by registry name (default `system-architect`,
+  the build-lane node with the decomposition capability). The bot must own a node and be on the
+  build-lane execution allowlist below; otherwise the round is refused naming the setting.
+- **Owner and issuer.** The round carries the root ticket's owner subject and the verified issuer
+  persisted with it (`oshalOwnerPrincipalIssuer`, which is written only from a verified request
+  identity or a system copy of one). If either is missing, the round is refused with
+  `pm_planning_refused` and no token is issued.
+- **Operator-owned roots only.** The owner must be in `OSHAL_OPERATOR_SUBS`; other owners' roots are
+  refused the same way. Their work would be refused at the bot node in any case, because the demo
+  command-line carve (ADR-127) is operator-only.
+- **Protected applications.** If project-manager or the planning node's bot is bound to a protected
+  application (`isApplicationExecutionProtected`), the round is refused.
+- **The request.** The planning prompt the mesh worker would have built, plus a note that the queue
+  decomposes the reply (the node's engine may also write the plan file). It is signed and bound to
+  the owner and issuer like a child's execution, carries the push-on-dispatch config fields, and
+  carries no credential, endpoint or model choice. A node that reports a failed execution, or one
+  that cannot be reached, is a named failure (`pm_planning_node_failed`), never a mesh fallback.
+- **Output.** The reply is kept in memory, stored on the round's work item, and handed to
+  decomposition from memory.
+
+While signing is configured, two more rules apply:
+
+- The api's mesh worker refuses unsigned execution (`prohibitUnsignedMeshExecution`), as every bot
+  node already does.
+- Multi-round dispatch publishes no execution envelope. A round that no inline executor handles, such
+  as the plan-reviewer round or the Phase-8 architecture round, is skipped: it gets no work item and
+  nothing is published, and planning continues on project-manager's output. A high-complexity ticket
+  therefore gets no `TECHNICAL-SPECIFICATION.md`.
+
+### What the build pipeline still does not send over this hop
+
+Build execution crosses this hop ([Build-lane execution targets](#build-lane-execution-targets)) and
+planning crosses the signed hop to the configured planning node ([Build-lane planning runs on a build-lane node](#build-lane-planning-runs-on-a-build-lane-node)).
+The remaining swarm rounds have no signed transport, so while signing is configured they do not run:
+
+- **Planning rounds.** The plan-reviewer round and the Phase-8 architecture round are skipped.
+  Planning continues on project-manager's output, and a high-complexity ticket gets no
+  `TECHNICAL-SPECIFICATION.md`.
+- **QA rounds.** Verification's task-manager round and consensus review's reviewer rounds are
+  skipped. The structural result decides instead: every unit needs a description and acceptance
+  criteria, and the root folder needs a deliverable of the expected kind. Every node refused those
+  rounds before, and the controller then waited 600 s for that same structural result. Guard:
+  `tests/unit/swarm-verification-enforced-fallback.spec.ts`.
+
+**Executed tests do cross the hop (2026-10-02).** After the structural result, code work
+(implementation and testing units) has its tests run where the deliverables live: verification
+sends the `workspace-tests/run` deterministic provider intent over this same signed route to its
+fixed owner, test-engineer's node, as the ticket's owner with its persisted verified issuer. The
+intent carries only the root workspace id (a lower-case UUID, signed with the body): no command,
+argument or path. The node runs the workspace's own `npm test` (or vitest directly, the image's
+global vitest linked in when `npm install --ignore-scripts` cannot run) with a process environment
+built from scratch (no node secret, `CI=1`, a private HOME), bounded in time and output, and
+answers the exit code, the counts, the failing test names and the output tail. The run decides:
+a red run, or one that could not happen (no tests declared, no toolchain, the node unreachable,
+a timeout), fails the child with regression to build and names the failing tests in the retry
+feedback; a green run's counts join the findings and the run is recorded on the child ticket's
+metadata (`verificationTests`). The agent rounds above still do not run. Guards:
+`tests/unit/swarm-verification-runs-tests.spec.ts`, `tests/unit/bot-node-workspace-test-run.spec.ts`
+(with its real-spawn companion `bot-node-workspace-test-run-real.spec.ts`) and
+`tests/unit/node-workspace-test-runner.spec.ts`.
+
+(The `task` lane's call-out was the other refusal this page tracked; it is closed above under
 [The `task` call-out](#the-task-call-out-may-not-hand-a-queued-ticket-to-an-unreachable-owner).)
-
-- **The `build` pipeline does not use this hop at all.** The swarm pipeline sends work units over
-  the Redis mesh (`buildExecutionEnvelope` -> `MESH_CHANNELS.agentDirect`), and every bot node wraps
-  its mesh handler in `prohibitUnsignedMeshExecution`, so with a public ring configured it answers
-  `Unsigned Redis mesh execution is prohibited while delegation enforcement is active`. Giving
-  system-architect a node fixes the controller's routing decision; it does not give the swarm
-  pipeline a signed transport.
-
-It is tracked in [the backlog](../BACKLOG.md).
+Carrying these rounds over the signed hop is tracked in [the backlog](../BACKLOG.md).
 
 ## Generate a key pair
 
@@ -309,6 +401,18 @@ home schedules, ambient enrichment, and content pre-warm paths may reconstruct o
 owner subject and therefore stop at delegation issuance until they persist and restore
 the verified issuer (or are explicitly redesigned as platform-system work). Do not fill
 the missing issuer from an untrusted job payload or a deployment-wide default.
+
+World classify (2026-10-02, `src/app/world-classify-provider.ts`) is the one background caller that
+restores an issuer today, and only from a verified source: the single ACTIVE row the
+verified-principal directory (`oshal_verified_principals`, written by the sign-in boundary alone)
+holds for the accountable owner's subject. With no row, or with two issuers for the same subject,
+it restores nothing and the signed hop is not attempted (the rail stays unregistered, lexicon
+only). `WORLD_CLASSIFY_OWNER_ISSUER` can name the issuer explicitly; it is operator configuration,
+not verification, so the rail logs it as operator-asserted unless the directory holds that same
+record. The owner is re-read at most once a minute, so a principal disabled in the directory stops
+being signed for at the next chunk. Guard: `tests/unit/world-classify-delegation.spec.ts` drives the
+real `BotNodeClient` with signing on and shows the dispatch leaving with `principal_iss` bound, and
+refused before network I/O without it.
 
 ## Rotation
 

@@ -322,6 +322,24 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      Both local and bot-node handlers use the same builder. Any-bot filters the advertised tool
      list and refuses a model-selected tool that is not in the server-resolved dispatch allowlist;
      tool/error output and persisted prior messages are fenced before later model turns.
+   - **SEC-05 carve for image turns (2026-10-02, server-authored instruction only):** an image
+     turn (ADR-130: a storyboard, region-edit or portrait render dispatched to the render bot with
+     `imageTurn: true`) carries the server-authored render instruction in its own carrier
+     (`renderInstruction`, written by the storyboard image providers in the api process, validated
+     by `parseBotNodePromptCarrier` only beside a literal `imageTurn: true`), and the bot-node
+     handler files it under `TRUSTED CONFIGURATION` as
+     `[trusted-config source="image-render-instruction"]` while the harness's own image tool
+     (`generate_image` on antigravity-cli; no tool is recorded for the codex CLI) joins
+     `attempt_completion` in that turn's `allowed_tools` and `authorized_scopes`. The
+     user-originated brief stays the untrusted body, inside the `UNTRUSTED_CONTENT` record, and the
+     instruction tells the model to read it from there as data. The any-bot loop prepends no persona
+     and no Cline system prompt to an image turn. Nothing else is widened: a non-image turn never
+     reads either field, an image turn without the carrier is refused before a task exists, and
+     Guard A (the bot hands back only an image a DONE `generate_image` step wrote) is unchanged.
+     Why: the 2026-10-02 19:00 live render was refused by the model itself because the only text
+     naming `generate_image` sat inside the data-only record under an authority of
+     `["attempt_completion"]`, behind "1 tools: attempt_completion". Guard:
+     `tests/unit/image-turn-prompt-framing.spec.ts`.
    - **Swarm-memory poisoning closed in code:** migration
      `117-swarm-memory-provenance.sql` adds durable trust/source/creator/approver/validation
      evidence with forced RLS. Raw/API writes and task-manager-agent review remain `untrusted`;

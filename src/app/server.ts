@@ -208,6 +208,10 @@
  * 192 | maintainer@emeraldcoastsystemsgroup.com   | Mount authenticated, synthetic-only phone-call simulation at /api/voice-sim (serviceSecretOr(requiresAuth) inside the router, with a trusted-service user binding) beside Jarvis without enabling live dialing.
  * 193 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: mounted /api/location (routes/location-routes.ts): browser ingest, the person's location consent and the step-up ceremony. The service-secret rail is refused (401) before requiresAuth, so a machine caller never reaches a location handler whatever session rides along; the router itself admits only an interactive browser session with a verified issuer and runs every statement as that person with is_operator off.
  * 194 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the /api/location mount passes the location fire dispatch-recovery sweep interval (OSHAL_LOCATION_DISPATCH_SWEEP_SEC, default 60 s, 0 off), so claimed reminder fires a crash left undelivered are dispatched under their actor; the router itself starts no timer unless asked.
+ * 195 | maintainer@emeraldcoastsystemsgroup.com   | The remote-client routes get the per-bot provider lookup (getChatProvider: ctx.getProvider), so an OSHAL Node chat turn whose bot is a CLI the controller refuses runs on that node (remote-client-node-chat.ts).
+ * 196 | maintainer@emeraldcoastsystemsgroup.com   | Register the world classify rail at boot (ensureWorldClassifyRail): classification reasons on the swarm's accounted bot rail under an accountable owner (operator decisions 2026-09-21 and 2026-10-02), and the World package's own ingest routes are on it from their first request rather than after the first scheduled pulse.
+ * 198 | maintainer@emeraldcoastsystemsgroup.com   | Shell lock (ADR-164 amendment, 2026-10-02): the cockpit document and experience entry pages take the deployment landing + operator ports, and the profile response carries landingApp/operator, so a non-operator on a focused-landing deployment never reaches the operator cockpit by door or by URL.
+ * 197 | maintainer@emeraldcoastsystemsgroup.com   | The storyboard CLI image wiring is handed the swarm's canonical runtime-params resolver (read per call): a render runs on the render bot's own effective harness and is stamped with that bot's own provider record, never switched onto an image harness (ADR-130 amendment 2026-10-02, the bot-level rule).
  */
 
 require('dotenv').config();
@@ -226,6 +230,7 @@ import { registerDebugRoutes } from './routes/debug-routes';
 import { createAuthStateRoutes, mountDemoAuthRoutes } from './routes/auth-state-routes';
 import { createAppContext } from './composition-root';
 import { resolveHostLandingPath } from './host-app-map';
+import { focusedLandingApp } from './experience-shell-lock';
 import { 
   createMessageRoutes, 
   createVisionRoutes,
@@ -361,6 +366,7 @@ import {
   mountSystemAuxiliaryRoutes,
 } from './server-auxiliary-routes';
 import { createScheduleController } from './schedule-runtime';
+import { ensureWorldClassifyRail } from './world-classify-provider';
 import { startSeriesReconciler } from '@/app/series-orchestrator';
 import { startVideoPump } from '@/app/series-pump';
 import { startAmbientReviewRuntime } from './ambient-review-runtime';
@@ -447,6 +453,10 @@ function createApp(): express.Application {
   app.use(internalMeshLimiter);
 
   const ctx = createAppContext();
+  // World classify reasons on the swarm's accounted bot rail (operator decisions 2026-09-21 and
+  // 2026-10-02). Registered at boot so the World package's own ingest routes are on the rail from
+  // their first request, not only after the first scheduled pulse.
+  void ensureWorldClassifyRail(ctx);
   const refusalStore = new PostgresRefusalStore(ctx.pool, waitForBootstrapComplete);
   configureRefusalRecorder(refusalStore);
   void refusalStore.ready().catch(error => logger.error({ err: error },
@@ -891,6 +901,11 @@ function createApp(): express.Application {
   // cockpit still routes a not-yet-onboarded user to /welcome. Registered before the static
   // handler; falls through via next() when onboarding isn't required.
   app.get(['/cockpit', '/cockpit/'], requiresAuth, surfaceOnboardingGuard);
+  // Shell lock (ADR-164 amendment): the landing a non-operator is held to is the same one the
+  // root route resolves — the host map first, then LANDING_PATH.
+  const deploymentLandingPath = (req: import('express').Request): string => resolveHostLandingPath(
+    process.env.HOST_APP_MAP, req.hostname, process.env.LANDING_PATH || '/cockpit/',
+  );
   registerCockpitStaticRoutes({
     app,
     requiresAuth,
@@ -899,6 +914,7 @@ function createApp(): express.Application {
     codiconFontsDir,
     sharedUiCssDir,
     sharedUiJsDir,
+    shellLock: { isOperator, landingPath: deploymentLandingPath },
   });
 
   // Legacy engineering compatibility routes — serves legacy HTML pages and API stubs
@@ -1025,10 +1041,11 @@ function createApp(): express.Application {
   // to swarm-app-schedule-wiring.ts; both run at this exact point in boot as before.
   registerPerUserScheduleReconciler(swarmAppService, ctx.pool);
   registerNightlyDevDocsSchedule();
-  // ADR-130: the codex-cli storyboard image provider renders on a bot node, never in this
-  // process — register the bot-node executor into the video-generation feature (fail-soft:
-  // without it the provider reads unavailable and selection fails closed with instructions).
-  wireCliStoryboardImageExecutor();
+  // ADR-130: the CLI storyboard image rails render on a bot node, never in this process —
+  // register the bot-node executor into the video-generation feature (fail-soft: without it the
+  // rails read unavailable and selection fails closed with instructions). The render bot's own
+  // provider record picks the rail and is the record its dispatch carries (the bot-level rule).
+  wireCliStoryboardImageExecutor({ runtimeParamsResolver: () => ctx.swarm?.runtimeParamsResolver });
 
   // CORE-05 installer verifier. Exact kernel route mounted before the package gate/dispatcher so
   // no installed manifest can shadow the postflight authority. App smokes accept the deployment
@@ -1437,7 +1454,9 @@ function createApp(): express.Application {
     swarmAppService,
     logger,
   });
-  app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService, { runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor }));
+  app.use('/api/ui', requiresAuth, createUiProfileRoutes(new UIProfileService(), swarmAppService,
+    { runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor },
+    { landingApp: (req) => focusedLandingApp(deploymentLandingPath(req)), isOperator }));
   app.use('/api/ui', requiresAuth, createWorkspaceNavigationRoutes({ apps: swarmAppService,
     runtime: applicationAuthorization.runtime, resolveActor: applicationAuthorization.resolveActor, access: appAccessService }));
 
@@ -1485,6 +1504,8 @@ function createApp(): express.Application {
     meshCommunicationService: ctx.swarm.meshCommunicationService,
     runtimeRegistryService: ctx.swarm.runtimeRegistryService,
     orchestrator: ctx.orchestrator,
+    // The per-bot provider lookup, so an OSHAL Node chat turn whose bot is a CLI the controller refuses runs on that node.
+    getChatProvider: ctx.getProvider,
     // Task-result landing: the journal outbox awaits this repository directly;
     // remoteTaskResult mesh delivery is a compatibility notification, not the durability boundary.
     workItemRepository: ctx.swarm.workItemRepository,

@@ -83,3 +83,38 @@ export const WorldContributionSchema = z.object({
   facts: z.array(WorldFactSchema).default([]),
 });
 export type WorldContribution = z.infer<typeof WorldContributionSchema>;
+
+/** A granular congressional (STOCK Act) trade disclosure record. */
+export interface CongressTradeRecord {
+  tradeId: string;
+  representative: string;
+  bioGuideId?: string | null;
+  party?: string | null;
+  chamber?: string | null;
+  state?: string | null;
+  district?: string | null;
+  ticker: string;
+  assetDescription?: string | null;
+  transactionType: string;
+  direction: 'buy' | 'sell';
+  transactionDate?: string | null;
+  disclosureDate: string;
+  amount?: string | null;
+  amountRangeLow?: number | null;
+  amountRangeHigh?: number | null;
+  ptrLink?: string | null;
+  source: string;
+  observedAt: string;
+}
+
+/** Filter options for querying granular congressional trade records. */
+export interface CongressTradeQueryFilter {
+  ticker?: string;
+  representative?: string;
+  party?: string;
+  chamber?: string;
+  direction?: 'buy' | 'sell';
+  sinceDays?: number;
+  limit?: number;
+  offset?: number;
+}

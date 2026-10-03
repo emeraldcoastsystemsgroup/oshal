@@ -48,6 +48,12 @@ enforces this.
 
 ## The definition file (`oshal-app.yaml`)
 
+For public artifact delivery under authorization enforce, use the optional
+[`routes[].anonymousRoutes` contract](package-anonymous-routes.md) and declare
+`uses: [package-anonymous-routes]` in addition to existing skills. Only exact GET/HEAD
+paths on an explicitly public mount can opt in; catalogs/callbacks and every undeclared route
+retain their existing protections. `auth: public` alone is not that exception.
+
 | Field | Required | What it is |
 |---|---|---|
 | `name` | ✅ | slug (lowercase, digits, dashes) — the app id |
@@ -140,6 +146,11 @@ schedule deletion, so a stale record cannot run. Handler registration is activat
 never falls back to the generic prompt dispatcher. The in-process call is intentional: loopback
 HTTP could fall through to an unrelated same-path kernel route when dynamic package mounting is
 off. The separately exposed HTTP route still enforces its declared service authentication.
+
+A framework schedule's `cron` is the default, not a fixed contract. An operator can switch the
+schedule off and on or give it another cron through `GET` / `PATCH /api/swarm/apps/:name/schedules[/:id]`.
+The change is stored as an override that is applied at every registration, so it survives restarts,
+reloads and app toggles. Per-user schedules are not controlled there.
 
 ## Package-owned Takeout slices
 

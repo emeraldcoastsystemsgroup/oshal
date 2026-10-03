@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — real .xlsx rendering via exceljs (ADR-103 AI Office). The Excel projection of the same outline the deck renderer draws: table slides become live worksheets (typed Number cells, frozen headers, banded rows), series slides become Label/Value sheets with a live SUM total, metric pairs pool on a shared Metrics sheet, and everything else lands as notes under an Overview whose index hyperlinks into the data sheets. Themed through office-themes' xlsxTheme so "the executive look" means the same thing here as in the .pptx/.docx.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand looks (backlog 2026-09-14, approved 2026-09-22): options.theme may now be a brand look from brandTheme, projected by xlsxTheme with its own colors and faces; an invalid look is refused before anything is built. Code path unchanged for the ten built-in looks.
  */
 
 import ExcelJS from 'exceljs';
@@ -342,10 +343,12 @@ function applyMetadata(wb: ExcelJS.Workbook, title: string): void {
  * @param title - workbook title (Overview title band and file metadata).
  * @param slides - ordered content slides. Bodies may use the layout micro-syntax; see
  *   `slide-content-parser`. Each slide's parsed shape decides its projection.
- * @param options - theme + subtitle/byline. Omitted → the default theme. Deck-only options
- *   (`slideNumbers`, `autoLayout`) have no Excel meaning and are ignored.
- * @returns the .xlsx file as a Buffer. Never throws on hostile input — worst case is a valid
- *   workbook containing only the Overview.
+ * @param options - theme + subtitle/byline. Omitted → the default theme. `theme` is a built-in
+ *   look id or a brand look from `brandTheme`. Deck-only options (`slideNumbers`, `autoLayout`)
+ *   have no Excel meaning and are ignored.
+ * @returns the .xlsx file as a Buffer. Never throws on hostile slide input — worst case is a
+ *   valid workbook containing only the Overview.
+ * @throws BrandLookError when `theme` is a look object that fails validation — nothing is built.
  */
 export async function renderXlsx(
   title: string, slides: RenderableSlide[], options: DeckRenderOptions = {},

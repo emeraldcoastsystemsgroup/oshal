@@ -4,6 +4,7 @@
  * SEQ | AUTHOR                                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com   | Keep terminal dead-letter classification aligned across stale-envelope workers and the two long-polling test labs.
+ * 2   | maintainer@emeraldcoastsystemsgroup.com   | The controller worker's stale-envelope check moved with the worker wiring from extensions/swarm/index.ts to extensions/swarm/controller-swarm-worker.ts; the guard follows it.
  */
 
 import { readFileSync } from 'node:fs';
@@ -24,7 +25,7 @@ describe('dead-letter terminal classifiers', () => {
   });
 
   it.each([
-    'src/app/extensions/swarm/index.ts',
+    'src/app/extensions/swarm/controller-swarm-worker.ts',
     'src/app/bot-node-server.ts',
   ])('%s rejects a stale envelope after dead-letter quarantine', (path) => {
     const body = source(path);

@@ -5,13 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A, node half: push the vendor login this machine holds (the file `codex login` / `claude auth login` wrote after its own localhost redirect, the way VS Code's extension does it) into the swarm under the user's verified OIDC session, and wait for a just-launched browser login to finish before pushing. The credential travels only over the session's cookie jar to the configured swarm origin.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity reads the same rail from Windows Credential Manager: snapshot by content fingerprint, keep the credential in memory, validate its vendor JSON, then post it through the authenticated Electron session.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Import path follows the rename of antigravity-credential.ts to antigravity-login.ts; no behaviour change.
  */
 import { createHash } from 'crypto';
 import { readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { session } from 'electron';
 import type { ConfigStore } from './config';
-import { readAntigravityCredential } from './antigravity-credential';
+import { readAntigravityCredential } from './antigravity-login';
 import {
   LOGIN_TARGETS,
   classifyPushResponse,

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the Word projection of the deck outline (ADR-103 AI Office). Same slides, same themes, but sections become document sections under real Heading styles rather than pages of bullets, so the .docx stays a document: the navigation pane works, a TOC can be inserted, and restyling means editing the style — not two hundred inline runs.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Brand looks (backlog 2026-09-14, approved 2026-09-22): options.theme may now be a brand look from brandTheme, projected by docxTheme with its own colors and faces; an invalid look is refused before anything is built. Code path unchanged for the ten built-in looks.
  */
 
 import {
@@ -348,8 +349,10 @@ function buildFooter(title: string, t: DocxTheme): Footer {
  * @param title - document title (title page, running footer, file metadata).
  * @param slides - ordered content slides; bodies may use the layout micro-syntax (see
  *   `slide-content-parser`). Speaker notes are not carried over.
- * @param options - theme + subtitle/byline. Omitted → the default theme.
+ * @param options - theme + subtitle/byline. Omitted → the default theme. `theme` is a built-in
+ *   look id or a brand look from `brandTheme`.
  * @returns the .docx file as a Buffer.
+ * @throws BrandLookError when `theme` is a look object that fails validation — nothing is built.
  */
 export async function renderDocx(
   title: string, slides: RenderableSlide[], options: DeckRenderOptions = {},

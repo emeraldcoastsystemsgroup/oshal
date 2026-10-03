@@ -278,5 +278,11 @@ The Test Lab card `live-acceptance-jarvis-cache` is the same case and needs the 
 call log.
 
 <!-- live-acceptance:jarvis-prompt-cache:start -->
-No automated measurement has been recorded in this note yet.
+**Live measurement (2026-09-30 07:25 UTC, core c6cf0f94; `node scripts/operations/live-acceptance.js jarvis-cache --record-doc`).** UNAVAILABLE: No OpenAI-compatible call was logged during the 3 asks, so Jarvis answered on another brain (antigravity-cli/gemini-3.8-flash-low). The invariant cache runs only on the OpenAI-compatible rail; which brain Jarvis uses is the operator's choice.
+
+| Conversation | Answer (s) | Calls | Cache state (first call) | Input | Cached | Output | Call latency (ms) | Ledger input | chat_tasks input |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 9 | 0 | - | - | - | - | - | 23470 | 23470 |
+| 2 | 9 | 0 | - | - | - | - | - | 23492 | 23492 |
+| 3 | 17 | 0 | - | - | - | - | - | 26002 | 26002 |
 <!-- live-acceptance:jarvis-prompt-cache:end -->

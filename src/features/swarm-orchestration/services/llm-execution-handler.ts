@@ -39,6 +39,9 @@
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: separate trusted policy/configuration from escaped untrusted ticket, handover, tool, and memory data; append the server-owned user/ticket/tool/scope binding after prompt construction.
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: preserve exact envelope subjects and bind memory retrieval to non-operator owner/tenant/workspace context.
  * 36 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. This is the SECOND chain in this file - step 1 converged the one that tells the bot where its workspace is (line ~1007) and left this one, which reads the handovers back out of it. The two disagreeing means a bot writes a handover the next round cannot find.
+ * 37 | maintainer@emeraldcoastsystemsgroup.com   | Cost/metrics accounting (TokenCapturingProvider, the recorder types and helpers, the envelope owner/tenant readers, the ADR-027 ticket linker) moved to ./swarm-execution-accounting.ts and the filesystem persona layer to ./swarm-file-persona-layer.ts, because this file crossed 800 code lines. Pure move; the moved types and buildFilePersonaLayer are re-exported from here so no import changes.
+ * 38 | maintainer@emeraldcoastsystemsgroup.com   | LLMExecutionHandlerDeps.inlineFilePersona: the in-process hosted planning round (no file tools) gets its persona embedded instead of a read_file instruction it cannot obey. Default off; existing callers unchanged.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com   | inlineFilePersona removed with the in-process hosted planning round it served; planning now crosses the signed hop to a node, which reads its persona file as every bot does.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -50,11 +53,9 @@ import {
   type SwarmMemoryAccessContext,
   type SwarmMemoryService,
 } from '@/features/agent-management';
-import { LLMService, resolveUsageCost, type TokenUsage, type CostResult, type SendRequestOptions, type LLMResponse } from '@/features/llm-provider';
+import type { LLMService } from '@/features/llm-provider';
 import type { EnvelopeExecutionResult } from './swarm-agent-worker';
-import { loadPersonaFromFile } from './persona-file-loader';
 import { RALFHandoverManager } from './ralf-handover-manager';
-import { writePersonaContextFile } from '@/app/composition/tool-runtime-context';
 import { getPhasePrompt } from './phase-dispatch-prompts';
 import { buildSwarmAwarenessPrompt, buildMinimalSwarmAwareness } from './swarm-awareness-prompt';
 import { buildPhasePersonaOverride } from './phase-override-layer-builder';
@@ -67,35 +68,22 @@ import {
   type PromptAuthorizationResolver,
   type TrustedPromptConfiguration,
 } from './prompt-containment';
-import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import {
+  TokenCapturingProvider,
+  linkSwarmTaskToTicket,
+  recordCostEvent,
+  recordMetricsEvent,
+  resolveEnvelopeOwnerSub,
+  resolveEnvelopeTenantId,
+  type CostRecordFn,
+  type MetricsRecordFn,
+} from './swarm-execution-accounting';
+import { buildFilePersonaLayer } from './swarm-file-persona-layer';
 
-/**
- * @description Proxy wrapper around LLMService that captures token usage from provider responses.
- * This is the bridge between the agent layer (which discards token data) and the cost tracking
- * layer (which needs real token counts). Does not modify provider or agent code.
- */
-class TokenCapturingProvider extends LLMService {
-  lastUsage: TokenUsage | null = null;
-  lastModel: string | null = null;
-  private readonly delegate: LLMService;
-
-  constructor(delegate: LLMService) {
-    super(delegate.getProviderName(), {});
-    this.delegate = delegate;
-  }
-
-  async sendRequest(options: SendRequestOptions): Promise<LLMResponse> {
-    const response = await this.delegate.sendRequest(options);
-    this.lastUsage = response.usage;
-    this.lastModel = response.model;
-    return response;
-  }
-
-  override calculateCost(usage: TokenUsage): CostResult {
-    return this.delegate.calculateCost(usage);
-  }
-}
+// Re-exported so existing imports of these from this module keep resolving after the move.
+export type { CostRecordFn, MetricsRecordFn } from './swarm-execution-accounting';
+export { buildFilePersonaLayer } from './swarm-file-persona-layer';
 
 const logger = createChildLogger({ module: 'llm-execution-handler' });
 
@@ -105,31 +93,6 @@ const logger = createChildLogger({ module: 'llm-execution-handler' });
  * it reads the active provider from persisted config (the dropdown selection) and returns
  * the fully wired LLMService instance. The swarm does not pick its own provider.
  */
-/**
- * @description Callback for recording cost events from LLM execution.
- */
-export type CostRecordFn = (event: {
-  taskId: string; agentId: string; providerId: string; modelId: string;
-  inputTokens: number; outputTokens: number; inputCost: number;
-  outputCost: number; totalCost: number; currency: string;
-  ticketExternalId?: string;
-  requestCount?: number;
-  /** End-user (OIDC sub) for per-owner budget attribution (Phase 2). */
-  ownerSub?: string;
-  /** Measured wall-clock duration (ms) of the execution this event bills, when known
-   *  (migration 090 observability). Omit rather than fabricate. */
-  durationMs?: number;
-}) => Promise<void>;
-
-/**
- * @description Callback for recording agent execution events for metrics.
- */
-export type MetricsRecordFn = (event: {
-  agentId: string; ticketExternalId: string; swarmRunId: string;
-  durationMs: number; outcome: 'completed' | 'failed' | 'escalated';
-  retryCount: number; verificationAttempts: number;
-}) => void;
-
 /**
  * @description Dependency bundle for the LLM execution handler factory. Supplies the
  * composition-root provider resolver (the shared getProvider() that honors the persisted
@@ -497,229 +460,6 @@ export function assemblePromptForAnyBot(
   trustedConfiguration: TrustedPromptConfiguration[] = [],
 ): string {
   return assembleContainedPrompt(personaLayers, userMessage, authority, trustedConfiguration);
-}
-
-/**
- * @description Records a cost event from LLM execution using real token counts
- * captured from the provider response via TokenCapturingProvider. The measured
- * execution duration rides along so the ledger row carries per-call latency
- * (migration 090) — the handler already timed the run for its own logging.
- */
-async function recordCostEvent(
-  recordCost: CostRecordFn | undefined,
-  taskId: string, agentId: string, providerId: string, modelId: string,
-  ticketExternalId: string | undefined, capturingProvider: TokenCapturingProvider,
-  ownerSub?: string, durationMs?: number,
-): Promise<void> {
-  if (!recordCost) return;
-  try {
-    const usage = capturingProvider.lastUsage;
-    if (!usage) {
-      logger.debug({ taskId }, 'No token usage captured — skipping cost recording');
-      return;
-    }
-    const resolvedModelId = capturingProvider.lastModel?.trim() || modelId;
-    const cost = resolveUsageCost({
-      providerCost: capturingProvider.calculateCost(usage),
-      usage,
-      providerId,
-      modelId: resolvedModelId,
-    });
-    // Read real API call count from the provider when available
-    const delegate = (capturingProvider as unknown as { delegate: unknown }).delegate as { getLastSessionApiCalls?: () => number };
-    const realRequestCount = typeof delegate?.getLastSessionApiCalls === 'function' ? delegate.getLastSessionApiCalls() : 0;
-
-    await recordCost({
-      taskId, agentId, providerId, modelId: resolvedModelId,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      inputCost: cost.inputCost,
-      outputCost: cost.outputCost,
-      totalCost: cost.totalCost,
-      currency: cost.currency,
-      ticketExternalId,
-      requestCount: realRequestCount > 0 ? realRequestCount : 1,
-      ownerSub,
-      durationMs,
-    });
-  } catch (err) {
-    logger.warn({ err, taskId }, 'Cost recording failed — non-blocking');
-  }
-}
-
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function resolveEnvelopeOwnerSub(
-  payload: Record<string, unknown> | undefined,
-  originalTicket: Record<string, unknown> | undefined,
-): string | undefined {
-  const candidates = [
-    payload?.userSub, payload?.ownerSub, originalTicket?.ownerSub, originalTicket?.owner_sub,
-  ];
-  for (const candidate of candidates) {
-    if (candidate !== undefined && candidate !== null) {
-      return optionalExactUserSubject(candidate, 'swarm envelope ownerSub');
-    }
-  }
-  return undefined;
-}
-
-function resolveEnvelopeTenantId(
-  payload: Record<string, unknown> | undefined,
-  originalTicket: Record<string, unknown> | undefined,
-): string | undefined {
-  const candidate = payload?.tenantId ?? payload?.tenant_id
-    ?? originalTicket?.tenantId ?? originalTicket?.tenant_id;
-  if (candidate === undefined || candidate === null) return undefined;
-  if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 512
-    || /[\u0000-\u001f\u007f-\u009f]/.test(candidate)) {
-    throw new TypeError('swarm envelope tenantId must be exact and control-free');
-  }
-  return candidate;
-}
-
-/**
- * @description Links a swarm bot's task to the parent ticket so cost rollup queries can find it.
- * Creates a ticket_task_links entry with role 'swarm-execution'. Non-blocking — failures are
- * logged but do not affect execution outcome.
- * @param ticketService - Optional ticket service for creating the link
- * @param ticketExternalId - External ticket ID from the envelope payload
- * @param taskId - Per-bot task ID used in chat_tasks
- * @param agentId - Agent ID for logging
- */
-async function linkSwarmTaskToTicket(
-  ticketService: TicketService | undefined,
-  ticketExternalId: string | undefined,
-  taskId: string,
-  agentId: string,
-): Promise<void> {
-  if (!ticketService || !ticketExternalId) return;
-  // Extract canonical ticket UUID from synthetic IDs:
-  //   "verify:UUID" → UUID
-  //   "review:UUID:r1" → UUID
-  //   plain UUID → UUID
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  let canonicalId = ticketExternalId;
-  if (!uuidPattern.test(canonicalId)) {
-    // Try to extract UUID from synthetic patterns like "verify:UUID" or "review:UUID:r1"
-    const uuidMatch = canonicalId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-    if (uuidMatch) {
-      canonicalId = uuidMatch[1];
-      logger.info({ ticketExternalId, canonicalId, taskId }, 'Extracted canonical ticket ID from synthetic external ID');
-    } else {
-      logger.debug({ ticketExternalId, taskId }, 'Skipping ticket link — cannot extract UUID from external ID');
-      return;
-    }
-  }
-  try {
-    await ticketService.linkTask(canonicalId, taskId, 'swarm-execution');
-    logger.info({ ticketExternalId, taskId, agentId }, 'Linked swarm task to ticket for cost rollup');
-  } catch (err) {
-    logger.warn({ err, ticketExternalId, taskId, agentId }, 'Failed to link swarm task to ticket — cost rollup may be incomplete');
-  }
-}
-
-/**
- * @description Records an agent execution event for metrics tracking.
- */
-function recordMetricsEvent(
-  recordMetrics: MetricsRecordFn | undefined,
-  agentId: string, ticketExternalId: string, swarmRunId: string,
-  durationMs: number, outcome: 'completed' | 'failed' = 'completed',
-): void {
-  if (!recordMetrics) return;
-  try {
-    recordMetrics({ agentId, ticketExternalId, swarmRunId, durationMs, outcome, retryCount: 0, verificationAttempts: 1 });
-  } catch (err) {
-    logger.warn({ err, agentId }, 'Metrics recording failed — non-blocking');
-  }
-}
-
-/**
- * @description Loads the bot's persona YAML from the filesystem, writes the context file,
- * and builds a high-priority persona layer that instructs the agent to read the file.
- * This follows the legacy pattern: small system prompt + file-based identity loading.
- * @param agentId - Agent ID for logging and file writing
- * @param agentName - Agent name used to resolve the YAML file
- * @param taskId - Task ID for workspace-scoped context file writing
- * @param personaDir - Optional directory override for persona files
- * @returns Persona layer instructing agent to read context file, or null if not found
- */
-export function buildFilePersonaLayer(
-  agentId: string,
-  agentName: string,
-  taskId: string,
-  personaDir?: string,
-): PersonaLayer | null {
-  try {
-    const personaLookupTarget = resolveFilesystemPersonaLookupTarget(agentName);
-    const persona = loadPersonaFromFile(personaLookupTarget, personaDir);
-    if (!persona || !persona.perspective) return null;
-
-    // Write persona context file to workspace (legacy pattern)
-    const contextFileName = `${persona.name || agentId}-context.md`;
-    const fileWritten = writePersonaContextFile(agentId, persona, contextFileName, taskId);
-
-    if (fileWritten) {
-      // Minimal system prompt — agent reads full identity from file
-      logger.info({ agentId, personaName: persona.name, contextFileName, taskId }, 'Wrote persona context file for swarm execution');
-      return {
-        layerType: 'platform',
-        priority: 5, // Highest priority — bot identity comes first
-        promptFragment: [
-          `# YOUR IDENTITY`,
-          `You are **${persona.name || agentId}** — ${persona.role || 'AI assistant'}.`,
-          '',
-          `IMPORTANT: Before responding to ANY message, you MUST first read the file \`${contextFileName}\` using the read_file tool.`,
-          `This file contains your complete identity, role description, perspective, and behavioral guidelines.`,
-          `Read it first, internalize it, then respond to the user's message in character.`,
-        ].join('\n'),
-        metadata: {
-          serverAuthored: true,
-          contentSource: 'persona-policy',
-          allowedTools: persona.allowedTools,
-          authorizedScopes: [persona.scope, ...Object.keys(persona.authorizations)],
-        },
-      };
-    }
-
-    // Fallback: embed full persona in prompt when file write fails
-    logger.warn({ agentId, personaName: persona.name }, 'Failed to write persona context file — embedding full persona in system prompt');
-    const promptSections = [`## Bot Identity: ${persona.role}`, '', persona.perspective];
-    if (persona.systemPrompt && persona.systemPrompt.trim().length > 0) {
-      promptSections.push('', '## Required Operating Procedure', '', persona.systemPrompt.trim());
-    }
-    return {
-      layerType: 'platform',
-      priority: 5,
-      promptFragment: promptSections.join('\n'),
-      metadata: {
-        serverAuthored: true,
-        contentSource: 'persona-policy',
-        allowedTools: persona.allowedTools,
-        authorizedScopes: [persona.scope, ...Object.keys(persona.authorizations)],
-      },
-    };
-  } catch (err) {
-    logger.debug({ err, agentName }, 'No filesystem persona found — using DB persona only');
-    return null;
-  }
-}
-
-/**
- * @description Resolves the preferred filesystem persona lookup target for the current runtime.
- * Uses BOT_PERSONA_FILE when present so containers can bind an exact persona file, otherwise
- * falls back to the agent name for legacy name-based lookup.
- * @param agentName - Agent name used for the legacy filename lookup.
- * @returns Absolute persona file path or agent name lookup key.
- */
-function resolveFilesystemPersonaLookupTarget(agentName: string): string {
-  const configuredPersonaFile = typeof process.env.BOT_PERSONA_FILE === 'string'
-    ? process.env.BOT_PERSONA_FILE.trim()
-    : '';
-  return configuredPersonaFile.length > 0 ? configuredPersonaFile : agentName;
 }
 
 /**

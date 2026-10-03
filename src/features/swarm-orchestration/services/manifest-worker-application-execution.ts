@@ -10,9 +10,18 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep configured-brain resolver outages operational: propagate the original lookup error instead of converting transient database or network failures into terminal deterministic refusals.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Reuse the reviewed protected_result_owner_issuer_required code for durable-task principal mismatches so every typed refusal remains covered by the source-locked disposition inventory.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Bound reason-only workflows resolve the owner's configured brain even when application signing is not enabled.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve the dispatcher's canonical provider stamp when the owner explicitly selects `bot-default`; this keeps protected queued work on the same per-bot > fleet > agent_config > registry record as interactive remote execution instead of misclassifying the choice as a missing hosted connection.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Resolve `bot-default` independently of push-on-dispatch, preserve runtime-resolver outages, and enforce SEC-05 before signing queued authority: hosted canonical records remain usable by guests while unavailable or guest-ineligible CLI records fall through to the hosted ladder.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Gate `bot-default` itself on the demo-operator carve before reading or signing canonical authority. Catalog API provider ids become the autonomous Cline runtime on a real worker, so the raw id cannot prove guest safety; a persisted marker outside the carve falls through the hosted-only ladder before dispatch.
  */
 import type { InternalTicket } from '@/entities/ticket';
-import type { BotNodeClient, BotNodeRequest, BotNodeResponse } from '@/features/agent-management';
+import {
+  resolveRequiredDispatchConfigFields,
+  type BotNodeClient,
+  type BotNodeRequest,
+  type BotNodeResponse,
+  type RuntimeParamsResolver,
+} from '@/features/agent-management';
 import type { ITaskStore } from '@/entities/task';
 import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -22,6 +31,7 @@ import { appendProtectedResultExecution, assertProtectedResultAccess } from '@/s
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { createChildLogger } from '@/shared/logger';
 import { RefusalError } from '@/shared/refusal-events';
+import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
 
 const logger = createChildLogger({ module: 'manifest-worker-application-execution' });
 
@@ -32,6 +42,7 @@ export interface QueuedHostedBrainConnection { baseUrl: string; apiKey: string; 
 export type QueuedResolvedBrain =
   | { kind: 'hosted'; connection: QueuedHostedBrainConnection }
   | { kind: 'cli'; providerId: string; model?: string }
+  | { kind: 'bot-default' }
   | { kind: 'none' };
 
 /**
@@ -39,10 +50,16 @@ export type QueuedResolvedBrain =
  * supplies the same `resolveUserBrain` ladder used by Jarvis, so a queue cannot silently replace
  * the selected CLI provider with an unrelated hosted connection.
  */
-export type QueuedBrainResolver = (ownerSub: string) => Promise<QueuedResolvedBrain | null | undefined>;
+export type QueuedBrainResolutionMode = 'configured' | 'hosted-only';
+export type QueuedBrainResolver = (
+  ownerSub: string,
+  mode?: QueuedBrainResolutionMode,
+) => Promise<QueuedResolvedBrain | null | undefined>;
 
 /** Controller-added dispatch stamping that a protected request must not carry — see {@link supportedProtectedRequest}. */
-const AUTHORITATIVE_CONFIG_FIELDS = ['providerId', 'model', 'configVersion', 'providerConfigRequired'] as const;
+const AUTHORITATIVE_CONFIG_FIELDS = [
+  'providerId', 'model', 'configVersion', 'providerConfigRequired', 'fallbackOrder',
+] as const;
 const HOSTED_WIRE_FIELDS = ['baseUrl', 'apiKey', 'model'] as const;
 
 /**
@@ -80,8 +97,12 @@ export class QueuedProtectedDispatchError extends RefusalError {
  * @throws QueuedProtectedDispatchError naming an exact unmet requirement, or the original resolver
  * error when configured-brain lookup itself is unavailable.
  */
-async function supportedProtectedRequest(request: BotNodeRequest,
-  resolveBrain?: QueuedBrainResolver): Promise<BotNodeRequest> {
+async function supportedProtectedRequest(
+  request: BotNodeRequest,
+  agentId: string,
+  resolveBrain?: QueuedBrainResolver,
+  runtimeParamsResolver?: RuntimeParamsResolver,
+): Promise<BotNodeRequest> {
   const ownerSub = request.userSub?.trim();
   if (!ownerSub) throw new QueuedProtectedDispatchError('the ticket carries no authenticated owner subject to resolve its configured AI brain');
   if (request.providerIntent || (request.creds && Object.keys(request.creds).length > 0)) {
@@ -90,14 +111,47 @@ async function supportedProtectedRequest(request: BotNodeRequest,
   if (!resolveBrain) {
     throw new QueuedProtectedDispatchError('this controller has no configured-brain resolver wired for queued protected dispatch');
   }
-  const brain = await resolveBrain(ownerSub);
+  let brain = await resolveBrain(ownerSub, 'configured');
+  if (brain?.kind === 'bot-default') {
+    if (!(demoModeEnabled() && isDeploymentOperatorSub(ownerSub))) {
+      brain = await resolveBrain(ownerSub, 'hosted-only');
+    }
+  }
+  if (brain?.kind === 'bot-default') {
+    // Do not inherit the dispatcher's optional pre-stamp: OSHAL_PUSH_ON_DISPATCH=off is a
+    // supported rollback mode, while bot-default is an explicit preference that still needs a
+    // canonical, signed record. Resolver exceptions intentionally escape unchanged (operational
+    // retry); null is an unusable named preference and degrades to the hosted ladder.
+    const configFields = await resolveRequiredDispatchConfigFields(runtimeParamsResolver, agentId);
+    const providerId = configFields?.providerId?.trim();
+    if (!providerId) {
+      brain = await resolveBrain(ownerSub, 'hosted-only');
+    } else {
+      const shaped: BotNodeRequest = { ...request, direct: true, agenticMode: false };
+      delete shaped.byoLlmConnection;
+      for (const field of AUTHORITATIVE_CONFIG_FIELDS) delete shaped[field];
+      Object.assign(shaped, configFields);
+      shaped.providerConfigRequired = true;
+      return shaped;
+    }
+  }
+  if (brain?.kind === 'bot-default') {
+    // A hosted-only resolver must never return the marker; treat it as no usable hosted lane.
+    brain = { kind: 'none' };
+  }
   if (brain?.kind === 'cli') {
     const providerId = brain.providerId?.trim();
     if (!providerId) throw new QueuedProtectedDispatchError('the ticket owner\'s configured CLI brain has no provider id');
-    const shaped: BotNodeRequest = { ...request, direct: true, agenticMode: false,
-      providerId, providerConfigRequired: true };
+    const shaped: BotNodeRequest = {
+      ...request,
+      direct: true,
+      agenticMode: false,
+      providerId,
+      providerConfigRequired: true,
+    };
     delete shaped.byoLlmConnection;
     delete shaped.configVersion;
+    delete shaped.fallbackOrder;
     if (brain.model?.trim()) shaped.model = brain.model.trim();
     else delete shaped.model;
     return shaped;
@@ -143,10 +197,13 @@ async function recordResult(taskStore: ITaskStore | undefined, ticket: InternalT
  * @returns Result only after protected lineage has been linked and persisted.
  */
 export async function executeManifestApplicationBot(client: BotNodeClient, ticket: InternalTicket, agentId: string,
-  request: BotNodeRequest, taskStore?: ITaskStore, resolveBrain?: QueuedBrainResolver): Promise<BotNodeResponse> {
+  request: BotNodeRequest, taskStore?: ITaskStore, resolveBrain?: QueuedBrainResolver,
+  runtimeParamsResolver?: RuntimeParamsResolver): Promise<BotNodeResponse> {
   const protectedTarget = await isApplicationExecutionProtected({ kind: 'bots', operation: agentId });
   const reasonOnly = request.direct === true && request.agenticMode === false;
-  const dispatched = protectedTarget || reasonOnly ? await supportedProtectedRequest(request, resolveBrain) : request;
+  const dispatched = protectedTarget || reasonOnly
+    ? await supportedProtectedRequest(request, agentId, resolveBrain, runtimeParamsResolver)
+    : request;
   if (protectedTarget) {
     logger.info({ agentId, ticketId: ticket.ticketId,
       provider: dispatched.providerId ?? (dispatched.byoLlmConnection ? 'hosted' : null),

@@ -1,5 +1,47 @@
 [
   {
+    "date": "2026-09-30",
+    "title": "Chat-channel adapter core",
+    "pr": "local",
+    "evidence": "Verified across 9 test files (85/85 tests pass) including real-boundary PostgreSQL suites tests/unit/chat-channel-inbound-postgres.spec.ts (15/15 pass), chat-channel-admin-postgres.spec.ts (10/10 pass), and chat-channel-principal-issuer.spec.ts (18/18 pass). Proves dedicated Discord Gateway client (HELLO, IDENTIFY, MESSAGE_CREATE over WebSocket) and WhatsApp/SMS webhook listeners alongside Telegram webhook with owner-scoped identity resolution, verified principal issuer propagation, accountable BotNodeClient task dispatch, in-channel reply delivery, duplicate event replay protection, unlinked and cross-user denial auditing to the PostgreSQL refusal ledger, and executable Test Lab round-trip cases for all four providers (telegram, discord, sms, whatsapp)."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "LoRA autonomous overnight scheduling",
+    "pr": "local",
+    "evidence": "Verified via real-boundary tests in oshal-applications/lora: node --test tests/overnight-schedule.core.test.js (running tests/lora-overnight-schedule.spec.ts, 6/6 pass), tests/callback-grants.core.test.js (tests/lora-callback-grants.spec.ts, 19/19 pass), and tests/signed-callback-boundary.core.test.js (9/9 pass). Proves autonomous mode scheduling via oshal-app.yaml schedule 'lora-autonomous-overnight' targeting runLoraOvernightSchedule, dispatch restricted strictly to owning character with owner-scoped callback grants, parking of approval_required morning-review tickets with dispatch ticket completion, and immediate refusal of replayed, tampered, expired, or cross-owner callback credentials."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Subscription-driven social signals",
+    "pr": "local",
+    "evidence": "Proven on real boundary with DisposablePostgres (enforcing non-superuser/no-bypass-rls role, real migration 060, production GUC pool under OSHAL_DB_GUC_STRICT=deny) and DisposableRedis in tests/unit/social-signal-subscriptions-postgres.spec.ts (8/8 pass) and social-signal-subscriptions.spec.ts (9/9 pass) across npm run test:social-signals (30/30 pass). Demonstrates caller-scoped keyword subscription, owner-isolated inbox message storage under FORCE RLS, system-wrapped poll publishing auditable matched signal to authenticated owner-lane XADD stream, delivery ledger correlation recording, and cross-user denial over HTTP and direct database queries."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Anonymous package routes: a per-route opt-in under authorization enforce (enhancement, operator 2026-09-29)",
+    "pr": "local",
+    "evidence": "Commit 44d8dd02 normalized anonymous route comparison to be key-order-agnostic in sameAnonymousPackageRoutes; live acceptance node scripts/operations/live-acceptance.js vids-publish passed on the installed build (vids-publish-live: 401 on unauthenticated jobs/publish, 200 on exact 868 video bytes, 404 on malformed/revoked tokens, cleanup 0 outstanding 0 errors); npm run test:package-anonymous-routes passed 190/190; tests/unit/package-tools.spec.ts passed 15/15."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "LinkedIn Content Assistant queue workflow",
+    "pr": "local",
+    "evidence": "Real-boundary disposable PostgreSQL suite tests/unit/linkedin-content-queue-postgres.spec.ts passed with all 52/52 tests passing in npm run test:linkedin-content, proving queue ticket to confirmation-gated publish with source citations, caller credentials, audit evidence, unique index retry idempotency, and denial paths; on-box live acceptance node scripts/operations/live-acceptance.js linkedin passed (case linkedin-queue-live: draft 4 is pending-approval, scored 18, names ticket and carries its 1 citation, unconfirmed publish refused 428, cleanup 0 outstanding 0 errors)."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Shared response-renderer completion",
+    "pr": "local",
+    "evidence": "Unit tests pass 93/93 across 7 test files (tests/unit/live-acceptance-response-renderer.spec.ts, response-renderer-registry.spec.ts, response-renderer-components.spec.ts, response-renderer-media-kinds.spec.ts, response-renderer-parse.spec.ts, response-renderer-display-profile.spec.ts, test-lab-response-renderer-registration.spec.ts); on-box live acceptance node scripts/operations/live-acceptance.js response-renderer passed (case shared-response-renderer-live: all 3/3 card steps pass, same-origin Mermaid 11.17.2 verified from /dist/vendor/mermaid, Little Monsters Tutor executed 2/2 tests with 0 failures)."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Vids public-publish rail",
+    "pr": "local",
+    "evidence": "node scripts/operations/live-acceptance.js vids-publish passes (vids-publish-live); unauthenticated access refused 401 on jobs/control, published immutable MP4 served anonymously at 200, malformed and revoked tokens answer 404, cleanup outstanding 0; package-anonymous-routes and package-anonymous-routes-http tests pass 81/81."
+  },
+  {
     "date": "2026-09-24",
     "title": "Jarvis /ask answers 404 session_not_found in two guards (2026-09-16)",
     "pr": "d8635e9c",
@@ -774,12 +816,6 @@
     "evidence": "IPO event play execution monitors SEC EDGAR filings, cancels entries on ring-fenced tickers, manages post-fill exit fences, and places bracket orders; guarded by trading-event-plans.spec.ts (15/15 pass)."
   },
   {
-    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
-    "date": "2026-09-24",
-    "pr": "main",
-    "evidence": "Signed HTTP delegation dispatches all core manifest-worker ticket types over signed bot node endpoints with replay-bounded tokens, refusing unauthenticated inline paths; guarded by signed-delegation-core-ticket-types.spec.ts (22/22 pass)."
-  },
-  {
     "title": "Connector marketplace live brokered reads",
     "date": "2026-09-24",
     "pr": "main",
@@ -862,5 +898,119 @@
     "title": "One parts model across Circuit Lab, Animatronics and Embodied (2026-09-14)",
     "pr": "224 (store), 270 (store)",
     "evidence": "Store #224 (e8a3dca9) and #270 (12eb9cf9) are merged; on store main 88aa85e5 Circuit Lab's SG90 row and both brushless motor rows read their owners' rows (animatronics, embodied) and restate no name, mass or price, guarded by circuit-lab tests/driver-catalog.test.js and tests/shared-parts.test.js and embodied tests/engine-parts-catalog.test.js, with no scripts/ guard changed by either PR. The Done-when calls for no live result and no live receipt was taken (oshal-local-api was stopped at audit time, so the GET of /api/circuit-lab/catalog/drivers could not be read)."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Kernel route-auth spec red on main: expects more kernel route declarations than exist (2026-09-29)",
+    "pr": "938",
+    "evidence": "PR #938 (21427e0, merged as 34bb2cbc1c7075c4c7ea84e91c8c60a6de4a8c3f) replaces the stale greater-than-three floor with the exact remaining Security manifest/module/factory/path/operator-auth tuple. Actual YAML inventory and server mount agree; Engineering's empty route declarations are intentional framework ownership. Original failure reproduced (16 pass/1 fail); repaired spec 17/17. Deleting the actual Security declaration and substituting a different mount while retaining its count each produced 16 pass/1 expected failure; exact YAML restored to blob90a957d388813bebd4a7708be38b96cb45c672d8. Focused tests re-run on merged main34bb2cbc: 17/17, no skips, exit0. Independent source review, normal publish gate and archived committed-HEAD typecheck passed without bypass. Tests/README.md and docs/governance/real-boundary-regression-audit.md record commands and limits. This item's source-contract done-when is satisfied; no HTTP, database, browser, installed-authorization or full-suite claim."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "Installer and chat-channel strings still use the retired standalone product name",
+    "pr": "944",
+    "evidence": "Existing main implements the oshal display strings, naming guards, disposition register and the settled rename-on-upgrade decision. PR #944 (bad30a45079db0be2a8b92bf0032b1756ca67ab2, merged as a8beb304c19d187d643fc695aa064618431bc562) fixes two remaining failure paths: undeletable legacy shortcuts no longer permit duplicate replacement/Startup entries; failed/no-op firewall deletion is verified and stops before false removal success or replacement. Both named unit suites pass 63/63 on merged main, including actual Windows PowerShell parsing and execution of the production functions/mainflow in a 15-case in-memory OS-boundary matrix. Successful legacy/mixed/current/fresh states each run twice; denied/no-op removal, failed query, non-admin behavior and unrelated-artifact survival are guarded. Actual warning-and-continuing shortcut mutation and suppressed firewall deletion each produce 62 pass/1 expected failure; exact source restored before the final run. The initial overlapping mutation attempt is disqualified, and its corrected sequential repeat is used. Independent review, normal publish gate and genuine archived committed-HEAD typecheck pass. docs/business/product-naming-disposition.md records the decision, receipt and limitations; both suites register in Test Lab. This closes only the naming/upgrade source-contract item: no live firewall/shortcut change, bare-machine installation, enrollment or reboot is claimed. Duplicate-current-firewall multiplicity is source-reviewed, not separately represented by the matrix's set model; broader installer live proofs remain open."
+  },
+  {
+    "date": "2026-09-29",
+    "title": "The isolated-browser fixture fails a passing suite when the browser takes over 5 s to exit (2026-09-15)",
+    "pr": "955",
+    "evidence": "The existing f96999df fixture uses one configurable 45-second exit budget, scoped termination and observed exit evidence. Current-main acceptance additionally repaired an inventory false positive: a valid explicit cleanup-hook timeout no longer requires a redundant global setting; short explicit overrides still fail. Original current-main run21pass/1fail retained; corrected spec SHA256eccb4f9335b22ad66be73dea2018d087ca7243aef5c0f4abef579c53e809dd19 passed five consecutive actual isolated-browser, jarvis-no-brain-browser and budgets-unit-split-browser runs28/28 each, zero skips, while independent build lanes continued. Runtime23:17:48-23:19:42UTC, 2026-09-29; owned 180-second outer deadlines, fresh2800MiB admission/reserve600MiB, runner128/worker384, observed free minima3464/3524/3714/3651/3651MiB. The fake-clock never-exit case and real BrowserServer withheld-exit-confirmation deadline remain loud refusals, not a claim of physically unkillable Chromium. Independent source and evidence review found the exact done-when satisfied. docs/testing/isolated-browser-acceptance.md retains commands, source/log hashes and fixture boundaries; tests/README.md and the boundary audit link it. No production fixture rewrite, deliberate saturation benchmark, installed Jarvis/provider/database acceptance or whole-suite proof is claimed."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Credential ownership and execution actor are explicit in connector and Jarvis metadata",
+    "pr": "5f2a2257",
+    "evidence": "Commit 7e1430e4 added credentialOwner, executionActor, provisioningOwner, and fallbackPolicy to ConnectorSpec metadata in src/app/connectors/runtime/spec.ts, swarm-apps/connector.schema.json, and updated onboarding derivations in src/app/connectors/marketplace-service.ts with twilio.yaml annotated and tested (4/4 connector marketplace specs PASS). Commit 5f2a2257 extended parseToolCatalog in src/app/routes/jarvis-tool-catalog.ts to enforce and validate the four ADR-065 dimensions and simulationOnly flag on tool entries, annotated oshal-voice-sim.js in src/app/routes/jarvis-tools.yaml with simulationOnly: true and none/user/none/none dimensions, and added unit tests in tests/unit/jarvis-tool-catalog.spec.ts (25/25 PASS). npm run typecheck passed with exit code 0 across tsconfig.json and tsconfig.server.json."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "Rate the nine store packages that were under other lanes' claims (2026-09-29)",
+    "pr": "12eb8014 (store)",
+    "evidence": "Commit 12eb8014 in oshal-applications added valid rating blocks to all 9 unrated apps (animatronics, calendar, dnd, drone, embodied, little-monsters, lora, pumpkin, spaces), ran node scripts/ai-usage-ledger.mjs --write to generate AI-USAGE-LEDGER.md and package READMEs, and removed --allow-unrated from .github/workflows/store-ci.yml and scripts/store-ci-local.mjs. All 22 mutation tests pass in scripts/ai-usage-ledger.test.mjs, and node scripts/ai-usage-ledger.mjs --check passes with 0 unrated packages across all 67 packages."
+  },
+  {
+    "date": "2026-09-30",
+    "title": "A catalog-less protected app cannot have a working system service (2026-09-16)",
+    "pr": "957",
+    "evidence": "Activation-time refusal authorization_service_catalog_required merged in PR #957 (1835d800); 14/14 tests in tests/unit/application-service-activation-postgres.spec.ts pass on disposable PostgreSQL proving no-write and existing-row preservation."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "GitHub-side residue of the 2026-09-12 attribution scrub",
+    "pr": "705",
+    "evidence": "Closed on the Done-when's second alternative: the operator accepted the GitHub-side residue on 2026-09-21 and no Support request is filed, recorded in docs/BACKLOG.md by PR #705 (d5bfb7c8, \"operator decision 13 of 75\"). The residue is reachable only by SHA or refs/pull/*/head; main's last 400 commits carry no attribution line (re-measured on 7bf94478)."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Versioned platform-credential distribution if redistribution returns (not commissioned)",
+    "pr": "741",
+    "evidence": "Not commissioned, not built: the operator ruled on 2026-09-21 that a node gets oshal platform credentials, if it ever needs them, by enrolment plus a fetch from the custody broker, never by broadcast. The ruling is recorded in the entry by PR #741 (8be6e4d5). The retired Redis credential pub/sub rail stays disabled (src/app/extensions/swarm/index.ts:1052-1054 on main 7bf94478)."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "ADR-045 graph-tier residuals",
+    "pr": "0681d5a9 (core), 4cd6c3b3 (store)",
+    "evidence": "All three ADR-045 residuals are closed. The RCA/capture persona graph recipes were done on 2026-07-29, subgraph() was rejected (WON'T BUILD), and world-data was promoted to a kernel skill under the operator's 2026-09-21 Option A (PR #744), in core 0681d5a9 and store 4cd6c3b3. The loader refuses unknown uses ids, and check-kernel-skills Phase 3 makes every store package declare the kernel skills its compiled js imports (kernel-uses-declaration.spec.ts world-data case). The deployed 7bf94478 image carries world-data in its registry."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "ADR-139 Stage 4a — the source direction: a generic \"pick an artifact\" picker",
+    "pr": "431",
+    "evidence": "Signed-in installed acceptance on 2026-09-26 (COLLABORATE.md 06:09 UTC, repeated independently at 10:00 UTC): Portrait Studio's shared picker listed the registered sources, and an authorized OSHAL Storage PNG reached the crop stage through its owner-bound handle. Core 21ad8902 shipped in PR #431. Re-checked on deployed 7bf94478 (2026-10-01): /api/artifacts/sources and /api/artifacts/picker.js answer 200, and portrait-studio 1.15.3 is active."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Combined home workspace",
+    "pr": "fd5d3957 (store), 81e77fcd (store)",
+    "evidence": "Store group workspace 1.0.0 (fd5d3957, 81e77fcd) binds exactly home, social, career-hunter, storage, switchboard and video, per the operator's fixed-member decision (PR #765). On 2026-09-26, signed-in /cockpit/?app=workspace opened each member's own page (COLLABORATE.md 11:00 UTC), and the deployed 7bf94478 profile still borrows 13 member surfaces and owns no bot. The activation refusal names the missing member (swarm-app-group.ts, swarm-app-groups.spec.ts), and the group is listed in marketplace.json and the store README catalog."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Data-model explorer: deployed — prove it on the box",
+    "pr": "431",
+    "evidence": "Installed acceptance on 2026-09-26 (COLLABORATE.md 06:02 UTC, repeated at 11:01 UTC): a signed-in operator walked all four /data-model views against live stores. The installed Data model explorer Test Lab card reported pass with the posted counts (429 tables, 16 views, 89 apps, 133 links, 1 unowned), which are also recorded in architecture/data-model/explorer.md. The explorer (18edcbf4) shipped in PR #431. On deployed 7bf94478 the operator route answers 200 and an anonymous request gets 401."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Session cleanup left on the operator's box (2026-09-06)",
+    "pr": "776",
+    "evidence": "The operator decided on 2026-09-21 to turn the node print service off (PR #776). printServiceEnabled is false in this machine's node config, and nothing listens on 631-633 (re-checked 2026-10-01). The orphaned operator PAT f17a2172 was revoked on 2026-09-14, and the box's token list still reports revoked: true."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "CI secret-scanner remote mutation proof",
+    "pr": "975",
+    "evidence": "Closed on the operator's 2026-09-20 re-scope to the local secret-scan gate. docs/security/secret-scan-planted-fixture-proof.md records the 2026-10-01 re-run (core #975, ce998b00) of tests/unit/ci-local-secret-scan-planted-fixture.spec.ts against the real zricethezav/gitleaks:latest image: clean PASS, planted FAIL scanner rc=1 (leaks found: 1), allowlisted control PASS, fixture removed PASS. The guard now sources scripts/ci/ci-export.sh, and tests/unit/real-boundary-doctrine.spec.ts requires it to source every helper the gate calls. The planted value is synthetic, lives only in a temporary repository that is never pushed, and is redacted from every output."
+  },
+  {
+    "date": "2026-10-01",
+    "title": "Strategy Studio and Bot Forge conversational parity — Studio half PROVEN 2026-09-06",
+    "pr": "979",
+    "evidence": "Studio half proven live 2026-09-06 (docs/apps/trading/studio-parity-proof.md). Forge half: node scripts/operations/live-acceptance.js forge-edit PASSED on the box on 2026-10-01, core a6de96c5 (carries #979, 0a5786cf) on image a61932b7a9cb: the edit of pack testlab-live-forge-edit-466f0790 kept both agentIds and its ticket type, moved the version 1.0.0 -> 1.0.1 with edited: true, left one manifest loaded from the same path with one app, and the Packs panel said \"Updated in place\"; cleanup removed 8, kept 2 (the authorization posture row and catalog snapshot, tracked by \"Authorization posture rows and catalog snapshots for a removed app are never deleted\"), outstanding 0, errors 0. Recorded in docs/apps/bot-forge-edit-in-place.md."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "The build/swarm pipeline has no signed transport - every work unit rides the Redis mesh",
+    "pr": "986",
+    "evidence": "Live run 3 on the preview deploy of 4d244b8a: PASS tickets-in-tickets at 01:31 UTC (root d81ef2e5 planned on system-architect's node under the installed fleet default, two children run one at a time over the signed hop by code-developer and test-engineer, root assembled to customer_action; cleanup removed 7, outstanding 0, errors 0, residue 0). Recorded in src/features/swarm-orchestration/README.md (\"Live proof: tickets in tickets\"). Guards: controller-pm-planning-node-postgres, planning-output-source, child-ticket-owner-inheritance-postgres, build-child-dispatch-gate, signed-swarm-child-dispatch, swarm-verification-enforced-fallback, live-acceptance-tickets-in-tickets."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "Token Chase replay acceptance picks a capture that names no producing bot",
+    "pr": "992",
+    "evidence": "Spec half (core #992, 5a031384): the real-lane case in tests/unit/live-acceptance-token-chase-replay.spec.ts lists the identity-less run in evidence.skipped and posts its own tagged run on oshal-assistant; red on the unchanged module (Tests 2 failed | 17 passed (19)), green 19/19. Live on 2026-10-02, core bbf062ce (carries 5a031384) on image 9d9bbd02607c: node scripts/operations/live-acceptance.js token-chase-replay (09:02:50-09:03:15Z) printed \"PASS token-chase-replay (token-chase-tail-replay-live)\" and \"live-acceptance: 1 case(s) - 1 pass, 0 fail, 0 degraded, 0 unavailable\", exit 0. The detail does not contain \"the producing bot (unknown)\" (grep -c 0); reproduced.agentId and started.agentId are a0000000-0000-0000-0000-000000000050 on the case's own tagged run testlab-live-token-chase-replay-a853cd55; cleanup removed 1, outstanding 0, errors 0. Recorded in docs/governance/real-boundary-regression-audit.md (token-chase-replay rows) and docs/test-lab.md. The store-bound replay stays under \"Workspace-bound checkpoint and tail replay\"."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "AI Office: draw a deck, document or workbook in a brand kit's exact colors and fonts (2026-09-14)",
+    "pr": "978, 996, 402 (store)",
+    "evidence": "Core #978 (bc4ffcda) on main bbf062ce: resolveTheme, docxTheme and xlsxTheme take a look id or a look (deck-themes.ts:185, office-themes.ts:108 and 139), DeckRenderOptions.theme is DeckThemeId | DeckTheme (presentation-types.ts:208), brandTheme validates a kit on a built-in base (brand-theme.ts:157), and an invalid look throws BrandLookError invalid_brand_look and is never defaulted; #978 changes no package.json and adds no route. Re-run on bbf062ce on 2026-10-02: npx vitest run tests/unit/brand-look-render.spec.ts tests/unit/deck-looks-unchanged.spec.ts gave Test Files 2 passed (2), Tests 20 passed (20). Store #402 (f05f11cb, presentations 2.13.0) sends the caller's Create kit and names the look brand:<base>. Live: core card brand-look-render state pass on 2026-10-01 (a6de96c5, image a61932b7a9cb); package case brand-render (app:presentations:test:brand-render) on 2026-10-02 through node scripts/operations/live-acceptance.js package-run on core bbf062ce (carries #996 a8ef355c), image 9d9bbd02607c, presentations 2.13.0: Lab run 0c48d3ab ended passed, 5 tests executed, 0 failed, exit 0. Recorded in docs/adr/103-ai-office-one-themed-engine.md (addendum) and docs/test-lab.md."
+  },
+  {
+    "date": "2026-10-02",
+    "title": "Venture Plan's schema setup sometimes deadlocks at boot (2026-10-01)",
+    "pr": "1005, 406 (store)",
+    "evidence": "Clause 1, store #406 (613c2ad1, venture-plan 1.5.1): ensureVentureSchema passes the package-owned lockKey VENTURE_SCHEMA_LOCK_KEY = 47129001, so the kernel applies the bootstrap in one transaction behind pg_advisory_xact_lock. venture-plan/tests/venture-schema-postgres.test.mjs runs the two concurrent ensureVentureSchema calls one api boot starts against a disposable PostgreSQL. On 1.5.0 (b715b129) installed-database boots failed 9 of 20 with 40P01 and first-install boots 20 of 20 with 23505 on pg_type. On 1.5.1, 0 of 20 failed in each mode (re-run by the verifier). Test Lab case schema-bootstrap-postgres. Clause 2, every api boot in the first deploy window after 1.5.1 was staged (2026-10-02 08:59 UTC, deploy-store-package.sh from core bbf062ce, store main 971169d5, one api stop/start). Boot 1: api StartedAt 08:59:40Z on image 9d9bbd02607c. docker logs --since that StartedAt | grep -c gave 0 \"venture rebaseline schema bootstrap failed\", 0 \"venture schema bootstrap failed\", 0 \"deadlock detected\" and 2 \"venture schema ready\" (09:00:15.656Z, 09:00:15.735Z). Recorded in core #1002. Boot 2: api StartedAt 09:24:44.288Z (deploy of main 1e66eebf, image de37b5711126, container recreated 09:24:42Z). The same four counts are 0 / 0 / 0 / 2, with \"venture schema ready\" at 09:25:05.370Z and 09:25:05.443Z (module venture-schema, tables 13). Re-read at 09:47 UTC: still RestartCount 0, no later start, and the installed deployed-apps/venture-plan/oshal-app.yaml reads version 1.5.1. Recorded in docs/governance/real-boundary-regression-audit.md."
   }
 ]

@@ -4,7 +4,9 @@
 Operator direction 2026-09-05 (*"we are taking like 6 applications and binding them together and setting
 a toolbar … we need a way to define that outside the swarm directory … I guess it's a yaml"*). Core
 ships the kind, the borrowed-surface resolver, `readiness:`, the shared dashboard and the verifier
-pass-through; the store ships the Intelligent Career group and its members' readiness probes. See
+pass-through; the store ships the Intelligent Career group and its members' readiness probes; the
+store also ships the Home Workspace group (`workspace` 1.0.0, 2026-09-26) with six required members:
+home, social, career-hunter, storage, switchboard and video. See
 "What is built" at the end. D7 (a story per role) shipped 2026-09-07 in career-hunter 1.16.0.
 
 **Date:** 2026-09-05
@@ -210,6 +212,12 @@ existing resume-state route; `stories` and `materials` on a new readiness route)
 (`portrait`), social (`facebook`, `signals`), print-ingest (`subscription`). career-hunter's ADR-139
 destination ("Add to Career profile", 1.14.0) is the Send-to leg. `HOST_APP_MAP` on the demo box
 points `career.oshal.ai` at the group.
+
+**Home Workspace group (store fd5d3957/81e77fcd, 2026-09-26).** `workspace/oshal-app.yaml` requires
+home, social, career-hunter, storage, switchboard and video, and borrows 13 member surfaces by
+`{app, surface}`. It owns no bot, route, tool or workflow, and names Smart Home's `home-bot` as a
+metadata-only concierge. Members are required: on a box missing one, activation fails and names it.
+Installed and signed-in navigation was accepted on 2026-09-26.
 
 **D7, the story review (career-hunter 1.16.0, 2026-09-07).** `engine/jobhunter/stories.py` walks the
 profile's roles, asks about the first one with no story using that role's OWN bullet, and attaches the

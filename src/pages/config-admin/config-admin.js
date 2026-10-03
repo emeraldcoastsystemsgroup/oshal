@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron + deprecated Google Search MCP service-runtime sections (wiring, state, load, render); RAG runtime config retained
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fleet-default LLM provider switch panel (config-admin-fleet-default.js) above the per-bot section: loaded with the rest of the page, rendered from state, Save/Clear wired to PUT/DELETE /api/agents/provider-switch/fleet-default. The per-bot provider select is live now that the API reports providerOverridable for every registry bot (its save path is unchanged: PUT /runtime writes the bot's own row).
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The page's start (app.init: event wiring plus the six load reads) runs only when no ADR-164 D6 audience view is active, so a shell framing /config/ with ?audience=company|family gets the read-only card from index.html and the full page never loads or wires its save controls; without an audience, with one the page does not provide, or on a core without the kit, it starts exactly as before.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | Agent-scoped deep links no longer read the hidden shared-config, ownership, or RAG panels. A shared secret-store refusal cannot blank the independent per-bot provider controls, while the full config surface keeps the existing encrypted-secret guard unchanged.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -209,16 +210,26 @@ class ConfigAdminApp {
 
   async loadAll() {
     const startedAt = Date.now();
-    this.setStatus('Loading config ownership and admin data...', 'info');
+    const agentScope = this.state.viewScope === 'agent';
+    this.setStatus(agentScope ? 'Loading bot configuration...' : 'Loading config ownership and admin data...', 'info');
     logger.info('Loading config admin state', {
       selectedAgentId: this.state.selectedAgentId || null,
       viewScope: this.state.viewScope,
     });
     try {
+      const sharedReads = agentScope
+        ? [
+            Promise.resolve({ ownership: {} }),
+            Promise.resolve({ config: {} }),
+            Promise.resolve({ config: {} }),
+          ]
+        : [
+            fetchJson('/api/config/ownership'),
+            fetchJson('/api/config'),
+            requestJson('/api/config/rag').catch(() => ({ config: {} })),
+          ];
       const [ownership, config, ragConfig, providers, agents] = await Promise.all([
-        fetchJson('/api/config/ownership'),
-        fetchJson('/api/config'),
-        requestJson('/api/config/rag').catch(() => ({ config: {} })),
+        ...sharedReads,
         fetchJson('/api/providers'),
         fetchJson('/api/agents'),
       ]);

@@ -15,6 +15,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — covers the four refusals (red run, unpinned sha, missing credential, missing arguments), the success path's tag/push ORDER (the immutable sha- tag is pushed before `latest`, so a run that dies between the two never leaves `latest` pointing at something the registry has no record of), a failing push, and the secret discipline: the token reaches docker only on stdin and appears in neither the script's output nor any command line.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Cover the CALLER, which had no coverage at all: deleting the `--failed` forwarding from ci-local.sh left this file 8/8 green, so the refusal that matters most - a red run never reaching the publish script - rested on reading the code. The production publish block is now sliced out of the shipped ci-local.sh and driven with recording stand-ins, the way ci-local-inherited-export.spec.ts drives the gate sequence. Also pins both push-failure registry states rather than one wording, the logout on the failure path, and the dangling-flag refusal.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every case is pinned to a nonexistent OSHAL_GHCR_ENV_FILE so no test can read the checkout's real .env; two cases cross the publisher boundary itself - the real script logs in with a credential read from a scratch .env, and refuses with no registry call when there is neither .env nor environment; three cases pin the scheduled source-posture refusal (unpinned HEAD refused, pinned origin/main allowed, interactive left to the operator).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ci-local.sh's new RESOURCE-EXHAUSTED outcome keeps unjudged gates out of FAILED_GATES, so a run whose only problem was a starved host would have reached the publish script with an empty failed list. Two cases: the caller refuses such a run, and gate_publish_image forwards the exhausted gates so the script's own refusal fires too.
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -292,6 +293,13 @@ describe('ci-local.sh refuses before it ever reaches the publish script', () => 
     expect(r.out).toContain('the run is red');
   });
 
+  it('does not reach it when a gate was resource-exhausted and nothing failed', () => {
+    // A starved gate was never judged, so the run is not all-green even with FAILED_GATES empty.
+    const r = runCaller('PUBLISH_IMAGE=1; SKIP_IMAGE=0; SKIP_E2E=0; FAILED_GATES=(); EXHAUSTED_GATES=(unit)');
+    expect(r.ran, 'a run with an unjudged gate reached the publish script').toBe(false);
+    expect(r.out).toContain('the run is red ( resource-exhausted: unit)');
+  });
+
   it('does not reach it on a scheduled run that fell back to local HEAD', () => {
     const r = runCaller('PUBLISH_IMAGE=1; SKIP_IMAGE=0; SKIP_E2E=0; SCHEDULED=1; SOURCE_POSTURE=DEGRADED_FETCH_FAILED_HEAD_FALLBACK; FAILED_GATES=()');
     expect(r.ran, 'an unpinned scheduled run reached the publish script').toBe(false);
@@ -362,6 +370,32 @@ describe('ci-local.sh refuses before it ever reaches the publish script', () => 
       .toContain('--failed trivy image-smoke');
     expect(argv).toContain(`--sha ${SHA}`);
     expect(r.status, 'a refusing publish script must fail the gate').not.toBe(0);
+  });
+
+  it('forwards resource-exhausted gates to the script as well, so its own refusal fires', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-local-forward-exhausted-'));
+    const record = path.join(dir, 'argv.txt').replace(/\\/g, '/');
+    fs.mkdirSync(path.join(dir, 'scripts', 'ci'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'scripts', 'ci', 'publish-image.sh'),
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> '${record}'\nexit 2\n`);
+    const start = CI_SOURCE.indexOf('gate_publish_image() {');
+    const body = CI_SOURCE.slice(start, CI_SOURCE.indexOf('\n}\n', start) + 3);
+    const script = path.join(dir, 'harness.sh');
+    fs.writeFileSync(script, [
+      'set -uo pipefail',
+      'log() { printf "%s\\n" "$*"; }',
+      `REPO_DIR='${dir.replace(/\\/g, '/')}'`,
+      `SOURCE_SHORT_SHA='${SHA}'`,
+      `OSHAL_CI_GHCR_IMAGE='${REMOTE}'`,
+      'FAILED_GATES=()',
+      'EXHAUSTED_GATES=(unit image-build)',
+      body,
+      'gate_publish_image',
+    ].join('\n') + '\n');
+    const r = spawnSync(BASH, [script.replace(/\\/g, '/')], { encoding: 'utf8', timeout: RUN_TIMEOUT_MS });
+    const argv = fs.existsSync(record) ? fs.readFileSync(record, 'utf8') : '';
+    expect(argv, 'the exhausted gates were not forwarded').toMatch(/--failed\s+unit image-build/);
+    expect(r.status).not.toBe(0);
   });
 
   it('reaches it on an all-green run, and forwards the empty failed list', () => {

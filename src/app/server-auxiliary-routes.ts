@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from server.ts (BACKLOG #1788): auxiliary route groups (public/legacy auth aliases, provider OAuth/auth routes, core ticketing routes, ops telemetry routes, and system onboarding/health/preset/haven routes) preserving exact registration order.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added decomposed route groups (UI documents, providers & connectors, devops & judge, budgets & queues, content & assistant, observability & voice, agent directory, governance, and workflow studio) to satisfy decomposition threshold (<800 lines).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Mounted /api/experience/availability behind requiresAuth in the content and assistant group: the caller's own busy windows (no event content) for the central assistant's Calendar view (routes/experience-availability-routes.ts).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Mount /api/calendar behind requiresAuth in content and assistant group: full CRUD for Google Calendar meetings and events.
  * -----------------------------------------------------------------------------
  */
 
@@ -58,6 +59,7 @@ import { createQueueDlqRoutes } from './routes/queue-dlq-routes';
 import { createNotifyRoutes } from './routes/notify-routes';
 import { createContentRoutes } from './routes/content-routes';
 import { createExperienceAvailabilityRoutes } from './routes/experience-availability-routes';
+import { createCalendarRoutes } from './routes/calendar-routes';
 import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-routes';
 import { createConfigRoutes } from './routes/config-routes';
 import { createLogsRoutes } from './routes/logs-routes';
@@ -256,6 +258,7 @@ export function mountContentAndAssistantRoutes(
   app.use('/api/content', requiresAuth, createContentRoutes(ctx, apiDir));
   app.use('/api/linkedin-assistant', requiresAuth, createLinkedInAssistantRoutes(ctx, apiDir));
   app.use('/api/experience/availability', requiresAuth, createExperienceAvailabilityRoutes({ pool: ctx.pool }));
+  app.use('/api/calendar', requiresAuth, createCalendarRoutes({ pool: ctx.pool }));
 }
 
 /**

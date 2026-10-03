@@ -10,6 +10,8 @@
   5 | maintainer@emeraldcoastsystemsgroup.com   | Say what a Startup entry actually does. It runs at LOGON, not at boot, so "comes back after a reboot with nobody present" was true only on an auto-logon machine - a claim the next reader would have paid for at the worst moment. The success line now says "when you next sign in" and names the locked-login-screen case.
   6 | maintainer@emeraldcoastsystemsgroup.com   | Every string a person reads here names the product as it is called today, and the Desktop/Startup shortcuts are renamed in place on upgrade (operator decision 2026-09-20). A shortcut is identified by its filename, so writing the new .lnk without removing the old one would have left an upgraded box with two shortcuts to the same launcher - and two Startup entries launching the node twice at sign-in. Remove-LegacyLauncherShortcut deletes the old .lnk from both folders before the new one is written; it is the only place here that still knows the old name, and it consumes it by removing it.
 
+  7 | maintainer@emeraldcoastsystemsgroup.com | Refuse an incomplete legacy-shortcut migration before replacements are created; verify removal instead of treating duplicate Startup entries as cosmetic.
+
   installer/lib/install-node.ps1 -- make THIS machine a worker node of someone else's swarm.
 
   The node app is packages/oshal-chat (Electron). Its ConfigStore reads OSHAL_CONTROL_PLANE_URL /
@@ -270,8 +272,9 @@ product no longer uses -- on the Desktop, where a person sees it, and in Startup
 also launch the node a second time at sign-in. Removing the old one here is what makes an upgraded
 box end with exactly one. This is the ONLY place in the node installer that still knows the old
 name, it is consumed by a REMOVE, and nothing reads it afterwards, so the dual-name lookup does not
-survive past this one-time upgrade. Best effort: a shortcut that cannot be deleted is cosmetic, and
-failing the install over it would be worse than saying so.
+survive past this one-time upgrade. Failure stops this upgrade before either replacement is
+created: duplicate Startup entries would launch two nodes. Correct the reported file permission
+or lock and rerun; an unsuccessful deletion is never reported as a completed migration.
 .PARAMETER Directory The folder to clean (Desktop or Startup).
 .OUTPUTS none
 #>
@@ -282,9 +285,12 @@ function Remove-LegacyLauncherShortcut {
     if (-not (Test-Path -LiteralPath $legacyPath)) { return }
     try {
         Remove-Item -LiteralPath $legacyPath -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath $legacyPath -ErrorAction Stop) {
+            throw "Legacy launcher shortcut still exists after removal."
+        }
         Write-Info "Removed the launcher shortcut an earlier install left in ${Directory} under the old name."
     } catch {
-        Write-Warn "Could not remove the old shortcut at ${legacyPath}: $($_.Exception.Message)"
+        throw "Cannot complete the launcher shortcut upgrade at ${legacyPath}; no replacement shortcut was created. Correct the file permission or lock and rerun. $($_.Exception.Message)"
     }
 }
 

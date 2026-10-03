@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — corporate insider (SEC Form 4) trade signal via openinsider, aggregated per ticker into world_metrics. The strongest informed-money tell: officers/directors trading their OWN company.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export INSIDER_URLS (the openinsider pages read, or the WORLD_INSIDER_URLS override) so the World sources screen names where this collector reads.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Report the openinsider pages' feed outcome (feed: ok / partial / failed over the pages asked) so the sources screen can tell a dead feed from a clean run.
  */
 
 /**
@@ -20,17 +22,19 @@
 
 import { createWorldIntelligenceService } from './world-intelligence-service';
 import { createChildLogger } from '@/shared/logger';
+import { collectorFeedOutcome, type CollectorFeedOutcome } from './world-source-control';
 
 const logger = createChildLogger({ module: 'insider-trades' });
 
 const INSIDER_UA = process.env.WORLD_INSIDER_UA
   || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 /** openinsider pages to read (purchases + sales, ≥$25k). Override via WORLD_INSIDER_URLS (comma-sep). */
-const INSIDER_URLS = (process.env.WORLD_INSIDER_URLS
+export const INSIDER_URLS = (process.env.WORLD_INSIDER_URLS
   || 'http://openinsider.com/latest-insider-purchases-25k,http://openinsider.com/latest-insider-sales-25k')
   .split(',').map((s) => s.trim()).filter(Boolean);
 
-export interface InsiderTradesResult { tickers: number; trades: number; }
+/** `feed` is the openinsider pages' outcome (absent when world intelligence is off). */
+export interface InsiderTradesResult { tickers: number; trades: number; feed?: CollectorFeedOutcome; }
 
 /** Parse an openinsider HTML table: per data row (has a `- Purchase`/`- Sale` marker), the first /TICKER link. */
 function parseRows(html: string, agg: Map<string, { buys: number; sells: number }>): number {
@@ -59,6 +63,7 @@ export async function collectInsiderTrades(svcInput?: ReturnType<typeof createWo
   if (!svc) return { tickers: 0, trades: 0 };
   const agg = new Map<string, { buys: number; sells: number }>();
   let trades = 0;
+  let pagesRead = 0;
 
   for (const url of INSIDER_URLS) {
     try {
@@ -71,6 +76,7 @@ export async function collectInsiderTrades(svcInput?: ReturnType<typeof createWo
         html = await res.text();
       } finally { clearTimeout(timer); }
       trades += parseRows(html, agg);
+      pagesRead += 1;
     } catch (e) { logger.warn({ err: e, url }, 'insider page error'); }
   }
 
@@ -85,6 +91,7 @@ export async function collectInsiderTrades(svcInput?: ReturnType<typeof createWo
     } catch (err) { logger.warn({ err, sym }, 'insider metric write failed'); }
   }
 
-  logger.info({ tickers: agg.size, trades }, 'insider trades collected');
-  return { tickers: agg.size, trades };
+  const feed = collectorFeedOutcome(pagesRead, INSIDER_URLS.length);
+  logger.info({ tickers: agg.size, trades, feed }, 'insider trades collected');
+  return { tickers: agg.size, trades, feed };
 }

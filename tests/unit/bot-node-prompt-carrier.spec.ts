@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pin the /api/swarm-execute app/capability/pattern boundary: valid trusted configuration reaches the envelope payload exactly, while malformed or oversized authority fails closed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The image-turn render instruction (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02): `renderInstruction` reaches the envelope payload exactly beside the brief `text`, only with a literal `imageTurn: true`; without it, or with a non-boolean marker, the carrier is refused, and the empty, control-bearing and oversized shapes are rejected like `pattern`.
  */
 
 import fs from 'node:fs';
@@ -63,8 +64,22 @@ describe('bot-node HTTP trusted prompt carrier', () => {
     [{ pattern: '' }, 'pattern'],
     [{ pattern: 'trusted\u0000override' }, 'pattern'],
     [{ pattern: 'x'.repeat(65_537) }, 'pattern'],
+    [{ imageTurn: true, renderInstruction: '' }, 'renderInstruction'],
+    [{ imageTurn: true, renderInstruction: 'trusted\u0000override' }, 'renderInstruction'],
+    [{ imageTurn: true, renderInstruction: 'x'.repeat(65_537) }, 'renderInstruction'],
   ])('rejects malformed or oversized HTTP authority (%s)', (candidate, field) => {
     expect(() => parseBotNodePromptCarrier(candidate)).toThrow(`bot prompt carrier ${field} is invalid`);
+  });
+
+  it('carries the image-turn render instruction beside the brief, only with a literal imageTurn: true', () => {
+    const instruction = 'You are a headless image-rendering task.\nCall your generate_image tool exactly once with these inputs: Prompt = the brief.';
+    expect(envelopePayloadFromHttpBody({ text: 'make the circle blue', imageTurn: true, renderInstruction: instruction })).toEqual({
+      text: 'make the circle blue',
+      renderInstruction: instruction,
+    });
+    for (const body of [{ renderInstruction: instruction }, { imageTurn: 'true', renderInstruction: instruction }, { imageTurn: false, renderInstruction: instruction }]) {
+      expect(() => parseBotNodePromptCarrier(body)).toThrow('bot prompt carrier renderInstruction requires an image turn');
+    }
   });
 
   it('keeps the legacy request shape a no-op when no carrier fields are supplied', () => {

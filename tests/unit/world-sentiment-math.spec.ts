@@ -4,18 +4,37 @@
  * DATE         | AUTHOR  | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Unit tests for the World-Intelligence deterministic core: bias-aware sentiment math, outlet ratings, feed utils (ADR-061).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The breakdown is read through oshal's own OBSERVED outlet ratings (the seed table is deleted): the lean axis buckets by observed lean, reliability-weighting uses observed reliability, an insufficient source joins no bucket and no weight and carries no number, and the rating method travels with the read.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The breakdown describe is split in three (the lean axis and weights, the shape returned, what never enters a bucket) over one shared breakdown, so no block exceeds the 50-line limit. Same cases, same assertions.
  */
 
 import { describe, it, expect } from 'vitest';
 import { computeSentimentBreakdown, toPerSource, consensusOf, type SentimentRow } from '../../src/features/world-data/sentiment-math';
-import { ratingByName, leanBucket, econBucket } from '../../src/features/world-data/outlet-ratings';
+import { rateOutlets, type OutletDivergenceStats } from '../../src/features/world-data/outlet-ratings';
 import { itemHash, slugifyEntity, pubIso, lexicon } from '../../src/features/world-data/feed-util';
 
-// A cross-spectrum set with KNOWN ratings (real outlet ids so ratingOf resolves):
-//  fox      -> partisan, right, econ pro-market, rel 0.60
-//  cnn      -> broadcast, left, econ pro-labor,  rel 0.72
-//  reuters  -> wire, center, econ neutral,       rel 0.95
-//  wsj      -> financial, center(lean .2), econ pro-market, rel 0.88
+/** Divergence statistics with every field explicit: lean = mean, sd and mean |d| as given. */
+function stats(source: string, comparisons: number, subjects: number, mean: number, sd: number, abs: number): OutletDivergenceStats {
+  return {
+    source, comparisons, subjects, observations: comparisons * 2, firstDay: '2026-07-01', lastDay: '2026-09-30',
+    meanDivergence: mean, sdDivergence: sd, meanAbsDivergence: abs,
+  };
+}
+
+// Observed ratings for a synthetic set (40 comparisons, sd 0.2 -> 2 standard errors = 0.063):
+//  fox      mean -0.30 -> below, reliability 1 - 0.35/2 = 0.825
+//  cnn      mean +0.25 -> above, reliability 1 - 0.30/2 = 0.85
+//  reuters  mean +0.01 -> near,  reliability 1 - 0.10/2 = 0.95
+//  wsj      mean -0.02 -> near,  reliability 1 - 0.12/2 = 0.94
+//  thin     5 comparisons over 2 subjects -> insufficient (minimums 20 / 3)
+const RATINGS = rateOutlets([
+  stats('world:outlet:foxnews', 40, 6, -0.3, 0.2, 0.35),
+  stats('world:outlet:cnn', 40, 6, 0.25, 0.2, 0.3),
+  stats('world:outlet:reuters', 40, 6, 0.01, 0.2, 0.1),
+  stats('world:outlet:wsj', 40, 6, -0.02, 0.2, 0.12),
+  stats('world:outlet:thin', 5, 2, 0.5, 0.1, 0.5),
+], { windowDays: 90, minComparisons: 20, minSubjects: 3 }, '2026-10-01T00:00:00.000Z');
+
 const ROWS: SentimentRow[] = [
   { source: 'world:outlet:foxnews', points: 6, avg: -0.4 },
   { source: 'world:outlet:cnn', points: 5, avg: 0.3 },
@@ -23,92 +42,92 @@ const ROWS: SentimentRow[] = [
   { source: 'world:outlet:wsj', points: 7, avg: 0.15 },
 ];
 
-describe('outlet-ratings', () => {
-  it('maps Google-News short names via aliases', () => {
-    expect(ratingByName('AP News')?.id).toBe('world:outlet:ap');
-    expect(ratingByName('WSJ')?.id).toBe('world:outlet:wsj');
-    expect(ratingByName('Fox News')?.id).toBe('world:outlet:foxnews');
-  });
-  it('maps by substring when no alias', () => {
-    expect(ratingByName('The New York Times')?.id).toBe('world:outlet:nyt');
-  });
-  it('returns undefined for an unrated outlet', () => {
-    expect(ratingByName('Totally Unknown Blog')).toBeUndefined();
-    expect(ratingByName('')).toBeUndefined();
-  });
-  it('buckets the political axis', () => {
-    expect(leanBucket(-0.5)).toBe('left');
-    expect(leanBucket(0)).toBe('center');
-    expect(leanBucket(0.6)).toBe('right');
-    expect(leanBucket(0.2)).toBe('center'); // WSJ sits center on the political axis
-  });
-  it('buckets the economic axis', () => {
-    expect(econBucket(-0.3)).toBe('pro-labor');
-    expect(econBucket(0)).toBe('neutral');
-    expect(econBucket(0.5)).toBe('pro-market');
-  });
-});
-
 describe('toPerSource', () => {
-  it('enriches a row with both bias axes + kind', () => {
-    const fox = toPerSource(ROWS[0]);
-    expect(fox).toMatchObject({ outlet: 'Fox News', kind: 'partisan', bias: 'right', econBias: 'pro-market' });
-    expect(fox.reliability).toBeGreaterThan(0);
+  it('reads a source through its observed rating', () => {
+    const fox = toPerSource(ROWS[0], RATINGS);
+    expect(fox).toMatchObject({ outlet: 'Fox News', bias: 'below', lean: -0.3, reliability: 0.825, points: 6, value: -0.4 });
+    expect(fox.rating).toMatchObject({ status: 'rated', comparisons: 40, subjects: 6, observations: 80, firstObserved: '2026-07-01', lastObserved: '2026-09-30' });
   });
-  it('marks an unrated source unknown without inventing ratings', () => {
-    const u = toPerSource({ source: 'world:outlet:nobody', points: 1, avg: 0.9 });
-    expect(u).toMatchObject({ kind: 'unknown', bias: 'unknown', econBias: 'unknown', lean: null, econLean: null, reliability: null });
+  it('marks an insufficient source insufficient and carries no number', () => {
+    const thin = toPerSource({ source: 'world:outlet:thin', points: 3, avg: 0.9 }, RATINGS);
+    expect(thin).toMatchObject({ bias: 'insufficient', lean: null, reliability: null });
+    expect(thin.rating).toMatchObject({ status: 'insufficient', comparisons: 5, subjects: 2 });
+  });
+  it('marks a never-compared source insufficient with zero counts, never a guessed number', () => {
+    const u = toPerSource({ source: 'world:outlet:nobody', points: 1, avg: 0.9 }, RATINGS);
+    expect(u).toMatchObject({ outlet: 'world:outlet:nobody', bias: 'insufficient', lean: null, reliability: null });
+    expect(u.rating).toMatchObject({ status: 'insufficient', comparisons: 0, observations: 0, firstObserved: null, lastObserved: null });
   });
 });
 
-describe('computeSentimentBreakdown — the bias-aware product', () => {
-  const b = computeSentimentBreakdown(ROWS);
+/** The breakdown of ROWS read through RATINGS, shared by the three blocks below. */
+const BREAKDOWN = computeSentimentBreakdown(ROWS, RATINGS);
+
+describe('computeSentimentBreakdown — the lean axis and the weights', () => {
+  const b = BREAKDOWN;
 
   it('keeps a naive average but it is near-zero/misleading', () => {
     // (-0.4 + 0.3 + 0.1 + 0.15) / 4 = 0.0375
     expect(b.naive).toBeCloseTo(0.0375, 2);
   });
-  it('splits the POLITICAL axis so one lean cannot dominate by volume', () => {
-    expect(b.political.byLean.left).toBeCloseTo(0.3, 5);   // cnn
-    expect(b.political.byLean.center).toBeCloseTo(0.125, 5); // mean(reuters .1, wsj .15)
-    expect(b.political.byLean.right).toBeCloseTo(-0.4, 5);  // fox
-    // right far below left → cross-spectrum disagreement
-    expect(b.political.byLean.right!).toBeLessThan(b.political.byLean.left!);
+  it('splits the observed LEAN axis so one habitual slant cannot dominate by volume', () => {
+    expect(b.lean.byLean.below).toBeCloseTo(-0.4, 5);  // fox
+    expect(b.lean.byLean.near).toBeCloseTo(0.125, 5);  // mean(reuters .1, wsj .15)
+    expect(b.lean.byLean.above).toBeCloseTo(0.3, 5);   // cnn
+    expect(b.lean.balanced).toBeCloseTo(0.008, 3);     // (-0.4 + 0.125 + 0.3) / 3
   });
-  it('flags political consensus as divergent at this spread', () => {
-    expect(b.political.spread).toBeCloseTo(0.7, 5); // 0.3 - (-0.4)
-    expect(b.political.consensus).toBe('divergent');
+  it('flags the buckets as divergent at this spread', () => {
+    expect(b.lean.spread).toBeCloseTo(0.7, 5);
+    expect(b.lean.consensus).toBe('divergent');
   });
-  it('exposes the ECON axis the political axis misses (pro-market is the outlier)', () => {
-    expect(b.econ.byEcon['pro-labor']).toBeCloseTo(0.3, 5);    // cnn
-    expect(b.econ.byEcon.neutral).toBeCloseTo(0.1, 5);         // reuters
-    expect(b.econ.byEcon['pro-market']).toBeCloseTo(-0.125, 5);// mean(fox -.4, wsj .15)
-    expect(b.econ.byEcon['pro-market']!).toBeLessThan(b.econ.byEcon['pro-labor']!);
+  it('weights by observed reliability', () => {
+    // (-.4*.825 + .3*.85 + .1*.95 + .15*.94) / (.825 + .85 + .95 + .94) = 0.161 / 3.565
+    expect(b.reliabilityWeighted).toBeCloseTo(0.045, 3);
   });
-  it('breaks down by outlet KIND', () => {
-    expect(b.byKind.partisan).toEqual({ value: -0.4, n: 1 });
-    expect(b.byKind.wire).toEqual({ value: 0.1, n: 1 });
-    expect(b.byKind.financial).toEqual({ value: 0.15, n: 1 });
-    expect(b.byKind.broadcast).toEqual({ value: 0.3, n: 1 });
+});
+
+describe('computeSentimentBreakdown — the shape it returns', () => {
+  const b = BREAKDOWN;
+
+  it('keeps the top-level lean fields the feature rollup reads', () => {
+    expect(b.balanced).toBe(b.lean.balanced);
+    expect(b.consensus).toBe(b.lean.consensus);
+    expect(b.byLean).toEqual(b.lean.byLean);
+    expect(b.spread).toBe(b.lean.spread);
   });
-  it('reliability-weights toward the factual sources', () => {
-    // (−.4*.6 + .3*.72 + .1*.95 + .15*.88) / (.6+.72+.95+.88) ≈ 0.064
-    expect(b.reliabilityWeighted).toBeCloseTo(0.064, 2);
+  it('returns no seeded axes', () => {
+    expect(b).not.toHaveProperty('political');
+    expect(b).not.toHaveProperty('econ');
+    expect(b).not.toHaveProperty('byKind');
   });
-  it('keeps back-compat top-level political fields', () => {
-    expect(b.balanced).toBe(b.political.balanced);
-    expect(b.consensus).toBe(b.political.consensus);
+  it('states the rating method and how many sources it rated', () => {
+    expect(b.ratings).toEqual({
+      method: 'consensus-divergence-v1', windowDays: 90, minComparisons: 20, minSubjects: 3, leanZ: 2,
+      computedAt: '2026-10-01T00:00:00.000Z', rated: 4, insufficient: 0,
+    });
   });
-  it('does not let an unrated source pollute the bucket aggregates', () => {
-    const withNoise = computeSentimentBreakdown([...ROWS, { source: 'world:outlet:nobody', points: 1, avg: 0.99 }]);
-    expect(withNoise.political.byLean.left).toBeCloseTo(0.3, 5); // unchanged
-    expect(withNoise.bySource.some((s) => s.kind === 'unknown')).toBe(true);
+});
+
+describe('computeSentimentBreakdown — what never enters a bucket', () => {
+  const b = BREAKDOWN;
+
+  it('does not let an insufficient or never-compared source into a bucket or a weight', () => {
+    const noisy = computeSentimentBreakdown([
+      ...ROWS,
+      { source: 'world:outlet:thin', points: 9, avg: 0.99 },
+      { source: 'world:outlet:nobody', points: 1, avg: -0.99 },
+    ], RATINGS);
+    expect(noisy.lean.byLean).toEqual(b.lean.byLean);
+    expect(noisy.reliabilityWeighted).toBe(b.reliabilityWeighted);
+    expect(noisy.ratings).toMatchObject({ rated: 4, insufficient: 2 });
+    expect(noisy.naive).not.toBe(b.naive); // the naive mean still counts them
   });
   it('handles the empty case without throwing', () => {
-    const e = computeSentimentBreakdown([]);
+    const e = computeSentimentBreakdown([], RATINGS);
     expect(e.naive).toBeNull();
-    expect(e.political.consensus).toBe('insufficient');
-    expect(e.political.byLean).toEqual({ left: null, center: null, right: null });
+    expect(e.reliabilityWeighted).toBeNull();
+    expect(e.lean.consensus).toBe('insufficient');
+    expect(e.lean.byLean).toEqual({ below: null, near: null, above: null });
   });
   it('consensusOf thresholds', () => {
     expect(consensusOf(0.1)).toBe('agree');

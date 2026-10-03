@@ -59,6 +59,7 @@ Recursive/multi-layer builds are **2-level only**:
 
 - A root ticket (depth 0) decomposes into **up to 5 child tickets** (depth 1). Children do **not** decompose further — this is a hard cutoff, not a soft default. Constants: `MAX_DECOMPOSITION_DEPTH = 1`, `MAX_ACTIVE_SUBTASKS_PER_PARENT = 5` in [src/entities/work-item/types.ts](../../entities/work-item/types.ts). Total build size is therefore bounded by 5 × (leaf size); deeper trees require lifting the depth cap.
 - Once the root reaches `approval_required` (planning complete), its `approved` children **auto-dispatch** on the next poll cycle — `approval_required` is in `PARENT_READY_FOR_CHILD_DISPATCH_STATES` by design ("parent planned, children created — let them dispatch"). There is no enforced manual approval step between planning and child execution (see the ADR-031 Amendment, 2026-07-18).
+- Siblings with a planning order (`subtaskIndex`) run **one at a time**: a child waits while an earlier sibling is unfinished or still in flight. A child owned by someone other than its root's owner is cancelled (`child_owner_mismatch`) and never dispatched (ADR-031 Amendment, 2026-10-01).
 - The **decompose-or-not decision is LLM-driven** by the PM (`system-architect`) Phase-2 planning round, and it is **not deterministic**. Complex, clearly multi-component tickets decompose reliably (verified 2026-07-18: a smart-home build split into 4 typed children — device layer / rules engine + scheduler / REST API / tests). Mid-size tickets can collapse to a single work unit when the PM produces no parseable `## SUBTASK DECOMPOSITION` block with ≥2 subtasks (verified 2026-07-18: a URL-shortener build produced 0 children). Reliable mid-size decomposition is a PM-prompt tuning target, not a guarantee.
 
 ## Routes
@@ -97,7 +98,7 @@ Transport behavior:
 Recent ticket-processing hardening:
 - structured root tickets now enter `in_process_discovery`, decompose in planning, and move to `approval_required` (planning-complete marker) once children are created
 - approved child tickets **auto-dispatch as soon as the parent reaches `approval_required`** — `PARENT_READY_FOR_CHILD_DISPATCH_STATES` includes `approval_required` by design, so no operator action is required to release them. (This supersedes the earlier "wait for the build gate at `in_process_build`" behavior described in ADR-031 — relaxed 2026-06-22 in commit `6a376cb6`; see the ADR-031 Amendment for the as-built record.)
-- child tickets created from PM planning now retain `subtaskTitle`, `pmAssignedRole`, and `pmAssignedAgentId` metadata so direct specialist execution can honor PM routing guidance
+- child tickets created from PM planning now retain `subtaskTitle`, `pmAssignedRole`, and `pmAssignedAgentId` metadata so direct specialist execution can honor PM routing guidance; they also carry the root's owner and verified issuer and their planning order (`subtaskIndex`, `subtaskCount`, `siblingTitles`)
 - child-ticket direct execution units remain depth `0` within their own run, preventing them from being misclassified as nested subtask rows during lifecycle polling
 - the worker now persists `subtask-pending/subtask-assigned/subtask-executing` rows to `subtask-completed` or `subtask-failed`, and orphan dedup now treats those terminal subtask rows as already complete
 - work-type inference now ignores acceptance-criteria test wording when the subtask title and suggested role indicate implementation work, preventing implementation subtasks from being misrouted as testing
@@ -109,6 +110,48 @@ Current operational limitation:
 - the static compose bot registry remains as a compatibility overlay for cockpit/legacy engineering surfaces, so registry drift can still occur when a container exists without a seeded canonical agent profile
 
 Verification is policy-aware and supports retries, regression accounting, escalation metadata, work-type-aware structural checks for testing/docs/review/integration/analysis outputs, and more specific retry/escalation reasons when those evidence classes are missing. Consensus review now emits normalized evidence-gap findings too, but the overall system is still not yet equivalent to full domain/business acceptance testing.
+
+## Live proof: tickets in tickets (2026-10-02)
+
+`node scripts/operations/live-acceptance.js tickets-in-tickets` printed `PASS tickets-in-tickets` five
+times on 2026-10-02, the first at 01:31 UTC on the preview deploy of `4d244b8a` and the latest at 21:33 UTC
+on the image of `main` `b63effdf` (verification runs the tests, #1020) with the case's probe fix `f9c4ba67`
+(delegation signing configured):
+
+- Root `e0e8a4d7` filed 21:25:36 as the operator, planned on system-architect's node
+  (`antigravity-cli / gemini-3.8-flash-low`, the installed fleet default) in 77 s and parked at
+  `approval_required` (`planning_complete`) with two owned children in planning order.
+- Child 1 (code-developer, "Build the Slugify Utility Function with Token Splitting…") and then child 2
+  (test-engineer, "Implement the Comprehensive Slugify Test Suite…"), one at a time over the signed hop
+  on the same configured engine; after each, verification ran the workspace's tests on test-engineer's
+  node as the `workspace-tests/run` deterministic intent and recorded the run on the child
+  (`metadata.verificationTests`): `npm test` exit 0, 6 passed; then exit 0, 14 passed. The root assembled
+  to `customer_action` with 40 files in its folder. Activity: 3 requests, 403,064 input tokens, cost 0 on
+  the subscription.
+- Before cleanup the cockpit hierarchy listed the root with exactly its children, each child detail
+  named the root as its parent, and `/code?folder=/workspace/<root>` redirected onto the root folder.
+- Cleanup receipt: removed 7 (the root, both children, the root folder, three shadow tickets), kept 1
+  (cost rows), outstanding 0, errors 0; residue 0 in every table the run touches; the folder gone.
+
+The pass before it (19:11 UTC, `main` `1848fb4f`, root `ee42ab93`) had the same shape without the test
+gate: 159 files, 322,939 input tokens, cost 0.
+
+Two review build tickets filed outside the case that evening showed what the case had not judged: one
+reached `customer_action` with a failing test in its deliverables (verification was structural), the next
+had a test-engineer that never ran its suite. Those became the test-engineer persona's execution contract
+(#1018), the executed test gate (#1020), the case's per-child test-run judge, and two fixes the gate's
+first live runs found: the probe's 400-entry listing truncating inside a `node_modules` (#1021) and
+vitest's upward config search reaching the image's own `vite.config.ts` from a config-less workspace
+(#1022).
+
+The runs between those passes each failed on a box condition the case names, and each became a fix the
+same day: a re-read answered during a database lock (#1004), a planning reply without its decomposition
+section while the node had written `IMPLEMENTATION-PLAN.md` (#1006), api event-loop stalls of one to six
+minutes (#1007, #1009), and one approved root claimed twice after such a stall (#1010). One further run
+(19:00 UTC, same code) got a one-turn planning answer with no decomposition and no plan file from the
+node's engine, which the case fails by name ("one child titled like the root"); the next run passed.
+Two runs before the first pass failed at planning while the round still used a hosted API key (503,
+then a 429 request quota); that path is gone (`controller-pm-round-executor.ts`).
 
 ## Design Alignment Summary
 

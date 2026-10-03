@@ -51,6 +51,12 @@ Source of truth for the signal/money layers:
    the downside-risk normalization. **Fix:** compute and pass `volPct` in the research/fast path too
    (extract the vol calc into a shared helper).
 
+   **CLOSED 2026-09-30 — extracted shared `calculateRealizedVol` and `recentVolPct` in `@/features/trading` and wired into `trading-research-dispatch.ts`.**
+   - *Shared helpers:* `calculateRealizedVol(closes)` and `recentVolPct(symbol)` implemented in [`market-data.ts`](../../src/features/trading/services/market-data.ts) and exported from `@/features/trading`.
+   - *Autopilot:* [`trading-dispatch-exits-entries.ts`](../../src/app/trading-dispatch-exits-entries.ts) now imports the shared helper.
+   - *Research leg:* [`trading-research-dispatch.ts:131`](../../src/app/trading-research-dispatch.ts#L131) now fetches `await recentVolPct(decision.symbol)` and passes `volPct` to `sizeEntry`, ensuring news entries scale down proportionally for high-volatility names rather than entering at full scale.
+   - *Unit tests:* [`tests/unit/trading-vol-sizing.spec.ts`](../../tests/unit/trading-vol-sizing.spec.ts) (11/11 PASS) verifies calculation accuracy, fail-soft behavior, downscaling proportions, and the 25% floor.
+
 4. **The deployed posture is the worst performer in the only backtest we have.** Per
    [apps/trading/advisor.md](../apps/trading/advisor.md), the recent-window backtest: balanced +10.5%, aggressive
    +19.7%, **`active` (the deployed default) +5.6%** vs SPY +8.2% — i.e. the live posture *underperforms
@@ -180,6 +186,11 @@ MEDIUM items keep 5–11, which is what the cross-references in this file and in
    HOLD. **Fix:** gate `meanrev` to apply only in range-bound regimes (e.g. a low ADX / low trend-strength
    filter), and let the trend algos own trending regimes. This is the highest-leverage signal change.
 
+   **CLOSED 2026-10-01 — gated `meanrev` to range-bound regimes (`|gap vs SMA| <= maxGap`) in `algorithms.ts`.**
+   - *Regime gating logic:* In [algorithms.ts:128](../../src/features/trading/services/algorithms.ts#L128), `meanrev` evaluates trend gap `gap = (close - sma) / sma` against `maxGap = ctx.params?.meanrevMaxTrendGap ?? DEFAULT_STRATEGY_PARAMS.meanrevMaxTrendGap` (default 0.04). In a steep trending selloff (`gap < -maxGap`), oversold RSI (< 35) is a falling knife, so `meanrev` stands down (`return null`), letting `momentum` and `donchian` decisively vote `sell` without vote dilution. In a steep breakout rally (`gap > maxGap`), overbought RSI (> 65) is strong continuation, so `meanrev` stands down (`return null`), avoiding fading the breakout. In range-bound regimes (`|gap| <= maxGap`), `meanrev` fires normally.
+   - *Tunables & Optimizer:* Added `meanrevMaxTrendGap` to `StrategyParams`, `DEFAULT_STRATEGY_PARAMS` (0.04), `TUNABLE_PARAMS`, `PARAM_LABELS`, and `BOUNDS` [0.01, 0.20] in [trading-strategy-params.ts](../../src/app/trading-strategy-params.ts), and added grid candidates `[0.02, 0.03, 0.04, 0.05, 0.06]` to `GRID` in [trading-optimize-dispatch.ts](../../src/app/trading-optimize-dispatch.ts).
+   - *Unit tests:* [tests/unit/trading-meanrev-regime-gate.spec.ts](../../tests/unit/trading-meanrev-regime-gate.spec.ts) (7/7 PASS) verifies firing in range-bound oversold/overbought conditions, standing down during trending selloffs (with momentum + donchian producing an undiluted `sell` ensemble decision), standing down during trending breakouts (undiluted `buy` ensemble decision), StrategyParams overrides, fail-soft on short history, and parameter clamping.
+
 8. **Hand-picked, uncalibrated confidence multipliers.** `momentum` confidence = `|gap| * 12`
    (saturates at an ~8.3% gap), `gravity` = `|d| * 2`, `donchian` = a flat `0.7`, `meanrev` scales off
    RSI distance ([algorithms.ts:99-102](../../src/features/trading/services/algorithms.ts#L99)). These
@@ -211,6 +222,11 @@ MEDIUM items keep 5–11, which is what the cross-references in this file and in
     own volatility ([portfolio.ts:155](../../src/features/trading/services/portfolio.ts#L155)). On a volatile
     name the `active` 3% giveback = normal intraday wiggle → premature exit (feeds the #4 churn). **Fix:**
     scale `trailGivebackPct` by the same `volPct` already computed for sizing.
+
+    **CLOSED 2026-09-30 — `trailingExits` giveback scales by asset realized volatility in `portfolio.ts` and `computeExits`.**
+    - *Vol scaling logic:* `trailingExits` ([portfolio.ts:344](../../src/features/trading/services/portfolio.ts#L344)) accepts optional `volPcts?: Map<string, number> | Record<string, number>`. Computes `volMult = Math.max(0.5, Math.min(3, vol / baseVol))` where `baseVol = Number(process.env.TRADING_BASELINE_VOL_PCT || 2)` and sets `requiredGiveback = policy.trailGivebackPct * givebackMult * volMult`. Missing symbols or omitted maps default safely to `volMult = 1`.
+    - *Dispatch integration:* `computeExits` in [trading-dispatch-exits-entries.ts:114](../../src/app/trading-dispatch-exits-entries.ts#L114) fetches 15-day daily bars in batch for all managed held positions via `barsBatch`, computes realized volatility using `calculateRealizedVol`, and passes the resulting `volMap` into `trailingExits`.
+    - *Unit tests:* [tests/unit/trading-vol-scaled-trailing.spec.ts](../../tests/unit/trading-vol-scaled-trailing.spec.ts) (9/9 PASS) verifies unscaled parity when `volPcts` is omitted, widening giveback for high-volatility names (e.g. NVDA), tightening for calm names (e.g. KO), 0.5x floor and 3.0x cap clamps, `Map` and `Record` polymorphism, compounding with thin session `givebackMult`, `TRADING_BASELINE_VOL_PCT` overrides, and ADR-159 unmanaged position immunity.
 
 13. **Stop + daily-halt interaction can lock the book out of the bounce.** `active` = 5% hard stop + 3%
     daily-loss halt + up to 85% deployed across 32 names. A broad ~5% down-day stops out many names *and*

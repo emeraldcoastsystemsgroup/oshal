@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Declare the signed provider-callback compatibility floor so packages cannot mount anonymous callbacks without a verified owner and current application permission.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | ADR-146 D2 (operator decision 2026-09-27): declare 'fantasy-leagues', the ESPN fantasy read client moved out of sports-edge. Two packages need the same league reads (sports-edge today, fantasy-football next) and the store has no package-to-package rail, so the choice was one kernel client or a copy per package; the client's host already moved once inside a season. Declaring it here is what pins @/features/fantasy-leagues into dist and lets the loader refuse a package that names it on an older core.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 D3/L2: declare 'location', the consented, owner-scoped location and places store. Two or more packages need it (eats, rides, purchasing, home, drone, spaces) and it needs core tables, a core device ingest route and the Jarvis intent, so it is kernel by the skill test; L2 ships its storage half (migrations 174/175, the owner purge and export, the one erase both account-erasure routes call), and later slices extend the same barrel with the package-facing reads.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Declare the exact anonymous package read compatibility floor.
  */
 
 /**
@@ -41,6 +42,7 @@ export type KernelSkillId =
   | 'authenticated-artifacts'
   | 'package-tools'
   | 'signed-package-callbacks'
+  | 'package-anonymous-routes'
   | 'test-catalog'
   | 'jarvis-briefings'
   | 'app-dependencies'
@@ -119,6 +121,11 @@ export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
     id: 'signed-package-callbacks', title: 'Signed package callbacks',
     why: 'Authenticate provider callbacks to their durable owner and recheck current application permissions without a browser session.',
     modules: [{ specifier: '@/shared/package-callbacks', distFile: 'dist/shared/package-callbacks/index.js' }],
+  },
+  {
+    id: 'package-anonymous-routes', title: 'Exact anonymous package reads',
+    why: 'Explicit method/path opt-ins on public mounts preserve authorization enforce for every other route.',
+    modules: [{ specifier: '@/shared/package-anonymous-routes', distFile: 'dist/shared/package-anonymous-routes/index.js' }],
   },
   { id: 'futures-archive-import', title: 'Confirmed Futures archive imports',
     why: 'Owner-bound content previews and explicit operator confirmation precede atomic shared reference writes.',

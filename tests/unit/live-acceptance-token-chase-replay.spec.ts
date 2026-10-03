@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the token-chase-replay live-acceptance case's own logic over a doubled Token Chase API (run listing, frame summaries and details with per-frame pins, the final checkpoint, a tail-replay route whose verdict is computed from the run's pins the way the node's runner reports it, the agents list, the chat message route that starts a captured run, task delete, the workspace and residue ports): a file-tools-only run reproduced (status, artifacts.reproduced, no differing path, replayTreeSha equal to the independently read final treeSha, 0 paid calls) and a live-read run stopped at the calling frame with live-tool and non-replayable from the consuming frame = pass, starting nothing; with no file-tools run captured, one tagged run started on the named bot, replayed and removed (task, workspace, residue zero). Red: a differing path, a node that says reproduced beside a differing path, a wrong tree digest, a live-tool stop reported as reproduced, a consuming frame replayed instead of refused, a store-bound run whose store version did not reproduce under --expect-store-bound, an unremoved workspace, a failed task delete. Unavailable, never pass: no live-read run, nothing captured, a started run that used a side-effect tool (removed), a bot with no reachable node, capture off on the started run, a refused start, an unbound run under --expect-store-bound, a missing port. The real companion is `node scripts/operations/live-acceptance.js token-chase-replay` on the box; the route, runner and node boundaries are proven by tests/unit/token-chase-*.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The case changed (its change log entry 2) and so did what this spec stands on. The doubled-port cases drive question-tool runs: one run serves both legs, the tail from the first frame is asked for once, and the red cases add a restore that is not ok and a tool call re-executed; the unavailable cases pin the messages to what the run shows (the tools the node offered, a failed call, a model that did not call the tool). New real-boundary cases answer the defect the 2026-09-29 sweep found, which the doubled ports could not see: the case is driven against the REAL bot-node registry (registerBotNodeReadOnlyTools on the real any-bot ToolRegistry), the REAL prompt authorization resolver, the REAL agentic loop with the REAL capture lane (frames, per-turn pins, private-git commits, final.json), the REAL read service, the REAL controller tail service and the REAL bot-node tail executor, with the real workspace state and removal functions. They hold QUESTION_TOOLS to the registered set, prove a bot granted the file tools still runs none of them on a bot node, and prove the started run passes both legs. Doubled on purpose and named: the model turn (provider scripted-fixture, which does what the prompt asks with the tools it was offered), the per-bot grant rows (read by the real resolver), the chat task store with its residue read, the agent list, and the controller-to-node HTTP hop (real in token-chase-checkpoint-replay-e2e.spec.ts).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The case took a run whose frames name no producing bot (its change log entry 3). New real-lane case: the newest captured run is a question-tool run whose turn went through the real loop and capture lane with no agentId handed to the loop, as a runtime did before the producing bot id reached capture, so the real read service serves its frames with agentId null and the real controller tail service would refuse its tail. The case must list it in evidence.skipped with the no-identity reason, never ask to replay it, start its own tagged run on oshal-assistant through POST /api/tasks/<tag>/messages, pass both legs on that run and remove it, and its detail must never say "producing bot (unknown)". The realDeployment turn takes that option; the classify case's frames carry the producing bot, as readRun's do, and it pins the no-identity classification.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -38,6 +39,8 @@ const FINAL_SHA = 'f'.repeat(64);
 const OTHER_SHA = 'e'.repeat(64);
 const STORE_SHA = 'd'.repeat(64);
 const HOST_COMMAND = 'OSHAL_VERIFY_TOKEN_CHASE_AGENT="<bot name>" node scripts/operations/live-acceptance.js token-chase-replay';
+/** Why a run whose frames name no producing bot is skipped, after its `frame <seq>`. */
+const NO_IDENTITY = 'names no producing bot, so no accountable bot node can replay the run';
 const QUESTION_TOOLS = ['rag_query', 'graph_query', 'conversation_query', 'conversation_fetch'];
 /** What a bot node offers a bot that holds the two conversation grants. */
 const OFFERED = ['conversation_query', 'conversation_fetch', 'attempt_completion'];
@@ -392,7 +395,7 @@ describe('token-chase-replay live acceptance', () => {
   });
 
   it('classifies runs from their pins: only a run that read through question tools alone, with a completed checkpoint, is a question-tool run', () => {
-    const frames = (list: Frame[]) => list.map((f) => ({ seq: f.seq, phase: f.phase || 'closed', replayable: f.replayable !== false, pins: (f.pins || []).map((p) => ({ ...p, success: p.success !== false })) }));
+    const frames = (list: Frame[]) => list.map((f) => ({ seq: f.seq, phase: f.phase || 'closed', replayable: f.replayable !== false, agentId: JARVIS, pins: (f.pins || []).map((p) => ({ ...p, success: p.success !== false })) }));
     const asked = { reason: null, callingSeq: 1, consumingSeq: 2, liveTool: 'conversation_query', liveClass: 'live-read' };
     expect(replay.classifyRun({ frames: frames([{ seq: 1 }, { seq: 2, pins: [query] }]), final: final() })).toEqual({ ...asked, kind: 'question', tools: ['conversation_query'], questionGap: null });
     expect(replay.classifyRun({ frames: frames([{ seq: 1 }, { seq: 2, pins: [query] }, { seq: 3, pins: [fetched] }]), final: final() }))
@@ -414,6 +417,8 @@ describe('token-chase-replay live acceptance', () => {
     expect(replay.classifyRun({ frames: frames([{ seq: 1, pins: [query] }]), final: final() })).toEqual({ kind: 'other', reason: 'frame 1 consumed conversation_query with no calling frame' });
     expect(replay.classifyRun({ frames: frames([{ seq: 1 }, { seq: 2, pins: [{ tool: 'add', replayClass: 'pure', pinned: true }] }]), final: final() })).toEqual({ kind: 'other', reason: 'add is pure, neither a file tool nor live' });
     expect(replay.classifyRun({ frames: [], final: final() })).toEqual({ kind: 'other', reason: 'no frame' });
+    const unnamed = frames([{ seq: 1 }, { seq: 2, pins: [query] }]).map((f) => (f.seq === 2 ? { ...f, agentId: null } : f));
+    expect(replay.classifyRun({ frames: unnamed, final: final() })).toEqual({ kind: 'other', reason: `frame 2 ${NO_IDENTITY}` });
   });
 });
 
@@ -508,7 +513,9 @@ function realDeployment(root: string, o: { insists?: boolean } = {}) {
   const authorize = createPromptAuthorizationResolver(grantRows as unknown as Parameters<typeof createPromptAuthorizationResolver>[0])!;
   const reader = new TokenChaseReadService();
   const replayRoot = path.join(root, '.tokenchase-replays');
-  const turn = async (taskId: string, text: string, agentId: string): Promise<void> => {
+  /** One bot-node turn. `withoutIdentity` composes the bot's grants but hands the loop no agentId, as a runtime did
+   *  before the producing bot id reached capture (#943), so the run's frames name no producing bot. */
+  const turn = async (taskId: string, text: string, agentId: string, capture: { withoutIdentity?: boolean } = {}): Promise<void> => {
     const workspace = path.join(root, taskId);
     fs.mkdirSync(workspace, { recursive: true });
     fs.writeFileSync(path.join(workspace, 'brief.txt'), 'what the workspace held when the turn began\n');
@@ -516,7 +523,8 @@ function realDeployment(root: string, o: { insists?: boolean } = {}) {
     const tasks = { getTask: async () => ({ id: taskId, workspace_dir: workspace, source: 'swarm', messages: [] }), addMessage: async () => undefined, updateMetrics: async () => undefined };
     const loop = new AgenticController({ bedrockProvider: scriptedModel(o.insists === true), clineProvider: null, claudeCodeProvider: null, codexProvider: null, antigravityProvider: null,
       getCurrentProvider: () => 'scripted-fixture' }, registry, { broadcast() {} }, tasks);
-    await loop.processAgenticTask(taskId, text, [], { use_mcp_tool: true }, { agentId, source: 'swarm', allowedTools: authority.allowedTools, authorizedScopes: authority.scopes, extraEnv: { OSHAL_USER_SUB: OWNER } });
+    await loop.processAgenticTask(taskId, text, [], { use_mcp_tool: true }, { agentId: capture.withoutIdentity ? undefined : agentId, source: 'swarm',
+      allowedTools: authority.allowedTools, authorizedScopes: authority.scopes, extraEnv: { OSHAL_USER_SUB: OWNER } });
     await tokenChase.flush();
     await tokenChase.flush();
   };
@@ -610,6 +618,32 @@ describe('token-chase-replay live acceptance against the real bot-node registry,
       expect(fs.readdirSync(path.join(root, 'run-captured')).sort()).toEqual(['.tokenchase', 'brief.txt']);
     } finally {
       fs.rmSync(path.join(root, 'run-captured'), { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('skips a captured question-tool run whose frames name no producing bot, never replays it, and starts its own run on oshal-assistant', async () => {
+    const node = realDeployment(root);
+    await node.turn('run-no-identity', replay.runPrompt('run-no-identity'), JARVIS, { withoutIdentity: true });
+    try {
+      const frames = await framesOf(node, 'run-no-identity');
+      expect(frames.map((frame) => frame.agentId)).toEqual([null, null]);
+      expect(frames.map((frame) => frame.tools)).toEqual([OFFERED, OFFERED]);
+      expect(frames[1].pins).toMatchObject([{ tool: 'conversation_query', replayClass: 'live-read', pinned: false, success: true }]);
+      const result = await replay.run(node.ports, { tag: TAG, env: {} });
+      expect(result.detail).not.toContain('producing bot (unknown)');
+      expect(result.evidence.skipped).toEqual([`run-no-identity: frame 1 ${NO_IDENTITY}`]);
+      expect(result.state).toBe('pass');
+      expect(result.detail).toContain(REPRODUCED(TAG, 1, 'conversation_query', result.evidence.reproduced?.finalTreeSha));
+      expect(result.detail).toContain(LIVE_Q(TAG));
+      expect(result.evidence).toMatchObject({ runsListed: 1, runsScanned: 1, started: { tag: TAG, agentId: JARVIS, state: 'final' },
+        reproduced: { runId: TAG, agentId: JARVIS }, live: { runId: TAG, agentId: JARVIS } });
+      expect(node.api.calls.find((call) => call.method === 'POST' && call.path === `/api/tasks/${TAG}/messages`)!.body).toEqual({ text: replay.runPrompt(TAG), agentId: JARVIS, agenticMode: true });
+      expect(node.api.calls.filter((call) => call.path.endsWith('/tail-replay')).map((call) => call.path)).toEqual([`/api/token-chase/runs/${TAG}/tail-replay`, `/api/token-chase/runs/${TAG}/tail-replay`]);
+      expect(result.cleanup).toMatchObject({ created: 1, removed: [`chat-task ${TAG}`], outstanding: [], errors: [] });
+      expect(fs.existsSync(path.join(root, TAG))).toBe(false);
+      expect(fs.readdirSync(path.join(root, 'run-no-identity')).sort()).toEqual(['.tokenchase', 'brief.txt']);
+    } finally {
+      fs.rmSync(path.join(root, 'run-no-identity'), { recursive: true, force: true });
     }
   }, 60_000);
 

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove bounded fixture cleanup reports forced ownership and refuses crashes, missing exit evidence and shutdown errors.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard the one exit budget: an owned browser that finishes its exit long after the graceful and kill deadlines still passes, one that never exits still fails loudly and names the budget, the budget is settable, every suite that owns a fixture browser gives its hooks at least that budget, and a REAL headless Chromium proves both the receipt and the loud deadline against the actual Playwright server.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Accept the effective explicit cleanup-hook budget without demanding a redundant global setting; retain short-override refusal and guard both declaration shapes.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type BrowserServer } from 'playwright';
@@ -128,7 +129,7 @@ it.each([
 function ownedCloseHookTimeout(text: string): string | null {
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    if (!/(owned|isolated)\??\.close\(\)/.test(lines[i])) continue;
+    if (!/(owned|ownedBrowser|isolated)\??\.close\(\)/.test(lines[i])) continue;
     for (let j = i; j < Math.min(i + 6, lines.length); j += 1) {
       const tail = /\}\s*,\s*([A-Za-z_\d]+)\s*\)\s*;\s*$/.exec(lines[j]);
       if (tail) return tail[1];
@@ -137,6 +138,20 @@ function ownedCloseHookTimeout(text: string): string | null {
   }
   return null;
 }
+
+/** The per-hook argument wins over the optional global setting, exactly as it does in Vitest. */
+function effectiveCloseHookTimeout(text: string): string | null {
+  return ownedCloseHookTimeout(text) ?? /hookTimeout:\s*(BROWSER_HOOK_TIMEOUT_MS|[\d_]+)/.exec(text)?.[1] ?? null;
+}
+
+it.each([
+  ['afterAll(async () => {\n  await isolated?.close();\n}, BROWSER_HOOK_TIMEOUT_MS);', 'BROWSER_HOOK_TIMEOUT_MS'],
+  ['vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });\nafterAll(async () => {\n  await owned.close();\n});', 'BROWSER_HOOK_TIMEOUT_MS'],
+  ['vi.setConfig({ hookTimeout: BROWSER_HOOK_TIMEOUT_MS });\nafterAll(async () => {\n  await ownedBrowser?.close();\n}, 20000);', '20000'],
+  ['afterAll(async () => {\n  await owned.close();\n});', null],
+])('reads the actual cleanup-hook timeout precedence %#', (text, expected) => {
+  expect(effectiveCloseHookTimeout(text)).toBe(expected);
+});
 
 // A longer fixture budget only moves the failure to the runner's hook deadline unless the suites that own a
 // browser give their hooks at least as much room, so that pairing is checked against the real spec files.
@@ -147,27 +162,12 @@ it('every suite that owns a fixture browser gives its hooks the fixture cleanup 
     .filter(spec => spec.text.includes('launchIsolatedBrowser'));
   expect(owners.length, 'no suite was read; the discovery, not the suites, is broken').toBeGreaterThanOrEqual(11);
   for (const { name, text } of owners) {
-    const setting = /hookTimeout:\s*(BROWSER_HOOK_TIMEOUT_MS|[\d_]+)/.exec(text);
-    expect(setting, `${name} owns a fixture browser but gives its hooks no budget`).not.toBeNull();
-    const declared = setting![1];
+    const declared = effectiveCloseHookTimeout(text);
+    expect(declared, `${name} owns a fixture browser but gives its cleanup hook no budget`).not.toBeNull();
     if (declared === 'BROWSER_HOOK_TIMEOUT_MS') {
       expect(text, `${name} must import the budget it names`).toMatch(/BROWSER_HOOK_TIMEOUT_MS[\s\S]*?from '\.\.\/fixtures\/isolated-browser'/);
     } else {
-      expect(Number(declared.replace(/_/g, '')), `${name} hook budget`).toBeGreaterThanOrEqual(BROWSER_HOOK_TIMEOUT_MS);
-    }
-    // setConfig is not the last word: a per-hook timeout ARGUMENT overrides it, so the hook that
-    // actually awaits the owned close() is what has to carry the budget. Without this, a
-    // `}, 20000);` two lines under the setConfig line left this case green while the runner's
-    // deadline fired 25 s before the fixture's own — and the operator saw vitest's generic
-    // "Hook timed out", not the fixture's named budget error.
-    // setConfig is not the last word. A per-hook timeout ARGUMENT overrides it, and a `}, 20000);`
-    // two lines under the setConfig line is how seven suites kept a deadline 25 s SHORTER than the
-    // fixture's own cleanup budget while this case stayed green - the operator then saw vitest's
-    // generic "Hook timed out" instead of the fixture's named budget error.
-    const hookArgument = ownedCloseHookTimeout(text);
-    if (hookArgument && hookArgument !== 'BROWSER_HOOK_TIMEOUT_MS') {
-      expect(Number(hookArgument.replace(/_/g, '')), `${name}: the hook awaiting close() overrides hookTimeout with a SMALLER budget`)
-        .toBeGreaterThanOrEqual(BROWSER_HOOK_TIMEOUT_MS);
+      expect(Number(declared!.replace(/_/g, '')), `${name} effective cleanup hook budget`).toBeGreaterThanOrEqual(BROWSER_HOOK_TIMEOUT_MS);
     }
   }
 });

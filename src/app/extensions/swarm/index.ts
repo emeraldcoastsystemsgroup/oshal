@@ -70,6 +70,14 @@
  * 63 | maintainer@emeraldcoastsystemsgroup.com   | Queue workers now resolve the ticket owner's brain through resolveUserBrain, the same configuration ladder Jarvis uses, instead of bypassing the selected provider through a hosted-only resolver.
  * 64 | maintainer@emeraldcoastsystemsgroup.com   | Treat dead-letter tickets as terminal when stale swarm envelopes are inspected, including immediate deterministic-refusal quarantine.
  * 65 | maintainer@emeraldcoastsystemsgroup.com | Inject exact Futures evidence/result binding into the existing queued worker transport.
+ * 66 | maintainer@emeraldcoastsystemsgroup.com | Expose the already-wired canonical runtime-params resolver on SwarmExtensionBindings so interactive remote execution can honor the explicit `bot-default` user preference with the same per-bot > fleet > agent_config > registry record the queue stamps.
+ * 67 | maintainer@emeraldcoastsystemsgroup.com | Give protected queued `bot-default` degradation an explicit hosted-only ladder mode so an unavailable or SEC-05-ineligible canonical CLI record can fall through without resolving the same marker again.
+ * 68 | maintainer@emeraldcoastsystemsgroup.com | Gate the canonical runtime-params resolver on the first persisted provider-switch snapshot settlement so startup cannot stamp a registry fallback before the saved per-bot row loads.
+ * 69 | maintainer@emeraldcoastsystemsgroup.com | The controller's own swarm worker wiring (execution handler deps, cost-linking ticket service, worker channels, ticket-terminal check, bid responder, SwarmAgentWorker) moved to ./controller-swarm-worker.ts because this file crossed 800 code lines. Pure move; behaviour unchanged.
+ * 70 | maintainer@emeraldcoastsystemsgroup.com | Build-lane planning runs in-process: MultiRoundDispatchService gets isDelegationEnforced (the controller signing configuration) and, once the controller worker's handler deps exist, the project-manager round executor (controller-pm-round-executor.ts).
+ * 71 | maintainer@emeraldcoastsystemsgroup.com | Wired the signed build-execution dispatcher (createSignedChildDispatcher) into the swarm processing service, so build execution crosses the signed bot-node hop as the ticket's owner while delegation signing is configured.
+ * 72 | maintainer@emeraldcoastsystemsgroup.com | Verification and consensus review get isDelegationEnforced: under signing they skip the unsigned mesh round every node refuses and use the structural result immediately.
+ * 73 | maintainer@emeraldcoastsystemsgroup.com | The build-lane planning executor is wired with the signed BotNodeClient and the push-on-dispatch resolver instead of the worker's handler deps: the round now crosses the signed hop to the configured planning node (OSHAL_PM_PLANNING_NODE), where the installed provider switch rows choose the engine, and no longer runs on a hosted connection inside the api.
  */
 
 import type { Pool } from 'pg';
@@ -107,15 +115,16 @@ import {
   createAgentConfigRuntimeParamsResolver,
   AgentMemoryService,
   SwarmMemoryService,
-  PersonaLayerStore,
-  MESH_CHANNELS,
   MeshBidBroadcaster,
-  createMeshBidResponder,
   BotNodeClient,
   createRegistryEndpointResolver,
   isControllerInlineContainer,
+  type RuntimeParamsResolver,
 } from '@/features/agent-management';
 import { resolveBotNodeEndpoint } from './resolve-bot-node-endpoint';
+import { createControllerSwarmWorker } from './controller-swarm-worker';
+import { createControllerPmRoundExecutor } from './controller-pm-round-executor';
+import { hasDelegationSigningConfiguration } from '@/shared/security/delegation-http-policy';
 import { RagService } from '@/features/rag';
 import { WorkflowRunHistoryStore } from '@/features/workflow-studio';
 import type { LLMService } from '@/features/llm-provider';
@@ -126,18 +135,17 @@ import { SelectorCompositionService } from '@/features/selector-composition';
 import { BudgetService } from '@/features/cost-governance';
 import { SelfHealAutoApplyEngine } from '@/features/alert-triage';
 import { createSelfHealRemediationExecutor } from '@/app/self-heal-remediation-executor';
-import { createPromptAuthorizationResolver } from '@/app/prompt-authorization-resolver';
+import { WORKSPACE_TESTS_AGENT_ID } from '@/app/bot-node-provider-intent';
 import {
   PlaneTicketWritebackAdapter,
   GitHubTicketWritebackAdapter,
   PostgresSwarmEscalationStore,
   PostgresSwarmRunStore,
-  SwarmAgentWorker,
+  type SwarmAgentWorker,
   SwarmOrchestrationController,
   SwarmTicketProcessingService,
   SwarmVerificationService,
   type SwarmRuntimeReadiness,
-  createLLMExecutionHandler,
   RALFHandoverManager,
   ConsensusReviewService,
   InMemoryMeshTransport,
@@ -158,6 +166,8 @@ import {
   PhaseRoutingService,
   buildTaskCallOutResolver,
   PostgresSubtaskLifecycleStore,
+  createSignedChildDispatcher,
+  createNodeWorkspaceTestRunner,
 } from '@/features/swarm-orchestration';
 import { ConfigSyncService } from '@/features/config-sync';
 import { TicketService, PostgresTicketStore, WorkspaceService, PostgresWorkspaceStore } from '@/features/ticketing';
@@ -185,18 +195,21 @@ import { createOpsIntelligenceRoutes } from './routes/ops-intelligence-routes';
 import { createBotRegistryRoutes } from './routes/bot-registry-routes';
 import { createConfigPropagationRoutes } from './routes/config-propagation-routes';
 import { SwarmBotRegistry, validatePersonaIdentities, getActiveRegistry, isBotAccessibleTo, registryDeclaredProvider, registryHarnessEntry, type SwarmRuntimeIdentity } from './swarm-bot-registry';
-import { resolveHarnessForAgent } from '@/app/composition/provider-runtime';
-import { resolveInstalledProviderSwitch } from '@/app/composition/provider-switch-runtime';
+import {
+  gateRuntimeParamsResolverOnProviderSwitchSnapshot,
+  resolveInstalledProviderFallbackOrder,
+  resolveInstalledProviderSwitch,
+} from '@/app/composition/provider-switch-runtime';
 import { mountAgentProviderRoutes } from './routes/agent-provider-mount';
 import { waitForBootstrapComplete } from '@/app/composition/app-runtime-factory';
 import { registerShutdownHook } from '@/shared/services/shutdown-hooks';
 import { resolveServerOperationCreds } from '@/app/routes/connector-token-broker';
 import { resolveUserBrain } from '@/app/routes/user-brain-resolution';
+import { resolveUserLlmConnection } from '@/app/routes/free-tier-rotation';
 import { buildQueueDlqOperatorNotifier } from '@/app/routes/queue-dlq-routes';
 import {
   canUseRuntimeRegistry,
   buildStatusAwareOnlineResolver,
-  buildRuntimeAliasChannels,
   startRuntimeAgentHeartbeat,
 } from './swarm-runtime-registry';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
@@ -332,6 +345,8 @@ export interface SwarmExtensionBindings {
   swarmTicketProcessingService?: SwarmTicketProcessingService;
   queueManagerService?: QueueManagerService;
   swarmMetricsCollector?: SwarmMetricsCollector;
+  /** Canonical ADR-034 provider/model record used by both queued and interactive bot dispatch. */
+  runtimeParamsResolver?: RuntimeParamsResolver;
 }
 
 /**
@@ -397,6 +412,8 @@ export function createSwarmExtensionBindings(
   const verificationService = new SwarmVerificationService({
     meshTransport,
     workItemRepository,
+    // Under signing every node refuses an unsigned mesh round, so QA uses the structural result.
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
   });
 
   // Memory services — per-agent + shared swarm memory backed by ChromaDB via RagService
@@ -408,6 +425,7 @@ export function createSwarmExtensionBindings(
     meshTransport,
     workItemRepository,
     handoverManager: new RALFHandoverManager(),
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
   });
 
   // Operational intelligence — created early so competencyRanker can feed routing
@@ -462,6 +480,9 @@ export function createSwarmExtensionBindings(
     meshService: meshCommunicationService,
     workItemRepository,
     handoverManager: new RALFHandoverManager(),
+    // Under signing every node refuses unsigned mesh execution, so a round no in-process executor
+    // owns is skipped instead of published (docs/security/http-delegation.md).
+    isDelegationEnforced: () => hasDelegationSigningConfiguration(process.env),
     selectAgent: async (ticketId, phase, role, excludeAgentIds) => {
       const onlineResolver = runtimeRegistryService
         ? buildStatusAwareOnlineResolver(runtimeRegistryService, agentProfileRepository)
@@ -552,100 +573,18 @@ export function createSwarmExtensionBindings(
     workItemRepository,
   );
 
-  const personaLayerStore = pool ? new PersonaLayerStore(pool) : undefined;
-
-  const handoverManager = new RALFHandoverManager();
-
-  // Cost-linking ticket service — available to ALL bots (not just PM) so every
-  // bot can create ticket_task_links entries for its cost data (ADR-027).
-  const costLinkingTicketStore = pool ? new PostgresTicketStore(pool) : undefined;
-  const costLinkingTicketService = costLinkingTicketStore ? new TicketService(costLinkingTicketStore) : undefined;
-  const promptAgentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
-
-  // The swarm controller's execution handler only handles envelopes for the PM bot
-  // (local execution via agent.processMessage). All other bots consume their own
-  // envelopes directly via SwarmAgentWorker on their bot-node containers.
-  const executionHandler = agentProfileRepository && getProvider
-    ? createLLMExecutionHandler({
-        resolveProvider: getProvider,
-        agentProfileRepository,
-        personaLayerStore,
-        swarmMemoryService,
-        handoverManager,
-        recordCost: (event) => costTrackingService.recordCost(event),
-        recordMetrics: (event) => agentMetricsServiceInstance.recordExecution(event),
-        ticketService: costLinkingTicketService,
-        resolvePromptAuthorization: createPromptAuthorizationResolver(promptAgentToolRepository),
-        resolveAgentHarness: (agentId: string) => resolveHarnessForAgent(agentId, logger),
-      })
-    : undefined;
-
-  // The swarm controller subscribes only to its own channels (PM direct + broadcast).
-  // Each bot node subscribes to its own channel via its own SwarmAgentWorker.
-  const workerChannels = [
-    MESH_CHANNELS.broadcast,
-    MESH_CHANNELS.capabilities,
-    ...buildRuntimeAliasChannels(runtimeIdentity),
-  ];
-  const workerPrimaryChannel = MESH_CHANNELS.agentDirect(runtimeIdentity.agentId);
-
-  const isTicketTerminal = pool
-    ? async (ticketId: string): Promise<boolean> => {
-        const result = await pool.query(
-          'SELECT status FROM tickets WHERE ticket_id = $1 LIMIT 1',
-          [ticketId],
-        );
-        const status = result.rows[0]?.status as string | undefined;
-        return status === 'complete' || status === 'escalated' || status === 'dead_letter';
-      }
-    : undefined;
-
-  // SP-3 / ADR-083: bid responder — this participant answers BID_REQUEST envelopes with a
-  // self-scored confidence (its OWN routing keywords + required-capability overlap; a
-  // name-token match is only a 0.05 tie-breaker). Shared with bot-node-server so every
-  // swarm participant scores call-outs identically (mesh-bid-responder.ts).
-  const bidResponseHandler = createMeshBidResponder({
+  const { agentWorker, personaLayerStore, handlerDeps } = createControllerSwarmWorker({
+    pool,
+    getProvider,
+    agentProfileRepository,
+    swarmMemoryService,
+    costTrackingService,
+    agentMetricsService: agentMetricsServiceInstance,
     meshTransport,
-    agentId: runtimeIdentity.agentId,
-    agentName: runtimeIdentity.agentName,
-    capabilities: runtimeIdentity.capabilities,
-    personaPath: process.env.BOT_PERSONA_FILE,
-  });
-
-  const agentWorker = new SwarmAgentWorker({
-    transport: meshTransport,
     workItemRepository,
-    handler: executionHandler,
-    channel: workerPrimaryChannel,
-    consumerId: runtimeIdentity.agentId,
-    additionalChannels: workerChannels,
-    directHandler: bidResponseHandler,
-    isTicketTerminal,
-    updateTicketStatus: costLinkingTicketService
-      ? (ticketId, status, metadata) => costLinkingTicketService.updateStatus(ticketId, status, metadata)
-      : undefined,
-    recordTicketActivity: costLinkingTicketService
-      ? (ticketId, metadata) => costLinkingTicketService.recordActivity(ticketId, metadata)
-      : undefined,
-    recordTicketAssignment: costLinkingTicketService
-      ? async (ticketId, agentId, metadata) => {
-          const phase = metadata.phase != null ? `phase-${metadata.phase}` : undefined;
-          await Promise.all([
-            costLinkingTicketService.updateTicket(ticketId, { assignedAgentId: agentId }),
-            costLinkingTicketService.assignAgent(ticketId, agentId, 'worker', phase),
-          ]);
-        }
-      : undefined,
+    runtimeIdentity,
+    logger,
   });
-  logger.info(
-    {
-      runtimeAgentId: runtimeIdentity.agentId,
-      runtimeAgentName: runtimeIdentity.agentName,
-      primaryChannel: workerPrimaryChannel,
-      additionalChannels: workerChannels,
-    },
-    'Configured swarm worker channels for runtime identity',
-  );
 
   const agentConfigService = pool ? new AgentConfigService(pool) : undefined;
   // ADR-034 gap-b push-on-dispatch: a resolver over the SAME authoritative agent_config
@@ -653,14 +592,20 @@ export function createSwarmExtensionBindings(
   // provider/model/configVersion. Consumed by the queue manager's manifest-worker + incident
   // dispatch paths. OSHAL_PUSH_ON_DISPATCH defaults on; without this DB-backed resolver the
   // request carries an unavailable-authority marker and the remote bot refuses before execution.
-  const runtimeParamsResolver = agentConfigService
+  const baseRuntimeParamsResolver = agentConfigService
     ? createAgentConfigRuntimeParamsResolver(
       agentConfigService,
       registryDeclaredProvider,
       // Tier 1: the switch rows, read from the SAME installed snapshot resolveHarnessForAgent
       // reads, so what the api runs inline and what it stamps on a bot-node dispatch agree.
       (agentId) => resolveInstalledProviderSwitch(agentId, registryHarnessEntry(agentId)),
+      // Fallback precedence is independent of the provider-winning row: a bot row with a null
+      // chain inherits fleet/environment, while [] means explicitly no failover.
+      resolveInstalledProviderFallbackOrder,
     )
+    : undefined;
+  const runtimeParamsResolver = baseRuntimeParamsResolver
+    ? gateRuntimeParamsResolverOnProviderSwitchSnapshot(baseRuntimeParamsResolver)
     : undefined;
   const toolRepository = pool ? new ToolRepository(pool) : undefined;
   const agentToolRepository = pool ? new AgentToolRepository(pool) : undefined;
@@ -791,6 +736,35 @@ export function createSwarmExtensionBindings(
     }
   };
   const botNodeClient = new BotNodeClient(codexResolveEndpoint);
+  // Build-lane planning crosses the same signed hop to the configured planning node, whose engine
+  // the installed provider switch rows choose (docs/security/http-delegation.md, "Build-lane
+  // planning runs on a build-lane node").
+  multiRoundDispatch.setLocalRoundExecutor(createControllerPmRoundExecutor({ botNodeClient, runtimeParamsResolver }));
+  // While signing is configured, build execution crosses the signed bot-node hop as the ticket's
+  // owner, only to the build-lane allowlist (docs/security/http-delegation.md, "Worker routing").
+  if (ticketService) {
+    swarmProcessingService.setSignedChildDispatch(createSignedChildDispatcher({
+      botNodeClient,
+      workItemRepository,
+      runtimeParamsResolver,
+      readTicketStatus: async (ticketId) => (await ticketService.getTicket(ticketId))?.status ?? null,
+    }));
+    // Verification runs code work's tests where the deliverables live: the workspace-tests/run
+    // intent crosses the same signed hop to its fixed owner, and the run is recorded on the child.
+    verificationService.setWorkspaceTestRunner(createNodeWorkspaceTestRunner({
+      botNodeClient,
+      agentId: WORKSPACE_TESTS_AGENT_ID,
+      readTicket: async (ticketId) => {
+        const ticket = await ticketService.getTicket(ticketId) as { ownerSub?: string | null; metadata?: unknown } | null;
+        return ticket ? { ownerSub: ticket.ownerSub ?? null, metadata: (ticket.metadata ?? null) as Record<string, unknown> | null } : null;
+      },
+      recordRun: async (ticketId, run) => {
+        const ticket = await ticketService.getTicket(ticketId);
+        if (!ticket) return;
+        await ticketService.updateTicket(ticketId, { metadata: { ...((ticket.metadata ?? {}) as Record<string, unknown>), verificationTests: run } });
+      },
+    }));
+  }
 
   // Run-history recorder for the 'graph' dispatch path (studio Runs panel). Telemetry only —
   // every recorder method is non-throwing, so it can never gate or break a dispatch.
@@ -824,7 +798,15 @@ export function createSwarmExtensionBindings(
         // same configured user-brain ladder as Jarvis. The protected boundary still requires a
         // direct, non-agentic request and verifies either endpoint or provider authority exactly.
         resolveBrain: pool
-          ? async (ownerSub: string) => resolveUserBrain(pool, ownerSub)
+          ? async (ownerSub: string, mode = 'configured') => {
+            if (mode === 'hosted-only') {
+              const connection = await resolveUserLlmConnection(pool, ownerSub);
+              return connection
+                ? { kind: 'hosted' as const, connection }
+                : { kind: 'none' as const };
+            }
+            return resolveUserBrain(pool, ownerSub);
+          }
           : undefined,
         workflowRunRecorder,
         bindWorker: pool ? async (...args) => {
@@ -958,6 +940,7 @@ export function createSwarmExtensionBindings(
     swarmTicketProcessingService: swarmProcessingService,
     queueManagerService,
     swarmMetricsCollector,
+    runtimeParamsResolver,
   };
 }
 

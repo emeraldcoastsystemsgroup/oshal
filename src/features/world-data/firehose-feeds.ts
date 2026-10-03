@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — configurable publisher FIREHOSE feeds. Pulled ONCE per pulse (not per-name); each item is entity-tagged and fanned to the names it mentions. O(feeds) requests feed all 100 names = the "fluent" path that doesn't rate-limit. Fully env-configurable.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update docs/ paths after docs directory consolidation
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Comment only: the deep dive's classifier is the registered backend (the swarm bot rail since 2026-10-02), not a Claude call.
  */
 
 /**
@@ -103,7 +104,7 @@ export function firehoseEveryNPulses(env: NodeJS.ProcessEnv = process.env): numb
 /** SPEED READ vs DEEP DIVE — two tiers (docs/apps/trading/signal-dataset.md):
  *  - speed read: cheap, every pulse, ALL feeds. Fetch + lexicon-classify + quick entity match (no LLM).
  *    Catches volume + breaking news + the attention/novelty features instantly.
- *  - deep dive: the expensive Claude classify (real sentiment + entities + event tags), run on a METERED
+ *  - deep dive: the expensive model classify (real sentiment + entities + event tags), run on a METERED
  *    budget of the freshest un-deepened items, allocated across feeds by a learned novelty signal. */
 
 /** Whether the deep-dive (LLM) tier runs at all (default on). Off → speed-read-only (free, no LLM). */

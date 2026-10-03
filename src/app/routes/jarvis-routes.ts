@@ -64,6 +64,8 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | Serve fixed Jarvis files from a trusted hidden install directory; Express otherwise treats a dot-prefixed parent as a hidden file and returns 404.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Late answers and honest infra errors. A conversational turn that outlives the decision window no longer answers "my model provider did not respond in time" while the bot is still working (live 2026-09-27: the recall turn's real answer landed ~2 min after that text and reached nobody). The job stays pending with a still-working note and the SAME turn's answer takes the ordinary path into the same thread when it lands; a real failure the turn reports still reaches the job as its own error. The selected-file and work-filing timeout branches are unchanged. The /ask session gate and /ask/result now tell a store that could not answer (a pool connect timeout) apart from a refusal: a retryable 503 instead of 404 session_not_found or 'expired'.
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the deterministic location-reminder turn ("remind me next time I'm at the grocery store", "I'm at the grocery store, remind me next time", "... here") is detected before the time-reminder intent and answered by location-jarvis-intent.ts without a model turn, sharing the reminder branch; the build-request guard yields to it. Net +4 code lines.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com   | The model turn's context blocks run catalog, plan guidance, tools, artifacts, open work. With tools first and open work ahead of the plan guidance, every live turn on 2026-10-01 (37,816 characters against the node's 24,000) lost the plan guidance, the open work and 23 of the 40 catalog entries, so Jarvis could not plan a multi-step request. The plan guidance now sits directly after the catalog it refers to, and open work, which is bounded per task and least costly to clip, goes last. No line count change.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com   | The catalog is built from the user's words (buildCatalogBlock(ctx, message)), so the apps the ask names lead it with their description and every other app is still listed by key; it was the first 40 routes regardless of the ask.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -775,10 +777,12 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
         // The deployment's app catalog rides EVERY model turn (before the plan guidance, whose
         // "catalog keys above" refers to it). Without it the persona's baked specialist list was
         // Jarvis's whole world - a store-installed app on this box did not exist to the model.
-        const catalog = await buildCatalogBlock(ctx);
+        const catalog = await buildCatalogBlock(ctx, message);
         const openWork = await buildOpenWorkBlock(ctx, sub);
         const artifactBlock = buildArtifactRoutingPrompt(artifactSelection, artifactActions);
-        const ctxBlocks = [tools, catalog, openWork, artifactBlock, ...(artifactSelection ? [] : [PLAN_DIRECTIVE_GUIDANCE])].filter(Boolean).join('\n\n');
+        // Order is what survives the node's window (see assembleJarvisBotMessage): the catalog, then the
+        // plan guidance that refers to its keys, then tools; open work (up to 8 x 1,500 characters) last.
+        const ctxBlocks = [catalog, ...(artifactSelection ? [] : [PLAN_DIRECTIVE_GUIDANCE]), tools, artifactBlock, openWork].filter(Boolean).join('\n\n');
         // The live screen sits with the attached media: both are authoritative context for THIS turn,
         // and both belong immediately before the user's words so they frame the question being asked.
         const screenBlock = buildSurfaceContextPrompt(surfaceContext);

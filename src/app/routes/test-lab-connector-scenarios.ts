@@ -3,6 +3,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register connector callback refusal and browser-bound OAuth regression suites with the existing Test Lab.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register the Yahoo Mail connector card: the anonymous credential refusal on /api/connect/yahoo/access-token, with the loopback-IMAP reader suite and the connector schema/card suite attached. No mailbox is contacted; a live Yahoo connect is an operator acceptance step.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the ESPN Fantasy league-read card for the fantasy-leagues kernel skill (ADR-146 D2): the anonymous refusal on /api/connect/espn-fantasy/access-token, with the loopback protocol-seam suite and the kernel-skill contract suite attached. No ESPN host is contacted and no real league is read; a real-league read stays an operator acceptance step behind a signed-in session.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Describe same-subject issuer-switch refusal in the linked real-HTTP consent suite; the installed card remains anonymous refusal only.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register qualified personal grant authentication and scoped HTTP/provider/crypto/storage guards without claiming real consent or PostgreSQL from a refusal card.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the Outlook mail package seams card (reader, sync reader, outlookMailSend incl. the Google rail) with the anonymous refusal on /api/connect/outlook/access-token; the two specs were not linked to any card.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -18,9 +21,31 @@ async function refusal(path: string, expected: number, label: string): Promise<S
   };
 }
 
+const QUALIFIED_PERSONAL_CONNECTOR: Scenario = {
+  id: 'qualified-personal-connector', title: 'Qualified personal connector grants', group: 'tool',
+  description: 'Check anonymous metadata and consent refusal. Linked suites cover the real HTTP/browser ceremony, exact issuer/subject, fresh SmartThings location verification, encryption and revision-bound reconnect/revoke. HTTP authentication/storage fixtures and local provider responders are explicit doubles. Real PostgreSQL enforcing-role suites are separate; this card neither authorizes a provider nor enables device actions.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/connector-qualified-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-smartthings.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-session.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-broker.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-grants.spec.ts' },
+    { level: 'unit', path: 'tests/unit/connector-qualified-token-crypto.spec.ts' },
+    { level: 'unit', path: 'tests/unit/qualified-connectors-ui.spec.ts' },
+    { level: 'integration', path: 'tests/unit/qualified-connectors-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-credentials-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-grants-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-qualified-broker-postgres.spec.ts' },
+  ],
+  steps: [
+    { id: 'private-qualified-metadata', app: 'connectors', label: 'Protect personal grant metadata', run: () => refusal('/api/connect/qualified', 401, 'Qualified metadata requires sign-in') },
+    { id: 'private-qualified-consent', app: 'connectors', label: 'Protect personal grant consent', run: () => refusal('/api/connect/qualified/smartthings/start', 401, 'Qualified consent requires sign-in') },
+  ],
+};
+
 export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
   id: 'connector-oauth-boundary', title: 'Connector sign-in callback boundary', group: 'tool',
-  description: 'Check that an anonymous callback reaches state validation while connector data and completion still require sign-in. Cross-domain success and replay cases use the isolated provider fixtures in the linked suites.',
+  description: 'Check that an anonymous callback reaches state validation while connector data and completion still require sign-in. Cross-domain success, replay and same-subject issuer-switch refusals use real HTTP with isolated authentication/provider/storage fixtures in the linked suites; this card does not perform provider consent.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/connector-oauth-callback.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-reconnect.spec.ts' },
@@ -41,6 +66,16 @@ export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
     { id: 'private-token', app: 'connectors', label: 'Protect the Yahoo credential', run: () => refusal('/api/connect/yahoo/access-token', 401, 'Yahoo credential requires sign-in') },
   ],
 }, {
+  id: 'outlook-mail-package-seams', title: 'Outlook mail seams for installed packages (read, sync, send)', group: 'tool',
+  description: 'Check that the Outlook credential stays behind sign-in. The linked suites drive the fixed package seams with real request shapes and a scripted Graph: the reader and the sync reader select only the caller\'s exact personal grant and pass only matched metadata; the sender (outlookMailSend) requires the exact sender mailbox and the send scope, posts one bounded recipient to the fixed Graph or Gmail endpoint, resolves Reply-To in core, and returns a status word with no token or provider body. They do not sign in to a real mailbox or send mail.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/outlook-mail-reader.spec.ts' },
+    { level: 'unit', path: 'tests/unit/outlook-mail-sender.spec.ts' },
+  ],
+  steps: [
+    { id: 'private-token', app: 'connectors', label: 'Protect the Outlook credential', run: () => refusal('/api/connect/outlook/access-token', 401, 'Outlook credential requires sign-in') },
+  ],
+}, {
   id: 'espn-fantasy-league-reads', title: 'ESPN Fantasy league reads (fantasy-leagues kernel skill)', group: 'tool',
   description: 'Check that the ESPN Fantasy cookies stay behind sign-in. The linked suites drive the fantasy-leagues kernel skill, the one ESPN fantasy read client (ADR-146 D2), against a loopback host shaped like ESPN: both cookies on league reads only and none on the public feed, the fixed ESPN host under a hostile league id, refused, unavailable and unreachable kept apart, and espn_s2 absent from every log event and returned value; plus the skill contract that pins the client into the build. They do not contact ESPN or read a real league.',
   regressionTests: [
@@ -50,4 +85,4 @@ export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
   steps: [
     { id: 'private-token', app: 'connectors', label: 'Protect the ESPN Fantasy cookies', run: () => refusal('/api/connect/espn-fantasy/access-token', 401, 'ESPN Fantasy cookies require sign-in') },
   ],
-}];
+}, QUALIFIED_PERSONAL_CONNECTOR];

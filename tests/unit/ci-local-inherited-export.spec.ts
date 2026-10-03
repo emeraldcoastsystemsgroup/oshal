@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive ci-local.sh's real gate sequence, in Git Bash, over a state directory that already holds the previous run's ci-src export - the state the 2026-09-09 nightly wedged nine hours in and wrote no outcome line from. The purge spec next door runs purge_tree alone and pins the call sites by text search; nothing ever ran the sequence itself, so the last done-when of that entry ("a run that inherits a leftover export from a failed run reaches its gates and writes an outcome line") rested on reading the code. This runs it: the production prepare_head_src, run_gate and gate block are sliced out of ci-local.sh, the gates are recording stand-ins, and the leftover on disk is real. It covers the export that purges, the export that will not purge inside the watchdog (which used to skip twelve gates and leave $GATE_SRC naming a half-deleted tree that the image-tier gates then read), and the retry of a tree an earlier run had to abandon.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The gate block gained the cluster-free Kubernetes gates `argo-manifests` and `terraform` (both stubbed here like every other gate, so the sequence is still what is judged) and the opt-in `--cluster-gates` branch. The probe states the default posture - CLUSTER_GATES=0 - which the real runner sets in its argument parsing, and requires the two new gates among those the sequence reaches. It also states PUBLISH_IMAGE=0: the publish block (ci-local.sh SEQ 26) reads that variable under set -u, the probe never set it, and every case here was already red on `PUBLISH_IMAGE: unbound variable` before this change (measured on an unmodified export of d6e78088).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | ci-local.sh SEQ 37: run_gate now consults the resource check and the gate block restores quiesced workers, so the probe sources scripts/ci/ci-resource.sh and scripts/ci/ci-quiesce.sh beside the purge helper (no floor configured and no state file, so both stay inert here), slices the two new outcome helpers the block calls (gate_did_not_pass, record_skipped), states EXHAUSTED_GATES=() as the runner does, and ends at the single outcome line the runner now writes. It also sources scripts/ci/ci-export.sh: prepare_head_src has called export_tree from it since 30e9b7cd (2026-09-24), the probe never sourced it, and all three cases had stood red on `export_tree: command not found` since then (measured on unmodified origin/main 9cf416a8: 3 failed (3)) - the same break the planted-fixture guard was repaired for on 2026-10-01. With the export sourced, the run then reached three gates main added after this guard was written (typecheck-tests, javascript-logging, ai-usage-ledger) with no stand-in, so each failed on its undefined body; they join the stubbed list, and the sequence must reach them.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -16,6 +17,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 const ROOT = resolve(__dirname, '../..');
 const CI_SOURCE = readFileSync(join(ROOT, 'scripts', 'ci-local.sh'), 'utf8');
 const PURGE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-purge.sh').replaceAll('\\', '/');
+const RESOURCE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-resource.sh').replaceAll('\\', '/');
+const QUIESCE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-quiesce.sh').replaceAll('\\', '/');
+const EXPORT_HELPER = join(ROOT, 'scripts', 'ci', 'ci-export.sh').replaceAll('\\', '/');
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-ci-inherited-'));
 // This spec runs on the nightly isolated runner, and each run builds a git repository plus three
 // state directories. Without this it leaks one tree a night - the same class of leftover the change
@@ -103,7 +107,7 @@ function functionBody(name: string, optional = false): string {
 function gateSequence(): string {
   const start = CI_SOURCE.indexOf('\nNODE_GATES_OK=1\n');
   expect(start, 'the gate block no longer starts at NODE_GATES_OK=1').toBeGreaterThanOrEqual(0);
-  const endMark = 'log "=== LOCAL CI: FAILED gates: ${FAILED_GATES[*]} ==="';
+  const endMark = 'log "=== LOCAL CI: $OUTCOME ==="';
   const end = CI_SOURCE.indexOf(endMark, start);
   expect(end, 'the failed-gates outcome line is no longer in ci-local.sh').toBeGreaterThan(start);
   return `${CI_SOURCE.slice(start + 1, end + endMark.length)}\n`;
@@ -115,6 +119,7 @@ const GATES = [
   'workflow_triggers', 'security_policy', 'repo_separation', 'spec_database_default',
   'worktree_strays', 'secrets', 'local_secret_hygiene', 'unpushed_commits', 'e2e', 'image',
   'kernel_skills_image', 'smoke', 'trivy', 'alert_residue', 'argo_manifests', 'terraform',
+  'typecheck_tests', 'javascript_logging', 'ai_usage_ledger',
 ];
 
 interface ProbeRun {
@@ -152,6 +157,7 @@ function runProbe(seed: { leftover?: boolean; abandoned?: boolean }, stall = fal
   writeFileSync(probe, `${[
     '#!/usr/bin/env bash', 'set -uo pipefail',
     'REPO_DIR="$1"; SOURCE_SHA="$2"; STATE_DIR="$3"; FAKE_BIN="$4"; GATE_RECORD="$5"; PURGE_HELPER="$6"',
+    'RESOURCE_HELPER="$7"; QUIESCE_HELPER="$8"; EXPORT_HELPER="$9"',
     'chmod +x "$FAKE_BIN"/npm "$FAKE_BIN"/node',
     // PATH entries must be POSIX-form under MSYS: a C:/... entry splits on its colon and the real npm wins.
     'if command -v cygpath >/dev/null 2>&1; then FAKE_BIN="$(cygpath -u "$FAKE_BIN")"; fi',
@@ -160,10 +166,15 @@ function runProbe(seed: { leftover?: boolean; abandoned?: boolean }, stall = fal
     `log() { printf '[log] %s\\n' "$*"; }`,
     'if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi',
     '. "$PURGE_HELPER"',
+    '. "$7"',
+    '. "$8"',
+    '. "$9"',
     stall ? 'purge_tree_delete() { exec >/dev/null 2>&1; sleep 25; }' : '',
     functionBody('sweep_abandoned_exports', true),
     functionBody('prepare_head_src'),
     functionBody('run_gate'),
+    functionBody('gate_did_not_pass'),
+    functionBody('record_skipped'),
     ...stubs,
     'prune_scoped() { :; }',
     'REPO_WIN="$REPO_DIR"',
@@ -171,13 +182,13 @@ function runProbe(seed: { leftover?: boolean; abandoned?: boolean }, stall = fal
     'HEAD_MODE=1; DO_INSTALL=0; SKIP_E2E=0; SKIP_IMAGE=0; PUBLISH_IMAGE=0',
     // The runner's default: the live-cluster gates run only behind --cluster-gates.
     "CLUSTER_GATES=0; K8S_CLUSTER_GATES_NOT_REQUESTED='cluster gates not requested'",
-    'FAILED_GATES=()',
+    'FAILED_GATES=(); EXHAUSTED_GATES=()',
     gateSequence(),
   ].join('\n')}\n`);
 
   const result = spawnSync(
     BASH,
-    [toBash(probe), toBash(FIXTURE.repo), FIXTURE.sha, toBash(stateDir), toBash(fakeBin), toBash(record), PURGE_HELPER],
+    [toBash(probe), toBash(FIXTURE.repo), FIXTURE.sha, toBash(stateDir), toBash(fakeBin), toBash(record), PURGE_HELPER, RESOURCE_HELPER, QUIESCE_HELPER, EXPORT_HELPER],
     { encoding: 'utf8', timeout: 240_000, env: { ...process.env, CI_PURGE_TIMEOUT_SECONDS: '4' } },
   );
   const gates = (existsSync(record) ? readFileSync(record, 'utf8') : '')

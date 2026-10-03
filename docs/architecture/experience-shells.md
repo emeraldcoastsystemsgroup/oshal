@@ -8,7 +8,7 @@ The prototypes these shells were built from are packaged, with their checks and 
 
 ## What ships
 
-Eight selectable experiences over one unchanged backend:
+The selectable experiences, over one unchanged backend:
 
 | Experience | Route | Shape |
 | --- | --- | --- |
@@ -20,9 +20,10 @@ Eight selectable experiences over one unchanged backend:
 | Little Monsters · classroom | `/homebase?preset=classroom` | Classwork, class calendar, teacher roster with each learner's activity (level, streak, quiz average, cards reviewed) or learner checklist by real role; teachers post classwork from the shell; the learner checklist opens My Day in place; the Little Monsters tools the caller is admitted to open in place, beside AI Office (Make and share) and Circuit Lab (Build and test) with the `classroom` view requested |
 | Business · company swarm | `/homebase?preset=company` | Front page: Today (Intelligent Communication's saved digest), Office calendar (the Calendar package's snapshot), Recent documents (AI Office) and Capture pipeline (Federal CRM) as summary cards, then open tickets as projects (six rows, tickets awaiting approval first and the rest newest first; a ticket awaiting a human approval can be approved from its dialog) and the tools; Payroll and Calls cards, lists, the personal card (the dense account table, or, where Finance is not installed, a personal workspace whose "My drafts" lists the caller's saved Content Studio drafts and newest finished Jarvis task) and the team feed beside; team calendar and people pages; hosts Presentations, Office (Intelligent Communication's My Day, Calendar, World Intelligence), Finance, Communications (Switchboard, Social's Composer, Calling Assistant), Growth (Marketing Engine, Venture Plan), Federal CRM (its pipeline surfaces), Payroll, Payments, Identity and Engineering in place with the `company` view requested |
 | Central assistant | `/nexus` | Intent composer with push-to-talk dictation, a "Request progress" ledger of observed phases, a typed answer workspace (answer, owner-checked visual, handoffs, background work, approval card, fallback provider), lifecycle states (running, ready, partial, failed, setup needed, stopped waiting, still running (poll limit)), speaking core whose readback meter and progress follow the voice (the status keeps the outcome: complete, stopped, paused while away, audio did not start, no engine); Calendar and Travel open inside the conversation as in-context app previews: the caller's busy windows for a month (free Friday-to-Sunday weekends; unread days unknown, never free), a free weekend or typed dates into Travel's own flight search (admitted callers only), local filters and sort, a best-match line naming the weekend, fare, stops and the busy weekends left out, a comparison across every free weekend of the month (the cards filter it), typed dates checked against the calendar, a fare dialog, a device shortlist and fare watches through Travel; the request ledger adds the page's own Calendar, Travel and preferences rows |
+| Simple chat | `/simple` | One plain text screen over the caller's Jarvis thread: a slim header, the conversation above, the box pinned at the bottom, first-run help with three example prompts that leaves after the first message. Same endpoints and device session as the shells (`POST /api/jarvis/ask`, `GET /api/jarvis/ask/result`, `GET /api/jarvis/history`), so it is the same conversation; an answer's application handoffs, files and visual show as links. No orb, pickers or panels. See [simple-chat.md](./simple-chat.md). |
 
 `/portal` (also `/experience`) is the chooser: the suite inventory, the central assistant as a feature, the three homebases ("One swarm. Three ways to belong.") and the four layouts numbered 01-04, each card with a drawn preview in its palette and one live fact, then recent work and the searchable directory. The cockpit header's **Experiences** menu links the
-same eight entries, every shell carries an experience picker in its top bar, and `/little-monsters`
+same entries plus Simple chat, every shell carries an experience picker in its top bar (Simple chat included), and `/little-monsters`
 redirects to the classroom preset. Plain `/cockpit/` is unchanged: the experiences are opt-in.
 
 **Kernel applications inside the shells.** The whole-portal shells frame an application's first surface with the audience
@@ -129,8 +130,20 @@ The directory resolves like the cockpit directory (`src/experience` under the wo
 and `Dockerfile.oshal` copies it into the image. The pages load only same-origin scripts and
 stylesheets under `/experience/…`, so the strict CSP applies unchanged.
 
+**Shell lock (ADR-164 amendment, 2026-10-02).** On a deployment whose landing names an application
+(`LANDING_PATH` or `HOST_APP_MAP` → `/cockpit/?app=<name>`), these entry pages and the plain
+cockpit document are the operator's experiences: a signed-in non-operator who requests one is
+redirected to the landing (`src/app/experience-shell-lock.ts`), and the focused rail withholds the
+platform hub, returns the logo to the landing application and hides the header's Experiences menu
+(inputs `landingApp` and `operator` on `GET /api/ui/profile`). Operators, focused `?app=` requests,
+assets and deployments without a focused landing are unchanged.
+
 ## Verification
 
+- `tests/unit/experience-simple-chat-browser.spec.ts` and `tests/unit/simple-chat-kit.spec.ts`: Simple chat (`/simple`)
+  through the real routes over the same fixture: the sign-in gate, first-run help, the box at the bottom, the history on
+  reload, the ask/poll round trip with its links, refusals and failed jobs as rows, the session roll, escape-first rendering,
+  the link guard and phone width.
 - `tests/unit/experience-live-data.spec.ts`: adapter joins, summary caps, identity, ask flow
   including the session roll and every terminal state.
 - `tests/unit/experience-layouts-browser.spec.ts`: headless Chromium through the real route

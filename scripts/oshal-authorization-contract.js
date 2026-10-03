@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Permit explicit asset filenames while refusing dot-segment traversal and keeping parameter grammar unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | A bots binding may name its agentId as a canonical lowercase UUID, which can begin with a digit (Intelligent Sales' concierge is 15000000-…-0001). Before this the package could not bind its own bot, and an unbound bot is refused for everyone once a catalog exists. Every other binding kind keeps the identifier rule.
  */
 /* ADR-149 shared CLI/runtime contract. Pure catalog validation; loading is package-confined. */
 'use strict';
@@ -29,6 +30,14 @@ function exact(value, keys, label) {
 function id(value, label) {
   if (typeof value !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,95}$/.test(value)
     || ['constructor', 'prototype', '__proto__'].includes(value)) fail(`${label} is an invalid identifier`);
+}
+// A bots binding names the package's agentId, and the runtime matches it verbatim
+// (operation = agentId). Agent ids are UUIDs, which may begin with a digit, so that one kind
+// also accepts a canonical lowercase UUID; every other kind keeps the identifier rule.
+const AGENT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function bindingId(kind, value) {
+  if (kind === 'bots' && typeof value === 'string' && AGENT_UUID.test(value)) return;
+  id(value, 'binding');
 }
 function list(value, label) {
   if (!Array.isArray(value) || value.length === 0 || value.length > 256) fail(`${label} must contain 1-256 entries`);
@@ -100,7 +109,7 @@ function validateAuthorizationCatalog(value) {
     list(bindings, `${kind} bindings`); const seen = new Set(); const routes = [];
     for (const binding of bindings) {
       exact(binding, kind === 'http' ? ['id', 'method', 'path', 'allOf'] : ['id', 'allOf'], 'binding');
-      id(binding.id, 'binding'); if (seen.has(binding.id)) fail('duplicate binding id'); seen.add(binding.id);
+      bindingId(kind, binding.id); if (seen.has(binding.id)) fail('duplicate binding id'); seen.add(binding.id);
       list(binding.allOf, 'allOf');
       if (binding.allOf.some(permission => !has(value.permissions, permission))) fail('unknown bound permission');
       if (kind === 'http') {

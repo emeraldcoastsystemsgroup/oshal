@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Reject shell navigation whose awaited decision spans a completed package reload.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove escaped browser denial guidance, API JSON parity and absence of unauthorized handler dispatch.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 through real package loading and mounted routes: a non-widening catalog upgrade keeps an existing grant working on the new binding with no revoke or re-grant and records the installer migration event; a widening one refuses with the review id while the installed package keeps serving, and loads once an administrator approves that review.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Exercise signed callback revocation, exact refreshed owners and retirement across deferred verifier, directory and real resource-policy boundaries.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Hold the real policy's final tier resolver to prove revocation cannot hide behind an effective-policy snapshot.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -48,7 +50,10 @@ const catalog: AuthorizationCatalog = {
 };
 const PACKAGE = `exports.createRoutes = function(ctx) {
   if (ctx.authorization && ctx.fixtureHasCatalog()) ctx.authorization.registerResource('records', {
-    authorize: async function(input) { ctx.fixtureObserve('adapter'); return !input.operation.path || !input.operation.path.endsWith('/other-owner'); }
+    authorize: async function(input) {
+      ctx.fixtureObserve('adapter'); await ctx.fixtureCallbackWait('adapter');
+      return !input.operation.path || !input.operation.path.endsWith('/other-owner');
+    }
   });
   ctx.fixtureFactoryContext({ management: Boolean(ctx.applicationAuthorization), tool: Boolean(ctx.authorizationTool), authorization: Boolean(ctx.authorization) });
   return function(req, res) {
@@ -59,6 +64,7 @@ const PACKAGE = `exports.createRoutes = function(ctx) {
 exports.createVerifier = function(ctx) {
   return async function(req) {
     if (req.get('x-fixture-signature') !== 'verified-provider-request') return null;
+    await ctx.fixtureCallbackWait('verifier');
     return ctx.fixtureCallbackPrincipal();
   };
 };`;
@@ -73,7 +79,24 @@ let failTakeout: boolean, hasCatalog: boolean;
 let memberTenants: string[];
 let callbackActive: boolean;
 let callbackPrincipal: { sub: string; issuer: string } | null;
+let callbackDirectoryActor: AuthorizationActor;
+type CallbackStage = 'verifier' | 'directory' | 'adapter' | 'tier';
+let callbackPause: { stage: CallbackStage; skip: number; entered(): void; wait: Promise<void> } | undefined;
 let activationPause: { entered(): void; wait: Promise<void> } | undefined;
+
+/** Pause an external collaborator, never the loader, HTTP dispatcher or policy being proved. */
+function deferCallback(stage: CallbackStage, skip = 0) {
+  let entered!: () => void, release!: () => void;
+  const began = new Promise<void>(done => { entered = done; });
+  callbackPause = { stage, skip, entered, wait: new Promise<void>(done => { release = done; }) };
+  return { began, release };
+}
+async function waitCallback(stage: CallbackStage) {
+  if (callbackPause?.stage !== stage) return;
+  if (callbackPause.skip-- > 0) return;
+  const pause = callbackPause; callbackPause = undefined;
+  pause.entered(); await pause.wait;
+}
 
 /** @description Install an isolated shell catalog and a business-only editor without personal access.
  * @param displayName Optional installed application label. @returns Current mounted policy fixture ready for document and API requests.
@@ -113,7 +136,8 @@ async function grant(role = 'reader', target = alice) {
 }
 async function call(path = '/records/owned', { user = 'alice', method = 'GET', headers = {} }: { user?: string | null; method?: string; headers?: Record<string, string> } = {}) {
   const response = await fetch(base + '/api/runtime-app' + path, { method, headers: { ...(user ? { 'x-fixture-user': user } : {}), ...headers } });
-  return { status: response.status, body: await response.json() };
+  const body = await response.text();
+  return { status: response.status, body: body ? JSON.parse(body) : null };
 }
 
 beforeEach(async () => {
@@ -140,7 +164,9 @@ beforeEach(async () => {
     delete: async (name: string) => { repoWrites++; return records.delete(name); },
   };
   store = new MemoryAuthorizationStore();
-  policy = new ApplicationAuthorizationService(store, { resolveTier: async () => ({ tier: 'admin', explicit: false }) });
+  policy = new ApplicationAuthorizationService(store, { resolveTier: async () => {
+    await waitCallback('tier'); return { tier: 'admin', explicit: false };
+  } });
   const actor = async (req: Request) => {
     const name = req.get('x-fixture-user');
     if (name === 'alice') return structuredClone({ ...alice, ...(memberTenants.length ? { tenantIds: memberTenants } : {}) });
@@ -148,8 +174,12 @@ beforeEach(async () => {
     throw Object.assign(new Error('No verified fixture actor'), { status: 401 });
   };
   callbackActive = true; callbackPrincipal = { sub: alice.sub, issuer: alice.issuer };
+  callbackDirectoryActor = structuredClone(alice); callbackPause = undefined;
   runtime = new ApplicationAuthorizationRuntime(policy, actor, { OSHAL_APPLICATION_AUTHORIZATION_MODE: 'enforce' }, repo.findByName,
-    async (sub, issuer) => sub === alice.sub && issuer === alice.issuer ? { ...alice, isActive: callbackActive } : null);
+    async (sub, issuer) => {
+      await waitCallback('directory');
+      return sub === alice.sub && issuer === alice.issuer ? { ...callbackDirectoryActor, isActive: callbackActive } : null;
+    });
   const app = express();
   // Simulate a platform administrator scope upstream; package execution must narrow it.
   app.use((_req, _res, next) => runWithRequestIdentity({ sub: 'upstream-operator', principalIssuer: ISSUER, isOperator: true }, next));
@@ -160,7 +190,8 @@ beforeEach(async () => {
     const observation = { phase, identity: getRequestIdentity(), actor: getApplicationAuthorizationActor() };
     observations.push(structuredClone(observation)); return observation;
   };
-  const ctx = { pool, fixtureObserve: observe, fixtureHasCatalog: () => hasCatalog, fixtureCallbackPrincipal: () => callbackPrincipal,
+  const ctx = { pool, fixtureObserve: observe, fixtureHasCatalog: () => hasCatalog,
+    fixtureCallbackWait: waitCallback, fixtureCallbackPrincipal: () => structuredClone(callbackPrincipal),
     fixtureFactoryContext: (value: unknown) => factoryContexts.push(value), applicationAuthorization: runtime, authorizationTool: {} } as unknown as AppContext;
   // TYPED, deliberately: this double used to be cast `as never`, and that cast is what let it rot.
   // It declared `resolve`, which #605 replaced with `resolveForPrincipal(appName, userSub,
@@ -187,7 +218,8 @@ beforeEach(async () => {
     // rename showed up only at runtime: the mounter called an undefined method, the catch fired,
     // and every case in this file got 503 app_access_unavailable instead of the status it asserts.
     appAccessDouble, runtime);
-  app.use((_req, res) => res.status(404).json({ error: 'fixture_not_found' }));
+  app.use((_req, res) => res.status(404).json({ error: 'fixture_not_found', observation: observe('fallthrough'),
+    decision: res.locals.applicationAuthorization }));
   apps = new SwarmAppService(pool as never, repo as never, { updateAgentStatus: async () => undefined } as never,
     undefined, undefined, undefined, mounter, undefined, undefined, undefined,
     { register: async () => {
@@ -206,11 +238,130 @@ afterEach(async () => {
 
 describe('Application authorization runtime integration', () => {
   describe('signed package callbacks', () => {
-    async function install() {
-      await apps.loadApp(writePackage(manifest({ uses: ['application-authorization', 'signed-package-callbacks'],
-        routes: [{ module: 'routes.js', factory: 'createRoutes', mountPath: '/api/runtime-app', auth: 'public', callbackVerifier: 'createVerifier' }] })));
+    async function install(source = PACKAGE) {
+      const file = writePackage(manifest({ uses: ['application-authorization', 'signed-package-callbacks'],
+        routes: [{ module: 'routes.js', factory: 'createRoutes', mountPath: '/api/runtime-app', auth: 'public', callbackVerifier: 'createVerifier' }] }));
+      writeFileSync(join(root, 'runtime-app', 'routes.js'), source);
+      await apps.loadApp(file);
     }
     const signed = { user: null, method: 'POST', headers: { 'x-fixture-signature': 'verified-provider-request' } };
+    async function changeGrant(action: 'revoke' | 'deny') {
+      const preview = await policy.previewChange(admin, { action, app: 'runtime-app', targetSub: alice.sub,
+        targetIssuer: alice.issuer, ...(action === 'revoke' ? { role: 'editor' } : {}),
+        reason: 'Signed callback revocation fixture', expectedRevision: (await store.read()).revision });
+      await policy.applyChange(admin, { previewId: preview.previewId, idempotencyKey: crypto.randomUUID() });
+    }
+    async function allowedCallback() {
+      await install(); await grant('editor');
+      expect((await call('/records', signed)).status).toBe(200);
+      expect(observations.filter(row => row.phase === 'handler')).toHaveLength(1);
+      observations = [];
+    }
+    async function duringCallback(stage: CallbackStage, change: () => Promise<void> | void, skip = 0) {
+      const pause = deferCallback(stage, skip);
+      const response = call('/records', signed);
+      try {
+        await pause.began; await change(); pause.release();
+        return await response;
+      } finally { pause.release(); await response; }
+    }
+    function noHandler() { expect(observations.filter(row => row.phase === 'handler')).toHaveLength(0); }
+    it('revokes a previously allowed callback through the real preview/apply policy', async () => {
+      await allowedCallback(); await changeGrant('revoke');
+      expect((await call('/records', signed)).status).toBe(403); noHandler();
+    });
+    it.each(['revoke', 'deny'] as const)('refuses %s while the final effective-policy tier resolver awaits', async action => {
+      await allowedCallback();
+      // Skip authorize()'s first tier read; hold the second, inside the final effective() call.
+      const result = await duringCallback('tier', () => changeGrant(action), 1);
+      expect.soft(result).toMatchObject({ status: 403, body: { error: 'callback_authorization_changed' } });
+      noHandler();
+      expect((await call('/records', signed)).status).toBe(403);
+    });
+    it.each(['verifier', 'directory', 'adapter'] as const)('rechecks revocation after deferred %s', async stage => {
+      await allowedCallback();
+      const result = await duringCallback(stage, () => changeGrant('revoke'));
+      expect([403, 503]).toContain(result.status); noHandler();
+      expect((await call('/records', signed)).status).toBe(403);
+    });
+    it.each(['verifier', 'directory', 'adapter'] as const)('rechecks explicit deny after deferred %s', async stage => {
+      await allowedCallback();
+      const result = await duringCallback(stage, () => changeGrant('deny'));
+      expect([403, 503]).toContain(result.status); noHandler();
+    });
+    it.each(['sub', 'issuer'] as const)('refuses a directory refresh changing the exact owner %s', async field => {
+      await allowedCallback();
+      callbackDirectoryActor = { ...alice, [field]: field === 'sub' ? 'different-owner' : 'https://different.fixture.test' };
+      const result = await call('/records', signed);
+      expect(result).toMatchObject({ status: 403, body: { error: 'callback_owner_unavailable' } }); noHandler();
+    });
+    it.each([
+      ['directory', 'inactive'], ['directory', 'sub'], ['directory', 'issuer'],
+      ['adapter', 'inactive'], ['adapter', 'sub'], ['adapter', 'issuer'],
+    ] as const)('rejects owner changes during %s (%s)', async (stage, change) => {
+      await allowedCallback();
+      const result = await duringCallback(stage, () => {
+        if (change === 'inactive') callbackActive = false;
+        else callbackDirectoryActor = { ...alice, [change]: change === 'sub' ? 'different-owner' : 'https://different.fixture.test' };
+      });
+      expect([403, 503]).toContain(result.status); noHandler();
+    });
+    it.each(['verifier', 'directory', 'adapter'] as const)('refuses unavailable registration during deferred %s', async stage => {
+      await allowedCallback();
+      const result = await duringCallback(stage, () => runtime.unregister('runtime-app'));
+      expect(result.status).toBe(503); noHandler();
+    });
+    it.each(['verifier', 'directory', 'adapter'] as const)('refuses an unloaded callback during deferred %s', async stage => {
+      await allowedCallback();
+      const result = await duringCallback(stage, async () => { await apps.unloadApp('runtime-app'); });
+      expect(result.status).toBe(503); noHandler();
+      expect((await call('/records', signed)).status).toBe(404);
+    });
+    it.each(['verifier', 'directory', 'adapter'] as const)('rejects the retired handler after same-policy reload during deferred %s', async stage => {
+      await allowedCallback();
+      const previous = runtime.snapshot('runtime-app')!.generation;
+      const result = await duringCallback(stage, () => apps.loadApp(records.get('runtime-app')!.manifestPath).then(() => undefined));
+      expect(runtime.snapshot('runtime-app')!.generation).not.toBe(previous);
+      expect(result.status).toBe(503); noHandler();
+      expect((await call('/records', signed)).status).toBe(200);
+    });
+    it('does not dispatch a mount retired while current policy authorization awaits', async () => {
+      await allowedCallback();
+      const result = await duringCallback('adapter', () => mounter.unmount('runtime-app'));
+      expect(result.status).toBe(503); noHandler();
+    });
+    it('rejects a changed runtime generation even if its mount and catalog are unchanged', async () => {
+      await allowedCallback();
+      const record = records.get('runtime-app')!;
+      const result = await duringCallback('adapter', async () => { await runtime.start(record); runtime.complete(record); });
+      expect(result.status).toBe(503); noHandler();
+    });
+    it('rechecks generation after the final callback owner lookup yields', async () => {
+      await allowedCallback();
+      const record = records.get('runtime-app')!;
+      const result = await duringCallback('directory', async () => { await runtime.start(record); runtime.complete(record); }, 1);
+      expect(result.status).toBe(503); noHandler();
+    });
+    it('does not pass callback authority or its allow decision into fallthrough middleware', async () => {
+      await install(PACKAGE.replace('return function(req, res) {', 'return function(req, res, next) {')
+        .replace("res.json({ ok: true, marker: 'version-one', path: req.url, observation, actor: ctx.authorization.currentActor() });", 'next();'));
+      await grant('editor');
+      const result = await call('/records', signed);
+      expect(result.status).toBe(404);
+      expect(observations.filter(row => row.phase === 'handler')).toHaveLength(1);
+      expect(result.body.observation.actor).toBeUndefined();
+      expect(result.body.observation.identity).toMatchObject({ sub: 'upstream-operator', principalIssuer: ISSUER, isOperator: true });
+      expect(result.body.decision).toBeUndefined();
+    });
+    it.each(['undefined', '() => null'])('refuses unusable verifier factory %s at activation', async factory => {
+      await expect(install(PACKAGE + '\nexports.createVerifier = ' + factory + ';')).rejects.toThrow(/callback|verifier/i);
+      expect((await call('/records', signed)).status).toBe(404); noHandler();
+    });
+    it('refuses callback activation when the core callback guard is unavailable', async () => {
+      Object.defineProperty(runtime, 'guardCallback', { value: undefined });
+      await expect(install()).rejects.toThrow('Signed callback authentication is unavailable');
+      expect((await call('/records', signed)).status).toBe(404); noHandler();
+    });
     it('executes without browser login only after signature, current principal and named permission checks', async () => {
       await install(); await grant('editor');
       const result = await call('/records', signed); expect(result.status).toBe(200);

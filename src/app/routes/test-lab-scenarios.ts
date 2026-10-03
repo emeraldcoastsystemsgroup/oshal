@@ -109,6 +109,11 @@
  * 57 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L6 location device card (LOCATION_DEVICE_SCENARIOS, test-lab-location-device-scenarios.ts): as the signed-in person the device ingest refuses a browser session and issuing a credential needs a fresh sign-in, then three uniquely tagged synthetic people on the real database enrol a drone to a group, issue its credential, drive the real ingest over the loopback under that credential (placed in the group place as the device subject), see it refused on another device's path and the node-token mint refused for its id, and read it by reference as a member while a stranger gets nothing; everything is deleted with a zero-row check. The ingest, token-scope, route-policy, static-guard, machine-write and registration suites are attached as regressionTests.
  * 58 | maintainer@emeraldcoastsystemsgroup.com   | Attached completion-result-text to 'jarvis-routing' regressionTests. The 2026-09-29 sweep found a Jarvis answer that is a bare number or true/false never delivered (live case jarvis-cache, 3 of 3): the completion text was stored as the converted Number and the bot-node handler threw reading it. The delivery path is guarded in antigravity-host-tool-loop, already attached here; this adds the unit guard for the rule itself.
  * 59 | maintainer@emeraldcoastsystemsgroup.com   | Registered the ADR-169 L7 location map card (LOCATION_MAP_SCENARIOS, test-lab-location-map-scenarios.ts): a catalog read of the group fence, the amendment's columns and the two triggers on spatial_scans, then three uniquely tagged synthetic people on the real database: two group scans are registered naming their capture sessions, one captured inside a group place and one outside every saved place, each anchored from the GPS its own session recorded; on a later visit a member gets both from mapsNear and opens a group scan, and a stranger, operator-stamped or not, gets nothing and reads neither. Everything created is deleted and a zero-row check runs.
+ * 60 | maintainer@emeraldcoastsystemsgroup.com | Register ADR-171 structured logging proofs with explicit pending container stdout acceptance.
+ * 61 | maintainer@emeraldcoastsystemsgroup.com   | Registered the Jarvis "where am I" card (LOCATION_WHERE_SCENARIOS, test-lab-location-where-scenarios.ts): on the running build's database two synthetic people show that no position points to Settings, Location, a fix inside a saved place names that place, an old fix leads with its age, the other person sees no position, and no answer carries a coordinate; all rows are erased with a zero-row check. The intent, real-Postgres, reporter and registration suites are attached as regressionTests.
+ * 62 | maintainer@emeraldcoastsystemsgroup.com   | Registered the deck engine brand-look card (BRAND_LOOK_SCENARIOS, test-lab-brand-look-scenarios.ts): on the installed engine, a synthetic brand look renders a deck, a document and a workbook whose colors and body face are read back, and each renderer refuses a forged look. In memory only; it writes nothing, calls no route and spends nothing.
+ * 63 | maintainer@emeraldcoastsystemsgroup.com   | Registered the world outlet-rating card (WORLD_OUTLET_RATING_SCENARIOS, test-lab-world-outlet-rating-scenarios.ts): two read-only live steps (the observed rating set the installed world store yields, checked against its stated minimums, and the most-covered subject read through it with no seeded axis) and one in-build step that classifies a seeded hostile item through the deployed classifier with a capturing provider and a private budget, so no model is called and nothing is fetched or written. The rating, filter and ingress suites are attached as regressionTests. Guard: tests/unit/world-outlet-rating-test-lab.spec.ts.
+ * 64 | maintainer@emeraldcoastsystemsgroup.com   | jarvis-routing attaches tests/unit/jarvis-haven-learn-brain.spec.ts: the turn's passive-learning step rides executeBotOrInline with the brain the turn ran on (CLI stamp, hosted trio, or the retry's endpoint), never the controller's in-process CLI harness (live 2026-10-02 08:13 UTC: every haven-learn task on the operator's CLI brain was refused UNBROKERED_AUTONOMOUS_PROVIDER).
  * @module test-lab-scenarios
  */
 
@@ -134,6 +139,7 @@ import { SOCIAL_SIGNAL_SCENARIOS } from './test-lab-social-signal-scenarios';
 import { LINKEDIN_CONTENT_SCENARIOS } from './test-lab-linkedin-content-scenarios';
 import { RESPONSE_RENDERER_SCENARIOS } from './test-lab-response-renderer-scenarios';
 import { WORLD_SIGNAL_SCENARIOS } from './test-lab-world-signal-scenarios';
+import { LOGGING_SCENARIOS } from './test-lab-logging-scenarios';
 import { TOKEN_CHASE_SCENARIOS } from './test-lab-token-chase-scenarios';
 import { JARVIS_RECALL_SCENARIOS } from './test-lab-jarvis-recall-scenarios';
 import { TRADING_SLEEVES_SCENARIOS } from './test-lab-trading-sleeves-scenarios';
@@ -144,8 +150,11 @@ import { LOCATION_STORAGE_SCENARIOS } from './test-lab-location-storage-scenario
 import { LOCATION_CONSENT_SCENARIOS } from './test-lab-location-consent-scenarios';
 import { LOCATION_PLACES_SCENARIOS } from './test-lab-location-places-scenarios';
 import { LOCATION_REMINDERS_SCENARIOS } from './test-lab-location-reminders-scenarios';
+import { LOCATION_WHERE_SCENARIOS } from './test-lab-location-where-scenarios';
 import { LOCATION_DEVICE_SCENARIOS } from './test-lab-location-device-scenarios';
 import { LOCATION_MAP_SCENARIOS } from './test-lab-location-map-scenarios';
+import { BRAND_LOOK_SCENARIOS } from './test-lab-brand-look-scenarios';
+import { WORLD_OUTLET_RATING_SCENARIOS } from './test-lab-world-outlet-rating-scenarios';
 import { renderCatalogVisual, VISUAL_CATALOG } from './test-lab-visual-catalog';
 import type { AppContext } from '@/app/composition/app-context';
 
@@ -330,6 +339,7 @@ export const SCENARIOS: Scenario[] = [
   ...LINKEDIN_CONTENT_SCENARIOS,
   ...RESPONSE_RENDERER_SCENARIOS,
   ...WORLD_SIGNAL_SCENARIOS,
+  ...LOGGING_SCENARIOS,
   ...TOKEN_CHASE_SCENARIOS,
   ...JARVIS_RECALL_SCENARIOS,
   ...TRADING_SLEEVES_SCENARIOS,
@@ -340,8 +350,11 @@ export const SCENARIOS: Scenario[] = [
   ...LOCATION_CONSENT_SCENARIOS,
   ...LOCATION_PLACES_SCENARIOS,
   ...LOCATION_REMINDERS_SCENARIOS,
+  ...LOCATION_WHERE_SCENARIOS,
   ...LOCATION_DEVICE_SCENARIOS,
   ...LOCATION_MAP_SCENARIOS,
+  ...BRAND_LOOK_SCENARIOS,
+  ...WORLD_OUTLET_RATING_SCENARIOS,
   // ── Rich visuals — every kind rendered deterministically through the real renderer ──────────
   ...VISUAL_CATALOG.map((entry): Scenario => ({
     id: `visual-${entry.kind}`,
@@ -531,6 +544,8 @@ export const SCENARIOS: Scenario[] = [
       { level: 'unit', path: 'tests/unit/antigravity-bot-runtime.spec.ts' },
       // A bare number or true/false answer is stored and delivered as the text the model wrote.
       { level: 'unit', path: 'tests/unit/completion-result-text.spec.ts' },
+      // The turn's passive-learning step rides the same chokepoint and brain as the turn (never the controller's CLI harness).
+      { level: 'unit', path: 'tests/unit/jarvis-haven-learn-brain.spec.ts' },
     ],
     steps: [
       { id: 'j-jobs', app: 'jarvis', label: '"What are my top job opportunities right now?"', run: (c) => jarvisStep(c, 'top jobs', 'What are my top job opportunities right now?') },

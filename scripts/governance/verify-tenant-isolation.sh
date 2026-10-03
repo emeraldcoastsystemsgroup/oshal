@@ -6,24 +6,31 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — live cross-tenant network-isolation assertion for ADR-078 Phase 3. Proves BOTH directions are denied and that same-namespace traffic still flows (the control that distinguishes "isolated" from "nothing is listening"). Sibling to verify-rls-isolation.mjs, which asserts the DATA boundary; this asserts the NETWORK boundary.
 # 2 | maintainer@emeraldcoastsystemsgroup.com   | --context <ctx>: every kubectl call in the script carries it. The script had no caller and no way to name a cluster, so the only thing it could judge was whatever context kubectl last pointed at - on a box running Docker Desktop Kubernetes beside another cluster that is the wrong-cluster hazard deploy/terraform/providers.tf refuses at plan time. scripts/ci/check-cluster-gates.sh (the opt-in `ci-local.sh --cluster-gates` gate) now calls it with an explicit context. An unknown argument is refused (exit 2) instead of silently ignored. Without --context the behaviour is unchanged.
+# 3 | maintainer@emeraldcoastsystemsgroup.com   | --namespaces <a>,<b>: the two tenant namespaces are parameters (default tenant-a,tenant-b, so check-cluster-gates.sh and every existing message are unchanged). The namespaces were hardcoded, so the only thing this could judge was the hand-applied tenant-network-policies.yaml - never a namespace rendered by provision-tenant.sh. scripts/governance/accept-tenant-isolation.sh now renders two tenants, applies them and runs this check against the two oshal-tenant-<name> namespaces it created. A malformed name, or the same namespace twice, is refused (exit 2) before any kubectl call.
 #
-# Usage: bash scripts/governance/verify-tenant-isolation.sh [--context <kube-context>]
+# Usage: bash scripts/governance/verify-tenant-isolation.sh [--context <kube-context>] [--namespaces <a>,<b>]
 # Exit 0 = isolation proven. 1 = a real failure (the assertion that failed is printed).
 # 2 = refused: kubectl missing, no reachable cluster, the app=web pods absent, or a bad argument.
 #
-# Requires: a reachable cluster with tenant-a/tenant-b namespaces each running a pod
+# Requires: a reachable cluster with the two tenant namespaces (default tenant-a,tenant-b) each running a pod
 # labelled app=web that serves HTTP on :80, and a NetworkPolicy-enforcing CNI.
 # Apply the policies first: kubectl apply -f ops/deployment/argo/tenant-network-policies.yaml
 
 set -uo pipefail
 
 KUBE_CONTEXT_ARGS=()
+NS_A=tenant-a; NS_B=tenant-b
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --context)
       [ -n "${2:-}" ] || { echo "--context needs a kube context name"; exit 2; }
       KUBE_CONTEXT_ARGS=(--context "$2"); shift 2 ;;
-    *) echo "unknown argument: $1 (usage: verify-tenant-isolation.sh [--context <kube-context>])"; exit 2 ;;
+    --namespaces)
+      [[ "${2:-}" =~ ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?),([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)$ ]]         || { echo "--namespaces needs two namespace names: <a>,<b>"; exit 2; }
+      NS_A="${BASH_REMATCH[1]}"; NS_B="${BASH_REMATCH[3]}"
+      [ "$NS_A" != "$NS_B" ] || { echo "--namespaces names the same namespace twice: $NS_A"; exit 2; }
+      shift 2 ;;
+    *) echo "unknown argument: $1 (usage: verify-tenant-isolation.sh [--context <kube-context>] [--namespaces <a>,<b>])"; exit 2 ;;
   esac
 done
 
@@ -41,10 +48,10 @@ kubectl cluster-info >/dev/null 2>&1 || { echo "no reachable cluster${KUBE_CONTE
 pod_in()  { kubectl get pod -n "$1" -l app=web -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
 ip_of()   { kubectl get pod -n "$1" -l app=web -o jsonpath='{.items[0].status.podIP}' 2>/dev/null; }
 
-A_POD="$(pod_in tenant-a)"; A_IP="$(ip_of tenant-a)"
-B_POD="$(pod_in tenant-b)"; B_IP="$(ip_of tenant-b)"
-[ -n "$A_POD" ] && [ -n "$B_POD" ] || { echo "missing app=web pods in tenant-a/tenant-b"; exit 2; }
-note "tenant-a: $A_POD ($A_IP)   tenant-b: $B_POD ($B_IP)"
+A_POD="$(pod_in "$NS_A")"; A_IP="$(ip_of "$NS_A")"
+B_POD="$(pod_in "$NS_B")"; B_IP="$(ip_of "$NS_B")"
+[ -n "$A_POD" ] && [ -n "$B_POD" ] || { echo "missing app=web pods in $NS_A/$NS_B"; exit 2; }
+note "$NS_A: $A_POD ($A_IP)   $NS_B: $B_POD ($B_IP)"
 
 # Returns 0 when the HTTP GET SUCCEEDS, non-zero when it is blocked/times out.
 reach() { # <ns> <pod> <target-ip>
@@ -54,21 +61,21 @@ reach() { # <ns> <pod> <target-ip>
 # ── CONTROL first. Without this, a "blocked" result is indistinguishable from
 #    "nothing is listening on :80" — the failure mode that makes isolation tests lie.
 note "control: same-namespace traffic must still flow"
-if reach tenant-a "$A_POD" "$A_IP"; then ok "tenant-a -> tenant-a (self, same namespace) reachable"
-else bad "tenant-a cannot reach its OWN pod — the web pod isn't serving, so deny results below are meaningless"; fi
+if reach "$NS_A" "$A_POD" "$A_IP"; then ok "$NS_A -> $NS_A (self, same namespace) reachable"
+else bad "$NS_A cannot reach its OWN pod — the web pod isn't serving, so deny results below are meaningless"; fi
 
 # ── The actual isolation assertions: BOTH directions must be denied.
 note "asserting cross-tenant deny in both directions"
-if reach tenant-a "$A_POD" "$B_IP"; then bad "tenant-a REACHED tenant-b — cross-tenant traffic is NOT isolated"
-else ok "tenant-a -> tenant-b blocked"; fi
+if reach "$NS_A" "$A_POD" "$B_IP"; then bad "$NS_A REACHED $NS_B — cross-tenant traffic is NOT isolated"
+else ok "$NS_A -> $NS_B blocked"; fi
 
-if reach tenant-b "$B_POD" "$A_IP"; then bad "tenant-b REACHED tenant-a — cross-tenant traffic is NOT isolated"
-else ok "tenant-b -> tenant-a blocked"; fi
+if reach "$NS_B" "$B_POD" "$A_IP"; then bad "$NS_B REACHED $NS_A — cross-tenant traffic is NOT isolated"
+else ok "$NS_B -> $NS_A blocked"; fi
 
 # ── Policies must actually exist in both namespaces (a deleted policy would still
 #    "pass" the deny checks if the pod simply died).
 note "asserting the policies are present in both namespaces"
-for ns in tenant-a tenant-b; do
+for ns in "$NS_A" "$NS_B"; do
   for np in default-deny-all allow-same-tenant; do
     if kubectl get networkpolicy "$np" -n "$ns" >/dev/null 2>&1; then ok "$ns has NetworkPolicy/$np"
     else bad "$ns is MISSING NetworkPolicy/$np"; fi
@@ -83,7 +90,7 @@ done
 #    (A live reachability control is not possible yet: the oshal / oshal-model
 #    namespaces don't exist on this cluster until the control plane moves in.)
 note "asserting the workload's dependency egress grants are present"
-for ns in tenant-a tenant-b; do
+for ns in "$NS_A" "$NS_B"; do
   # Strip whitespace before matching: kubectl -o json pretty-prints ("key": "value"),
   # so a fixed no-space pattern silently misses every grant (false FAIL, seen live).
   spec="$(kubectl get networkpolicy allow-same-tenant -n "$ns" -o json 2>/dev/null | tr -d ' \n\t' || true)"

@@ -7,6 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Persisted ownerSub on create + filtered listSchedules by app queue (taskType) and caller (ownerSub, own-or-unowned)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Scope new user-owned schedule ids by exact taskType and owner so create-or-replace cannot overwrite another tenant; preserve exact-owner legacy ids in place.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Honour the record's `timezone` when computing next-run (cron-parser `tz` option) so "9am" fires at the user's 9am, not the container's; and treat `once` as a real state — a one-shot pauses itself the moment it fires instead of relying on the stale-misfire heuristic (which let a no-year cron recur annually). Both changes are inert for records that set neither field, so existing schedules are byte-for-byte unaffected.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | A finished dispatch re-reads the record before saving its run metadata. It used to save the copy read before the run, so a pause or cron change made while a fire was in flight (a World pulse runs for minutes) was silently undone when that fire finished, and a schedule deleted mid-run was written back. Added the operator-control surface the application schedule screen uses: manifest-schedule overrides (read/save/clear), the record for a task type, one-save applyControl, isValidCron and shortestCronGapMs.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | One dispatch per due occurrence. The index reconcile (every 60 s) re-adds every active record at its stored nextRunAt, and a record being dispatched keeps the past nextRunAt it was popped at until its dispatch saves the next occurrence, so the next pop handed the same occurrence out again: a fire longer than about a minute ran as up to four concurrent copies (measured 2026-10-03: the World depth refresh popped at 02:33:15, 02:34:15 and 02:36:15; a trading-assess occurrence ran three times). dispatchDueSchedules now skips a popped id whose due dispatch is still running in this process; the guard releases when that dispatch finishes or the dispatch timeout abandons it. Only the api runs the scheduler, so an in-process guard is enough. It returns the number actually dispatched.
  */
 
 import { createHash } from 'node:crypto';
@@ -14,12 +16,15 @@ import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import {
   CreateScheduleInputSchema,
+  ManifestScheduleOverrideSchema,
   ScheduleTaskDataSchema,
   UpdateScheduleInputSchema,
   type CreateScheduleInput,
   type ListSchedulesFilter,
+  type ManifestScheduleOverride,
   type ScheduleDispatchResult,
   type ScheduleRecord,
+  type ScheduleStatus,
   type ScheduleTaskData,
   type UpdateScheduleTaskData,
   type UpdateScheduleInput,
@@ -65,6 +70,13 @@ export class ScheduleService {
   private lastIndexReconcileAtMs = 0;
   /** Count of dispatches running in the background (fire-and-forget) — bounds pile-up. */
   private inFlightDispatches = 0;
+  /**
+   * Schedule ids whose due dispatch is running in this process. The index reconcile re-adds a record
+   * at its stored nextRunAt, which stays in the past until that dispatch saves the next occurrence (or
+   * the dispatch timeout skips it), so without this the next pop would dispatch the same occurrence
+   * again. Released when the dispatch finishes or is abandoned at the timeout.
+   */
+  private readonly dueDispatchesRunning = new Set<string>();
 
   constructor(
     private readonly store: RedisScheduleStore,
@@ -239,6 +251,118 @@ export class ScheduleService {
   }
 
   /**
+   * @description Reads the operator override for one application-manifest schedule.
+   *
+   * @param manifestScheduleId - `<app>-<scheduleId>`, the id the manifest registrar uses.
+   * @returns The override, or null when the manifest's own values apply.
+   */
+  async getManifestOverride(manifestScheduleId: string): Promise<ManifestScheduleOverride | null> {
+    return this.store.getManifestOverride(manifestScheduleId);
+  }
+
+  /**
+   * @description Stores the operator override for one application-manifest schedule. The cron, when
+   * present, must parse: a stored override is applied at every registration of the schedule.
+   *
+   * @param manifestScheduleId - `<app>-<scheduleId>`.
+   * @param override - The override to store.
+   * @returns The stored override.
+   */
+  async saveManifestOverride(manifestScheduleId: string, override: ManifestScheduleOverride): Promise<ManifestScheduleOverride> {
+    const parsed = ManifestScheduleOverrideSchema.parse(override);
+    if (parsed.cron) this.assertValidCron(parsed.cron);
+    await this.store.saveManifestOverride(manifestScheduleId, parsed);
+    return parsed;
+  }
+
+  /**
+   * @description Removes the operator override for one application-manifest schedule, so the
+   * manifest's own values apply at its next registration.
+   *
+   * @param manifestScheduleId - `<app>-<scheduleId>`.
+   * @returns True when an override existed.
+   */
+  async clearManifestOverride(manifestScheduleId: string): Promise<boolean> {
+    return this.store.deleteManifestOverride(manifestScheduleId);
+  }
+
+  /**
+   * @description The persisted record a system (unowned) schedule was stored under for a task type —
+   * how a manifest schedule is found from its `app:<app>-<id>` or service-route task type.
+   *
+   * @param taskType - The exact task type the registrar used.
+   * @returns The record, or null when none is registered.
+   */
+  async getScheduleForTaskType(taskType: string): Promise<ScheduleRecord | null> {
+    return this.store.getSchedule(this.normalizeScheduleId(taskType));
+  }
+
+  /**
+   * @description Applies an operator's control to a live record in one save: the cron it runs on and
+   * whether it fires. The record is read fresh, so the change composes with a fire finishing at the
+   * same time (that fire re-reads too, see dispatchAndPersist).
+   *
+   * @param scheduleId - Stable schedule identifier.
+   * @param control - The cron and status the record should carry.
+   * @returns The saved record.
+   */
+  async applyControl(scheduleId: string, control: { cron: string; status: ScheduleStatus }): Promise<ScheduleRecord> {
+    const existing = await this.requireSchedule(scheduleId);
+    const cron = control.cron.trim();
+    this.assertValidCron(cron);
+    const now = new Date();
+    const updated: ScheduleRecord = {
+      ...existing,
+      cron,
+      status: control.status,
+      updatedAt: now.toISOString(),
+      nextRunAt: this.computeNextRunOrNull(cron, control.status, now, existing.timezone),
+    };
+    await this.store.saveSchedule(updated);
+    logger.info({ scheduleId, cron, status: control.status, nextRunAt: updated.nextRunAt }, 'Applied operator control to schedule');
+    return updated;
+  }
+
+  /**
+   * @description Whether a cron expression parses the way the scheduler will read it.
+   *
+   * @param cron - The expression to check.
+   * @returns True when the scheduler can compute a next run from it.
+   */
+  isValidCron(cron: string): boolean {
+    try {
+      CronExpressionParser.parse(cron.trim(), { currentDate: new Date() }).next();
+      return true;
+    } catch (error) {
+      logger.error({ err: error, cron }, 'Cron expression does not parse');
+      return false;
+    }
+  }
+
+  /**
+   * @description The shortest gap between consecutive fire times among the next `samples` fires of a
+   * cron, in the process clock (or a timezone). This is how an operator control refuses a cadence
+   * tighter than a job can keep: a fire that outruns its interval stacks on the next one.
+   *
+   * @param cron - A cron expression that parses (see isValidCron).
+   * @param samples - How many upcoming fires to compare (at least 2).
+   * @param timezone - Optional IANA timezone the cron is read in.
+   * @returns The shortest gap in milliseconds.
+   */
+  shortestCronGapMs(cron: string, samples = 12, timezone?: string | null): number {
+    const options = timezone ? { currentDate: new Date(), tz: timezone } : { currentDate: new Date() };
+    const it = CronExpressionParser.parse(cron.trim(), options);
+    let previous = it.next().getTime();
+    let shortest = Number.POSITIVE_INFINITY;
+    for (let i = 1; i < Math.max(2, samples); i += 1) {
+      const next = it.next().getTime();
+      shortest = Math.min(shortest, next - previous);
+      previous = next;
+    }
+    return shortest;
+  }
+
+  /**
    * @description Executes a schedule immediately by identifier.
    *
    * @param scheduleId - Stable schedule identifier.
@@ -270,9 +394,10 @@ export class ScheduleService {
   }
 
   /**
-   * @description Dispatches all due schedules in a bounded batch.
+   * @description Dispatches all due schedules in a bounded batch, each due occurrence once: an id
+   * whose due dispatch is still running in this process is not dispatched again.
    *
-   * @returns Number of schedules dispatched in this cycle.
+   * @returns Number of schedules dispatched in this cycle (a skipped, still-running id is not counted).
    */
   async dispatchDueSchedules(): Promise<number> {
     await this.reconcileScheduleIndexIfDue();
@@ -292,12 +417,24 @@ export class ScheduleService {
     // minutes-long world news refresh held the single-flight runner, starving the every-5-min trading
     // autopilot. Decoupling cadence from job duration fixes it at the root. Each job self-guards
     // (dispatchOneDue try/catch) and is time-boxed (withDispatchTimeout); the counter bounds pile-up.
+    // ONE DISPATCH PER OCCURRENCE: a popped id whose earlier due dispatch is still running is the same
+    // occurrence handed out again by the index reconcile, so it is skipped, not run a second time.
+    let dispatched = 0;
     for (const scheduleId of dueIds) {
+      if (this.dueDispatchesRunning.has(scheduleId)) {
+        logger.info({ scheduleId }, 'Schedule still running from this occurrence — not dispatched again');
+        continue;
+      }
+      this.dueDispatchesRunning.add(scheduleId);
       this.inFlightDispatches += 1;
-      void this.dispatchOneDue(scheduleId).finally(() => { this.inFlightDispatches -= 1; });
+      dispatched += 1;
+      void this.dispatchOneDue(scheduleId).finally(() => {
+        this.inFlightDispatches -= 1;
+        this.dueDispatchesRunning.delete(scheduleId);
+      });
     }
 
-    return dueIds.length;
+    return dispatched;
   }
 
   /** Dispatch one popped due schedule, guarded + time-boxed so it never throws into — or hangs — the
@@ -447,7 +584,14 @@ export class ScheduleService {
    */
   private async dispatchAndPersist(schedule: ScheduleRecord): Promise<ScheduleDispatchResult> {
     const dispatchResult = await this.dispatchHandler(schedule);
-    const updated = this.withDispatchResult(schedule, dispatchResult.success);
+    // Re-read before saving: a fire can run for minutes, and a pause or cron change made while it ran
+    // must not be overwritten by the copy read before the run. A schedule deleted mid-run stays deleted.
+    const current = await this.store.getSchedule(schedule.id);
+    if (!current) {
+      logger.info({ scheduleId: schedule.id, success: dispatchResult.success }, 'Dispatched scheduled task; the schedule was removed while it ran');
+      return dispatchResult;
+    }
+    const updated = this.withDispatchResult(current, dispatchResult.success);
     await this.store.saveSchedule(updated);
     logger.info(
       { scheduleId: schedule.id, success: dispatchResult.success, nextRunAt: updated.nextRunAt },

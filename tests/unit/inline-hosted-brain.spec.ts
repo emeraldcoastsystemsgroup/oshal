@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127 inline hosted brain guards: (1) ByoHostedProvider wire mapping against a REAL node:http chat-completions endpoint (request shape incl. tool_calls/role:'tool' history, response shape incl. tool_use + usage, non-2xx typed errors that never leak the key); (2) the REAL TaskOrchestrator runs a turn on the BYO provider when options.byoLlmConnection is present and on deps.getProvider otherwise; (3) the ONE shared resolve-condition helper both chat entry points ride (CLI harness ⇒ resolve, hosted harness ⇒ no override, empty ladder ⇒ NO_HOSTED_BRAIN naming Settings → AI Providers).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the shared SEC-05 classifier to every node-side autonomous CLI alias and normalization so bot-default validation cannot drift from execution preflight.
  */
 
 import * as http from 'node:http';
@@ -435,7 +436,10 @@ describe('shared resolve-condition helper — one condition for both chat entry 
   });
 
   it('the predicate matches exactly the unbrokered CLI set the SEC-05 policy refuses', () => {
-    for (const cli of ['cline', 'codex-cli', 'claude-code', 'gemini-cli']) {
+    for (const cli of [
+      'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
+      'gemini-cli', 'antigravity-cli', '  OpenAI-Codex  ',
+    ]) {
       expect(isUnbrokeredAutonomousProvider(cli), cli).toBe(true);
     }
     for (const hosted of ['a2a', 'noop', 'anthropic', 'byo-hosted:user-model', '']) {

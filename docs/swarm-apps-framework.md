@@ -45,7 +45,7 @@ A **swarm application manifest** is the unit of publish. The framework guarantee
 | **Ribbon icons** | Every entry in `ui.static[]` is registered as a dynamic ribbon tool (appears in the cockpit sidebar, routed via `iframeUrl`). |
 | **Per-row ribbon icons** | If `ui.dynamic` is declared, one icon is generated per row returned from `SELECT * FROM <source> <where>`. Tool names follow `toolNameTemplate` with `{field}` substitutions. |
 | **Workflow pipeline** | If `workflow` + `ticketType` are declared, the `WorkflowPipelineRegistry` routes tickets matching that ticketType to the declared worker bot and pipeline. Built-in `build` and `incident` ticketTypes cannot be overridden. |
-| **Schedules ("polls")** | If `schedules[]` are declared, the loader registers each app's default recurring jobs when it's enabled. `scope: framework` (default) is system-wide and on by default; `scope: per-user` activates when a user connects `requiresConnection`. They only EXECUTE when `ENABLE_AGENT_SCHEDULER=true`. |
+| **Schedules ("polls")** | If `schedules[]` are declared, the loader registers each app's default recurring jobs when it's enabled. `scope: framework` (default) is system-wide and on by default; `scope: per-user` activates when a user connects `requiresConnection`. They only EXECUTE when `ENABLE_AGENT_SCHEDULER=true`. A manifest cron is a default: an operator can switch a framework schedule off and on or change its cron (`GET` / `PATCH /api/swarm/apps/:name/schedules[/:id]`), and the change survives restarts, reloads and toggles. |
 | **Route gating** | Every entry in `routes[]` is gated: when the app is `status='inactive'`, requests to any path under a declared `mountPath` return `503 {error:"Application inactive", appName:"<name>"}`. Framework paths pass through. |
 | **Focus mode** | Visiting `/cockpit?app=<name>` synthesises a ribbon profile from the manifest's `ribbon` block. Only the app's `ui.static` items + framework items NOT in `hideFrameworkItems` are shown. |
 
@@ -237,9 +237,10 @@ The exported YAML is self-contained metadata. If your manifest references person
 |---|---|---|
 | Server boot | `autoLoadAll()` reads every `swarm-apps/*.yaml`, upserts each, runs `activate()` for any with `status='active'`. Reconciles: DB rows whose YAML is missing get flipped to `inactive`. | Ribbon icons appear, bots go active, routes open. |
 | `POST /api/swarm/apps/load {path}` | Reads the YAML, upserts, activates if `status='active'`. | Same as boot for that one app. |
-| `PATCH /api/swarm/apps/:name/toggle {active:false}` | Deactivates bots (`status='inactive'`), deregisters manifest tools, deregisters all static + dynamic ribbon icons, unregisters workflow. | Tool calls are disabled, ribbon icons vanish immediately. Any `curl` to the app's `mountPath` returns 503. |
-| `PATCH .../toggle {active:true}` | Re-upserts bots, flips to active, re-registers executable tools, UIs, and workflow. | Everything reappears. |
-| `DELETE /api/swarm/apps/:name` | Deactivates + deletes DB row. | Full purge. Manifest file stays on disk — next boot would re-add it. |
+| `PATCH /api/swarm/apps/:name/toggle {active:false}` | Deactivates bots (`status='inactive'`), deregisters manifest tools, deregisters all static + dynamic ribbon icons, unregisters workflow, and deletes the app's schedule records. Operator schedule overrides are kept. | Tool calls are disabled, ribbon icons vanish immediately. Any `curl` to the app's `mountPath` returns 503. |
+| `PATCH .../toggle {active:true}` | Re-upserts bots, flips to active, re-registers executable tools, UIs, workflow, and schedules, each schedule with its operator override applied. | Everything reappears, on the cadence and on/off the operator last set. |
+| `DELETE /api/swarm/apps/:name` | Deactivates + deletes DB row, and removes the app's schedule overrides. | Full purge. Manifest file stays on disk — next boot would re-add it, on the manifest's own schedules. |
+| `PATCH /api/swarm/apps/:name/schedules/:id {enabled?, cron?}` (operator) | Stores an operator override for one framework schedule (`cron: null` returns to the manifest cron) and applies it to the live record. A cron with less than `APP_SCHEDULE_MIN_INTERVAL_MINUTES` (default 5) between fires is refused. | The schedule pauses, resumes or moves to the new cadence at once; boot, reload and toggle-on re-apply the override. `GET /api/swarm/apps/:name/schedules` lists every declared schedule with its live state. |
 | Remove YAML + restart | Reconcile pass flips to inactive. | Same as toggle-off. |
 | Put YAML back + restart | Autoload upserts + activates. | Same as toggle-on. |
 
@@ -336,7 +337,7 @@ This path is covered by the opt-in `tests/dynamic-agent-live-e2e.spec.ts` test a
 - Per-app permissions (who can toggle which app).
 - App versioning, rolling updates, signed manifests.
 - Inter-app communication / shared bot pools.
-- **Schedules — next steps.** `schedules[]` ships (framework-scope on enable + per-user on connect), but follow-ons remain: (1) **unregister/pause on app deactivate or unload** — schedules currently persist in the scheduler when their app is toggled off; (2) a **cockpit surface to view/pause** an app's registered schedules (the data is already queryable via `listSchedules` scoped by queue); (3) **per-user reconcile on disconnect** (today connect registers; disconnect leaves the schedule dormant). Source: `swarm-app-service.registerManifestSchedules`, `src/app/per-user-schedule-reconcile.ts`, and the registrar wiring in `server.ts`.
+- **Schedules — next steps.** `schedules[]` ships (framework-scope on enable + per-user on connect). Toggling an app off deletes its schedule records (ADR-085 P0). An operator can read, switch off and on, and re-time an app's framework schedules through `GET` / `PATCH /api/swarm/apps/:name/schedules[/:id]` (2026-10-02); the World package's Sources & schedules page is the first surface on it, and there is no generic cockpit page for every app yet. Follow-ons remain: (3) **per-user reconcile on disconnect** (today connect registers; disconnect leaves the schedule dormant). Source: `swarm-app-service.registerManifestSchedules`, `src/app/per-user-schedule-reconcile.ts`, and the registrar wiring in `server.ts`.
 
 ---
 

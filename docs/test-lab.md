@@ -166,6 +166,67 @@ were not provided.") when the credential is absent: the fire must log "congress 
 at ERROR naming `WORLD_POLITICAL_TOKEN`, write no row, and write once the token is set and sent as a
 Bearer credential. That is local evidence; only a pass of the live step shows the installed collector ran.
 
+### World sources and schedules
+
+**World sources and schedules (operator page)** (`world-sources-schedules`, Tools) runs two read-only
+steps. `live-schedules` reads the two World schedule records (`world-refresh`, `ticker-pulse`) with
+their on/off, cron and any operator override; it is degraded when no scheduler runs in the process or a
+schedule is not registered. `live-sources` reads the source inventory the operator page shows: every
+feed, the firehose and the five depth collectors with their switches, `.env` gates and each collector's
+last run; it is degraded when world intelligence is off and fails when a collector is missing. Neither
+changes any data or calls a feed; the first sources read creates the two empty switch tables if they are
+missing.
+
+Run the linked suites locally with `npm run test:world-operator-controls`. `tests/unit/app-schedule-control.spec.ts`
+starts its own Redis and runs the real schedule service, registrar and routes: non-operators are refused,
+on/off and cadence survive a re-registration and an app toggle, an interval under the floor is refused,
+and a pause made during a fire is not undone when the fire finishes. `tests/unit/schedule-dispatch-once.spec.ts`
+runs the real reconcile and pop on its own Redis: a fire held open across two reconcile cycles is dispatched once,
+and a fire abandoned at the dispatch timeout releases its schedule for the next occurrence. The depth suite
+(`tests/unit/world-depth-collectors-postgres.spec.ts`) proves the switches on its own TimescaleDB: a
+switched-off collector is skipped and recorded, the firehose and single firehose feeds are left out, the
+real ingest step never fetches a switched-off feed, the inventory never shows an override's query, a
+firehose feed reads not pulling while the pass is off, and a collector's failed or partial feed is recorded
+that way. `tests/unit/world-collector-feed-outcome.spec.ts` proves each collector detects its own failed
+requests (the public feeds are a fetch stub there).
+
+### World outlet ratings and fetched-text containment
+
+**World outlet ratings: observed by oshal, fetched text filtered** (`world-outlet-ratings`, Tools)
+runs three steps, none of which writes. `live-ratings` reads the outlet rating set the installed world
+store yields from its own stored sentiment and checks that every rated source carries its comparison,
+subject and observation counts at or above the stated minimums and its date range, and that every
+other source carries no number. `live-breakdown` reads the most-covered subject's bias-aware breakdown
+and checks that no seeded axis (`political`, `econ`, `byKind`) comes back and that every source
+carries its rating. `classify-containment` classifies one seeded hostile item through the deployed
+world classifier with a capturing provider and a private one-call budget, so no model is called and
+nothing is fetched, written or spent; it checks the payload never reaches the prompt and the item
+arrives in one `UNTRUSTED_CONTENT` record. With world intelligence off the live steps are degraded;
+with no source above the minimums `live-ratings` is degraded and names them; with
+`WORLD_CLASSIFY_DISABLED` set the containment step is degraded.
+
+Run the linked suites locally with `npm run test:world-ratings`. The real-boundary suite
+(`tests/unit/world-outlet-ratings-postgres.spec.ts`) starts its own TimescaleDB, lets the real service
+build `world_metrics` and its daily head, stores hand-computed observations and proves the divergence
+aggregate, the window, the minimums and that a rating changes only when stored rows change.
+`tests/unit/world-classify-containment.spec.ts` serves a hostile RSS feed from a local server through
+the real fetch and XML parser. The card's linked suites also include the classify backend's guards,
+the swarm-rail guard (`tests/unit/world-classify-swarm-rail.spec.ts`, in process with the chokepoint
+as a recorder: one owned turn per chunk to the classify bot, in the direct shape a bot node runs
+host-tools-only, and no model provider built by `news-fetcher`) and the signed-hop guard
+(`tests/unit/world-classify-delegation.spec.ts`: the same dispatch through the real chokepoint and a
+real signing bot-node client to a local HTTP bot-node double, arriving signed for the owner's verified
+issuer); no step of this card runs that backend on the deployed box, so its live proof is the one
+[the real-boundary audit](governance/real-boundary-regression-audit.md) records as owed. That is local
+evidence; only passes of the live steps show the installed store and build behave the same.
+
+Live, 2026-10-01 (core `a6de96c5`, world 1.3.0): `POST /api/test-lab/run {"scenarioId":"world-outlet-ratings"}`
+as the operator returned `state: pass` on all three steps. `live-ratings`: "3052 source(s) rated, 23568
+insufficient, consensus-divergence-v1 over 90 days (minimums: 20 compared subject-days, 3 subjects)", computed
+2026-10-01T22:44:48Z. `live-breakdown`: `world:ticker:aapl` over 90 days reads 1828 sources (1116 rated, 712
+insufficient) "and no seeded axis". `classify-containment`: "The deployed classifier dropped the hidden payload
+and carried the visible text in one UNTRUSTED_CONTENT record."
+
 ### Token Chase checkpoint and tail replay
 
 **Token Chase checkpoint and tail replay** (`token-chase-checkpoint-replay`, Tools) runs one read-only
@@ -186,6 +247,27 @@ and re-executes nothing there; a workspace tool re-executed by the tail is prove
 suites only. `tests/unit/live-acceptance-token-chase-replay.spec.ts` drives the live case against the
 real bot-node registry, agentic loop, capture lane and tail executor.
 
+The producing-bot boundary has its own focused guard:
+`npm run test:unit -- tests/unit/token-chase-producing-bot.spec.ts`.
+It drives the real bot-node execution handler through `TaskController.processMessage` and the real
+agentic loop into filesystem/private-git capture, then the real owner-scoped reader, controller tail
+delegation and isolated node executor. The scripted provider, task persistence/allocation and
+controller-to-node transport are explicit doubles; the shared server/batch runtime wiring is also
+source-pinned. Frames must carry the runtime-composed executing bot identity, never a supplied
+envelope target, payload identity or frame. Missing runtime identity stays null and replay remains
+refused; another owner cannot read/replay the run or reuse its workspace. Authorization, issuer and
+owner-store enforcement are not replaced or newly proven by those doubles.
+
+This source correction is not installed acceptance. On the installed build the first run has
+passed. On 2026-10-02, core `bbf062ce` on image `9d9bbd02607c`,
+`node scripts/operations/live-acceptance.js token-chase-replay` printed PASS on its own newly captured
+tagged run. The no-edit tail ran on the producing bot node (`reproduced.agentId` set), with the
+artifacts reproduced, the live read refused and its consuming frame non-replayable, and cleanup
+outstanding 0. The separate run with `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot and
+`--expect-store-bound` must still pass with the store bound and reproduced. Old captures with no
+producing identity are not backfilled from request input, and neither installed run is claimed by
+this local guard.
+
 ### Market-data stream (ADR-143)
 
 **Market-data stream (ADR-143)** (`market-data-stream`, Tools) runs one credential-free readback of
@@ -203,6 +285,78 @@ record zero connections, and the module's pino child logger is captured through 
 read for the spec-set key and secret. The compose suite is a static default-off pin. That is local
 evidence; the venue session, the operator arming and the regular-hours print/reconnect receipt are
 outside every suite here (`docs/adr/143-market-data-stream.md`, Phase 3).
+
+### Storyboard image rail (ADR-130)
+
+**Storyboard stills — which rail renders them** (`storyboard-image-rail`, Tools) reads the rail this
+deployment would render storyboard frames on through `selectStoryboardImageProvider`, the function
+the resolver itself uses. In demo mode with no `STORYBOARD_IMAGE_PROVIDER` the render bot's own
+effective provider picks it (ADR-130 amendment 2026-10-02: its own switch row, else the fleet
+default, else its registry declaration; `antigravity-cli` → `antigravity-cli`, `openai-codex` or
+`codex-cli` → `codex-cli`), and the card says which bot and harness it followed; a render bot whose
+harness cannot make images is a fail naming the bot and the harness. It also probes the free
+ComfyUI rail. Read-only: nothing is generated.
+
+**Render one frame on the render bot's antigravity rail** (`storyboard-antigravity-render`, Tools,
+explicit-only) runs as you. It requires the resolved rail to be `antigravity-cli`, renders one frame
+through it on the render bot from a generated 256 x 256 red-circle reference on a tagged
+`sbimg-testlab-live-storyboard-<8 hex>` task workspace, and passes only with a real PNG of at least
+64 x 64, the bot's receipt that `generate_image` reached DONE, and the bot's report that the turn
+ran on its own `antigravity-cli` with a `match` reconcile, or a `corrected` one when the bot was
+found on a stale default and the render's dispatch put it back on its own setting first (ADR-130
+amendment 2026-10-03: a render never moves the bot off its own setting); any other reconcile, or a
+turn that ran on another harness, fails. A refused render says which way Guard A refused it
+(`generate_image` never ran, ran and ended in ERROR, ran but did not finish, or reached DONE with no
+acceptable file) and shows the bot's untrusted diagnostic beside that message, in the detail and as
+`output.diagnostic`: the image tool's own error text and the model's final reply, each bounded to
+200 characters. A render whose `generate_image` ran and ended in ERROR runs again as a fresh turn on
+its own `-a2`, then `-a3` task workspace, at most three attempts inside the CLI render budget
+(`STORYBOARD_CLI_IMAGE_TIMEOUT_MS`, 420 s), and the render bot takes one image turn at a time (ADR-130
+amendment (c)); the verdict names the attempt that rendered the frame, and a render that stopped
+retrying says why ("render retries exhausted", "image renders are busy"). It removes exactly its
+workspaces (the tagged one and each attempt's) and proves them gone; the render bot keeps its task
+records and usage rows. A render bot on another rail, or a caller who is not the deployment
+operator, is degraded and nothing is rendered. It spends one model turn on the operator's
+subscription per attempt.
+
+Run the linked suites locally with `npx vitest run tests/unit/storyboard-image-default.spec.ts
+tests/unit/storyboard-antigravity-image-turn.spec.ts tests/unit/storyboard-antigravity-render-retry.spec.ts
+tests/unit/storyboard-image-turn-queue.spec.ts tests/unit/storyboard-cli-image-wiring.spec.ts
+tests/unit/storyboard-test-lab-render.spec.ts tests/unit/image-turn-prompt-framing.spec.ts`. The selection and wiring suites read the render
+bot's record through the real canonical runtime-params resolver over the real switch snapshot. The
+image-turn suite runs the real bot-node handler, TaskController message path, agentic loop,
+Antigravity provider and wrapper against a stand-in `agy` child process on the real filesystem (the
+stand-in replays the stream-json and file layout of the 2026-10-02 headless proof), and one render
+end to end through the real wiring and the handler's real ADR-034 reconcile, plus one where the bot
+is found on a stale default and corrected onto its own setting. Its Guard A cases pin each refusal's
+words and diagnostic (including the 2026-10-03 replay shape, a `TOOL_ERROR` followed by
+`NO_IMAGE_CAPABILITY`), one crosses the real storyboard frame stage to show that a refusal is not
+retried on the tool's or the model's words, and three run inside the bot node's real provider
+failover to show that such a refusal never reaches the fallback rung. The same suite retries an
+ERROR as fresh turns through that chain (each with its own workspace and private HOME, and once
+through the real wiring and its one-image-turn-per-bot queue), and runs Guard A's ` [backoff]`
+category (a quota, a 429 or a rate limit in the image tool's own error) through the real failover
+on every attempt without reaching the rung. The retry suite (`storyboard-antigravity-render-retry`)
+holds the provider to the real Guard A wording with fake timers: only Guard A's ERROR is retried,
+after about 3 s then 8 s (about 20 s then 45 s for ` [backoff]`), at most three times, never past the
+render's deadline (90 s when the caller names none, leaving Create's and Portrait's own 120 s one
+attempt of headroom), and the untrusted diagnostic decides nothing. Once the provider has retried, its error is its own
+fixed words, which neither the real frame stage's pattern nor Portrait Studio's classifier (a copy pinned
+to the store source) reads as transient: the verifier's probe through the real frame stage makes two
+turns and no stage retry. The frame stage still retries a first attempt that failed transiently, as it
+always did, so a frame makes at most its stage retries plus three turns, at most 7 against 5 before
+(swept for k = 0 to 4 transient first attempts: exactly k + 3 turns); Portrait Studio at most 5 per
+portrait against 3, while each render ends inside its 120 s timeout; Create and this card at most 3;
+the queue suite (`storyboard-image-turn-queue`) pins one image turn at a time per render bot. The framing suite
+(`image-turn-prompt-framing`) captures the exact text agy is handed on an image turn through that same
+chain: the server-authored render instruction as `TRUSTED CONFIGURATION`, `generate_image` beside
+`attempt_completion` in the authority rebind, the brief inside the `UNTRUSTED_CONTENT` record and
+nowhere else, no persona and no Cline system prompt (the SEC-05 carve for image turns, ADR-130
+amendment (b)), and that a direct and a ticket turn are framed exactly as before. That is local
+evidence. On the box the live case first ran on 2026-10-03 (main `44d3a823`) and passed 0 of 3: the
+first render produced its frame and was failed by the then match-only reconcile check, and the next
+two were refused by Guard A. The live case is
+`node scripts/operations/live-acceptance.js storyboard-agy`.
 
 ### Jarvis cross-conversation recall (live acceptance)
 
@@ -319,6 +473,21 @@ has three modes:
   ends, whatever happened. A failed stop or start, or a container that is not running afterwards,
   turns the verdict red. No cost table is read.
 
+Before any mode starts anything, the container half reads `GET /api/career-hunter/run/refresh`.
+It goes on only when that route answers `running: false`. While the package's evening refresh chain
+runs (`running: true`), or when the route answers without the flag, the proof exits 2 with nothing
+started. A manual score run holds the shared corpus-write slot and the owner's store. On 2026-10-01
+one made the chain's shared scrape and the owner's match fail.
+
+`POST /run/score` answers only when the engine run ends, and the in-container `fetch` drops a
+request that has had no response headers after undici's 300 s `headersTimeout`. The proof records
+such a drop as a dropped transport. The evidence carries `routeStatus: 0` and `postDropped` with the
+undici cause code and how many milliseconds in it dropped. The proof then keeps polling `GET /runs`
+until the run is terminal or the budget is spent; the run list, not the POST, decides the verdict.
+Every verdict on an observed run states the measured time by which the run had ended (`elapsedMs` in
+the evidence). A run still running at the budget is reported with the measured time beside the
+budget.
+
 Budgets: `OSHAL_CAREER_RAIL_RUN_BUDGET_MS`, `OSHAL_CAREER_RAIL_LEDGER_BUDGET_MS`,
 `OSHAL_CAREER_RAIL_POLL_MS`, `OSHAL_CAREER_RAIL_HEARTBEAT_BUDGET_MS` (worker loss) and
 `OSHAL_CAREER_RAIL_DRAFT_BUDGET_MS` (complete). The scores a run writes are the owner's own scoring
@@ -331,14 +500,19 @@ authorization: `npx vitest run tests/unit/career-rail-enforce-posture.spec.ts
 tests/unit/career-rail-live-proof.spec.ts tests/unit/career-rail-draft.spec.ts` (also in
 `npm run test:authorization`). The proof's exact ledger and rollup reads run against a disposable
 PostgreSQL with the shipped cost schema and owner RLS. The worker-loss host refusals run the real
-script as a child process. The package routes, the runtime registry and docker are doubles; the
-rows in [the real-boundary audit](governance/real-boundary-regression-audit.md) name each one. The
-default mode has passed on the box (2026-09-28). `--complete` and `--worker-loss` are tested
-locally only and have not run on the box.
+script as a child process. The dropped POST is also run over a real transport. The proof's own HTTP
+client calls a loopback server that never answers the POST, and Node's fetch drops it with
+`UND_ERR_HEADERS_TIMEOUT` (headers timeout shortened to 1 s). The package routes, the runtime
+registry and docker are doubles; the rows in
+[the real-boundary audit](governance/real-boundary-regression-audit.md) name each one. The default
+mode has passed on the box (2026-09-28). `--complete` ran on the box on 2026-10-01 and failed. Its
+held POST dropped about 311 s in, and the proof stopped watching a run that was still going (handled
+above). The cancelled run's engine also outlived the cancel, which is a career-hunter fix.
+`--complete` has not passed on the box yet. `--worker-loss` has not run on the box.
 
 ### Automated live acceptance sweep
 
-`node scripts/operations/live-acceptance.js <case|all|list> [--record-doc]` runs the automated live
+`node scripts/operations/live-acceptance.js <case|all|list> [--record-doc] [--allow-paid]` runs the automated live
 acceptance cases for merged work that was never proven on an installed box. It runs as the operator
 automation identity (`OSHAL_VERIFY_OPERATOR_PAT`, read by name from the environment or the box's
 `.env`, never printed and never put on a command line), against `OSHAL_VERIFY_BASE_URL` (default
@@ -354,9 +528,10 @@ and removed; a cleanup miss turns the case red.
 
 | Key | Card | What it proves on the installed build |
 |---|---|---|
+| `create-region-edit` | `live-acceptance-create-region-edit` | One API-driven cycle on a tagged project with an image and an editable text layer. Upload a generated 512 x 384 PNG as the single `image` multipart part and read its decoded pixels back unchanged; request a 192 x 192 unfeathered box edit against revision 1; require at least one changed inside pixel and byte-identical RGBA outside the box. The accept response must be revision 2 with only the image replaced and the text layer unchanged; the current project must read back at revision 2 with the same document as the accept response, and revision 1 must still match the saved document. Delete only the tagged project and require both project and edit reads to return 404. Uploaded images are deliberately retained for Create's later cleanup. A provider reported paid at preflight requires the host command's explicit `--allow-paid`; the Lab card reports a gap instead. See the limitations and outstanding verification below. |
 | `response-renderer` | `live-acceptance-response-renderer` | The `shared-response-renderer` card passes all three steps, Mermaid is served same-origin from `/dist/vendor/mermaid` (exact `VERSION`, JavaScript entry, no redirect), and the Little Monsters `tutor-shared-renderer` package case runs through the durable run route and executes tests (a run that declines is not a pass). After an api start the catalog lists browser cases as not runnable with "The playwright runner is unavailable." until the api's lazy runner probe finishes, and the listing that begins the probe still answers that. While that is the Tutor case's reason the case re-reads the catalog every 3 s, for up to 165 s (the probe's own timeout is 150 s), and runs what the last read lists. Any other reason, or that reason still present when the wait ends, is `DEGRADED` with the reason. |
 | `congress` | `live-acceptance-congress` | The `congress-disclosures` readback passes, `GET /api/trading/reports/congress` lists rows that each carry a ReportDate day and `observedAt`, and the watchlist Add step adds a synthetic `ZZT-XXXXX` ticker (symbol only, as the Add button posts it) and deletes it. |
-| `dev-workspace` | `live-acceptance-dev-workspace` | In dev mode, four Jarvis package-tool asks in one tagged Jarvis conversation (which the proposals must belong to) each return a cited `doc_id` of their path family: ADR-077 by number (`docs/adr/077-*`), a `docs/BACKLOG.md` entry title, a runbook (`docs/runbooks/*.md`, not the README) and tonight's handover (`local-notes/*`, from the index's `--notes-dir`). A family result without a `doc_id` fails. With dev mode off all four are refused with no citation; an unauthenticated `GET /api/dev-workspace-index/query?q=ADR-077` answers 401 or 403; dev mode is left as found. The backlog and runbook words have tracked defaults (`OSHAL_VERIFY_DEV_BACKLOG_PROBE` / `OSHAL_VERIFY_DEV_RUNBOOK_PROBE` override them); the handover words have none. They come only from `OSHAL_VERIFY_DEV_NOTES_PROBE` in the host runner's environment: `OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace`. Unavailable, never pass, when those words are missing (the gap names that command) or the index holds no `local-notes` documents (the `--notes-dir` build step is named). Compose forwards no `OSHAL_VERIFY_*` variable to the api, so the Lab card has no source for the handover words. It reads the gate and the index sources, puts dev mode back, and reports the handover ask as a host-runner gap before any model turn. It never passes. A closed gate (package, `OSHAL_DEV_WORKSPACE_INDEX_ENABLED`, `OSHAL_DEV_CONSOLE_ENABLED`, `OSHAL_SUPERADMIN_SUBS`, index not built) is reported by name; those need an api restart, so the case never opens them. Spends one model turn (host runner). |
+| `dev-workspace` | `live-acceptance-dev-workspace` | In one tagged owned Jarvis conversation, dev-mode asks for ADR-077, a BACKLOG entry title and a runbook require cited `doc_id` results from their existing path families. The handover instead requires the **exact supplied index path** with its own nonempty `doc_id` at **any rank 1-5**; another `local-notes/*` file, an uncited match or a hit beyond the requested limit fails. Supply both host inputs: `OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" OSHAL_VERIFY_DEV_NOTES_PATH="<its index path>" node scripts/operations/live-acceptance.js dev-workspace`. Neither handover input has a default; missing either is `UNAVAILABLE` naming its variable before a model turn. An index with no local notes names the `--notes-dir` build step. All four asks must be refused outside dev mode, the unauthenticated query must answer 401/403, dev mode must be restored and the conversation removed. Compose forwards no `OSHAL_VERIFY_*` variable, so the Lab card cannot supply either input: it reports the host-runner gap and never passes. Closed package/flag/super-admin/index gates are named, never opened by the case. See the host handover procedure below; the host run spends one model turn. |
 | `floater` | `live-acceptance-floater` | The ADR-160 Floater, seeded through aero-lab's own route, shows evaluation 1's mass budget RED at +274.3 g and the fabricable sentence verbatim. An owner's existing Floater is only read; a Floater the case seeded is deleted (the package has no delete route, so through the closed statement set under the owner's identity) and proven gone. |
 | `linkedin` | `live-acceptance-linkedin` | A tagged synthetic `linkedin-content-post` ticket becomes a graded pending-approval draft that names the ticket and carries its citation, and publishing it without confirmation is refused 428. The case never approves, confirms or publishes; the draft is rejected and deleted and the ticket removed. Spends real model turns. |
 | `commerce` | `live-acceptance-commerce` | Rides, Eats and Shopping at 390 x 844 in headless Chromium: the page fits, its own flow reaches something to confirm, the relayed outward op renders the confirm card, and Cancel hands off nothing. Every hand-off POST is aborted in the browser and `window.open` is stubbed, so a regressed gate is counted and reaches nothing. Shopping is walked whatever the caller's cart holds. The add the page posts is stamped in the browser with the run's tag (`testlab-live-commerce-<8 hex>`, in the line's `reason`), the line the add answered must carry that tag and be shown by the page before the confirm card is raised, and cleanup sends `DELETE /api/purchasing/lists/<list>/items/<line>` only for lines that were absent from the cart before the run and carry the tag or the answered id. A line the cart already held is never sent a removal; each is read back and compared field by field, and one that is missing or differs turns the case red, naming the line and the fields and no values. A line that appeared during the run and is not the case's is left and named in the receipt. Eats is walked only with an empty cart; with lines in it that surface is skipped and the case is degraded. Host runner only. |
@@ -364,16 +539,143 @@ and removed; a cleanup miss turns the case red.
 | `trading-parity` | `live-acceptance-trading-parity` | The `trading-parity-features` card passes all three steps (market gap, exit plans and yield sleeve, each armed on the paper book; a degraded step is reported as not runnable with the setting it names), `GET /api/trading/position-plans` answers the paper book's plans and plan arm, and both promotion paths (plan amend, a parity mix edit) answer 428 to a change sent without confirm. Read-only: nothing it sends carries confirm. |
 | `jarvis-cache` | `live-acceptance-jarvis-cache` | Three fresh tagged Jarvis conversations: the Jarvis bot's `OpenAI-compatible call` line shows the invariant cache created, then hit with cached tokens. `--record-doc` writes the table into `docs/architecture/jarvis-own-task-recall.md`. When no OpenAI-compatible call is logged the case names the brain that answered instead. Host runner only (`docker logs`). Spends three model turns. |
 | `vids-publish` | `live-acceptance-vids-publish` | Through the real package loader mounts (`/api/vids` under `service-or-oidc`, `/api/vids-public` under `public`): one tagged finished Vids job for the caller (the closed statement set; no route can make a job `done` without a Vids worker) with a real one-frame MP4 carrying the run tag attached through `POST /api/vids/jobs/<id>/artifact`. An unauthenticated `GET /api/vids/jobs` and an unauthenticated confirmed publish of that job must each answer the mount gate's own 401 (`authenticated: false`, `unauthorized`; a 401 from the package's in-router guard means the mount lost its gate and fails), and nothing may become public. The owner's confirmed publish with the reviewed digest yields a link whose anonymous read returns exactly the uploaded bytes as `video/mp4`; a malformed token answers 404; after the owner revokes, the same read answers 404. Cleanup revokes if needed, removes the export through the package's `DELETE` route, proves its MP4 gone from disk with the named `vids.export` file probe (which must first have seen it present), deletes exactly the tagged job and reads the residue back as zero; an MP4 left on disk is red. Unavailable, never pass, without vids 1.5.0 or later. |
-| `token-chase-replay` | `live-acceptance-token-chase-replay` | Through `POST /api/token-chase/runs/<id>/tail-replay`, which the controller delegates to the bot node that produced the run. A bot node registers only the read-only question tools (`rag_query`, `graph_query`, `conversation_query`, `conversation_fetch`), and each is a live read, so both legs use a question-tool run: every tool result it consumed came from those tools, at least one call succeeded, and its final checkpoint is completed. The case takes the newest such captured run of the caller, or starts one tagged turn on `oshal-assistant` through `POST /api/tasks/<tag>/messages` that asks for one `conversation_query` call, waits for its capture to close, and removes it afterwards (chat task and messages, ticket if any, ask workspace, residue read as zero). Reproduced leg: the no-edit tail from the first frame answers `stopped`, restored the checkpoint of that frame with `restore.integrity` `ok`, reports `artifacts.reproduced` true with no differing path and `replayTreeSha` equal to `final.checkpoint.treeSha` read independently through `GET /api/token-chase/runs/<id>/final`, re-executed 0 tool calls and made 0 paid calls. It proves the restore and the comparison on the node. It does not prove a workspace tool re-executed there, because no bot-node run holds one; that re-execution is local evidence (`npm run test:token-chase`). Live-read leg, on the same run: the tail stops at the frame that called the tool with status `live-tool` after every earlier frame `reproduced`, and replayed from the consuming frame answers `non-replayable`. `--expect-store-bound` (host runner) also requires a store-bound run and `storeVersion {bound: true, reproduced: true}`; the deploy lane runs it after `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot. A leg with no usable run is unavailable, never pass, and names what the run shows: the tools its node offered the model when `conversation_query` was not among them (the node resolved no executable grant of it for that bot; `OSHAL_VERIFY_TOKEN_CHASE_AGENT="<bot name>" node scripts/operations/live-acceptance.js token-chase-replay` names a bot that runs on its own node and holds one), a call that failed, a model that finished without calling the tool, a capture that never closed (`TOKEN_CHASE_CAPTURE` on a bot node), or a run that is not store-bound. A producing bot with no reachable node is unavailable naming the bot. Spends at most one model turn (only when it starts a run). |
+| `token-chase-replay` | `live-acceptance-token-chase-replay` | Through `POST /api/token-chase/runs/<id>/tail-replay`, which the controller delegates to the bot node that produced the run. A bot node registers only the read-only question tools (`rag_query`, `graph_query`, `conversation_query`, `conversation_fetch`), and each is a live read, so both legs use a question-tool run: every tool result it consumed came from those tools, at least one call succeeded, and its final checkpoint is completed. The case takes the newest such captured run of the caller whose every frame names the bot that produced it, or starts one tagged turn on `oshal-assistant` through `POST /api/tasks/<tag>/messages` that asks for one `conversation_query` call, waits for its capture to close, and removes it afterwards (chat task and messages, ticket if any, ask workspace, residue read as zero). A captured run with a frame that names no producing bot (a run captured before that identity reached capture) is listed in `evidence.skipped` and never replayed, because the controller refuses a tail it cannot send to an accountable node; no identity is inferred for it. Reproduced leg: the no-edit tail from the first frame answers `stopped`, restored the checkpoint of that frame with `restore.integrity` `ok`, reports `artifacts.reproduced` true with no differing path and `replayTreeSha` equal to `final.checkpoint.treeSha` read independently through `GET /api/token-chase/runs/<id>/final`, re-executed 0 tool calls and made 0 paid calls. It proves the restore and the comparison on the node. It does not prove a workspace tool re-executed there, because no bot-node run holds one; that re-execution is local evidence (`npm run test:token-chase`). Live-read leg, on the same run: the tail stops at the frame that called the tool with status `live-tool` after every earlier frame `reproduced`, and replayed from the consuming frame answers `non-replayable`. `--expect-store-bound` (host runner) also requires a store-bound run and `storeVersion {bound: true, reproduced: true}`; the deploy lane runs it after `TOKEN_CHASE_OWNER_STORE_SNAPSHOT=on` on one bot. A leg with no usable run is unavailable, never pass, and names what the run shows: the tools its node offered the model when `conversation_query` was not among them (the node resolved no executable grant of it for that bot; `OSHAL_VERIFY_TOKEN_CHASE_AGENT="<bot name>" node scripts/operations/live-acceptance.js token-chase-replay` names a bot that runs on its own node and holds one), a call that failed, a model that finished without calling the tool, a capture that never closed (`TOKEN_CHASE_CAPTURE` on a bot node), or a run that is not store-bound. A producing bot with no reachable node is unavailable naming the bot. Spends at most one model turn (only when it starts a run). |
+| `forge-edit` | `live-acceptance-forge-edit` | Bot Forge edit-in-place, as the operator. The minted tag `testlab-live-forge-edit-<8 hex>` must be unused: no pack, `deployed-apps` entry or persona under it, and `GET /api/swarm/apps/<tag>` answering 404. Otherwise what is there is not the run's, and the case is unavailable and writes, deploys and deletes nothing. A two-bot pack under that tag, its `pack.json` carrying the tag as fixture marker, is written into the caller's own packs directory (through the container helper's forge ops) and deployed with `POST /api/swarm/packs/<tag>/deploy`. The pack is then edited (new briefs and description, a descriptor ticketType changed to `<tag>-drift`) and deployed again by pressing its "Deploy to swarm" button in the Packs panel in headless Chromium. Both agentIds and the ticketType must be unchanged in the response and in the loaded app. The version must move exactly one patch with `edited: true`. `deployed-apps` must hold exactly `<tag>.yaml`, the edit must load from the path the first deploy loaded, and one app must be listed for the tag. The panel must say "Updated in place". Cleanup removes the pack, manifest and personas first, then unloads the app and deletes both agents, each proven gone by a 404. The pack folder is removed only when its `pack.json` carries the run's marker; with no marker, an unreadable `pack.json` or another run's marker nothing under the tag is removed and the case is red. The authorization posture and catalog rows the registration writes are listed as kept, because no route removes them. Needs an operator; for anyone else it is unavailable and writes nothing. From the Lab (no Chromium) the panel step is a gap and the card is degraded. No model turn. See [Bot Forge edit-in-place](apps/bot-forge-edit-in-place.md). |
+| `tickets-in-tickets` | `live-acceptance-tickets-in-tickets` | One tagged build root, filed as the operator with an empty build queue (otherwise `UNAVAILABLE`, nothing written). The root must be planned by project-manager's round sent over the signed hop to the configured planning node (`OSHAL_PM_PLANNING_NODE`, default `system-architect`, whose installed provider switch rows pick the engine; never a hosted key in the api): `in_process_discovery`, then `approval_required` with reason `planning_complete`, and `IMPLEMENTATION-PLAN.md` in its folder. Planning must produce 2 to 5 owned `build` children at depth 1 with distinct titles and `subtaskIndex` 1..N. Each child must complete with its unit work item completed by a build-lane bot over the signed hop (the node's provider and model recorded), with the test run verification made on the node recorded on it (`metadata.verificationTests`: executed, exit 0, no failures; a missing, unrun or red run fails by name with the failing tests), and no child may enter `in_process_build` before the one before it is done. The root must reach `customer_action`, with a deliverable and one `<childId>--` handover per child in its folder, no child folder of its own, and no plan-reviewer or Phase-8 round. A root that escalates, completes before any child exists, or plans one child titled like itself fails by name. Cleanup cancels, waits up to 65 minutes for node calls to return (keeping everything if they do not), removes the leftover rows anchored to the root, the children, the shadow tickets and the root with its folder (only when its workspace is this run's), and proves each gone after a settle wait; cost rows are kept. It can run longer than an hour, so run it on the host. Spends real model turns. Before cleanup, the cockpit hierarchy must list the root with exactly its children, each child detail must name the root as its parent, and `/code?folder=/workspace/<root>` must redirect onto that folder. |
+| `package-run` | `live-acceptance-package-run` | The installed presentations `brand-render` package case (`app:presentations:test:brand-render`, presentations 2.13.0 or later) runs through the durable run route, and the run is read once a second until it ends, each read timed. It passes only when the run ends `passed` with executed tests and none failed, and every read answered HTTP 200 in under 1 s. A run that ends `cancelled` (output withheld), any other end state, and any slow or failed read are `FAIL`; a read that fails does not stop the case following the run to its end. A case the catalog does not list is `UNAVAILABLE` and a listed case that is not runnable is `DEGRADED` with its reason; neither starts a run. Writes only the Lab run-history row, kept as the evidence. Run it while the box is under its evening load (the career refresh chain and the world pulse) to test the read bar. |
+| `storyboard-agy` | `live-acceptance-storyboard-agy` | Runs the explicit-only `storyboard-antigravity-render` card as the operator: the resolved storyboard image rail must be `antigravity-cli` (the render bot runs `antigravity-cli`, by its own row or the swarm default), one frame renders through it on the render bot, and the answer must be a real PNG of at least 64 x 64 with the bot's receipt that `generate_image` reached DONE, the bot's report that it ran `antigravity-cli` on its own harness, with a `match` reconcile or a `corrected` one when the bot was found on a stale default (ADR-130 amendment 2026-10-03: a render never moves the bot off its own setting); any other reconcile, or a turn run on another harness, is red. A failed card's output carries the bot's untrusted diagnostic (`output.diagnostic`: the image tool's error text and the model's reply), which the runner prints with the evidence. The tagged `sbimg-testlab-live-storyboard-<8 hex>` workspace, and each retry attempt's `-a2`/`-a3` workspace, must be removed; a workspace the card did not remove, or one outside its tag, is red. The PASS line names the attempt that rendered the frame ("rendered on attempt 2 of 3") when the card reports it. A render bot on another rail or a non-operator caller is `UNAVAILABLE`. The render bot's task records and usage rows are kept. Its one blocking call carries the render dispatch budget (`STORYBOARD_CLI_IMAGE_TIMEOUT_MS`, 420 s when unset) plus 60 s through the per-call `timeoutMs` that both the host runner and the Lab adapter honour (from the Lab the same call blocks for the same render); the card holds the whole render, retries included, to that budget. Spends one model turn per attempt: at most three, because the card, like Create, has no retry of its own. |
 
 The same case modules (`scripts/lib/live-acceptance-*.js`, listed in `live-acceptance-cases.js`) run
 from the Lab as explicit-only cards (never from "Run live scenarios"), bound to the signed-in caller;
 the commerce and Jarvis-cache cards report a gap there, because Chromium and the call log exist only
 on the host. The dev-workspace card reports its handover ask as a gap there too. Its words
-(`OSHAL_VERIFY_DEV_NOTES_PROBE`) exist only in the host runner's environment, and the Lab passes its
-cases an empty runner environment instead of the api's. On the host, the owner-scoped statements, ticket reads and ask-workspace removal run
+(`OSHAL_VERIFY_DEV_NOTES_PROBE`) and exact index path (`OSHAL_VERIFY_DEV_NOTES_PATH`) exist only in the host runner's environment, and the Lab passes its
+cases an empty runner environment instead of the api's. On the host, the owner-scoped statements, ticket reads, ask-workspace removal and the Bot Forge fixture pack run
 through `scripts/lib/live-acceptance-container.js`, staged once into the api container per run.
 Suites: `npm run test:live-acceptance`.
+
+#### Developer workspace: name the indexed handover
+
+Choose an eligible handover from the actual index/build report's `local-notes/` entries. Supply its
+index path, not its absolute host filename or a guess at the newest handover. A note excluded by the
+indexer's safety checks remains excluded; choose an eligible note rather than weakening those checks.
+On the host, supply both inputs to the existing runner (POSIX-shell example):
+
+```sh
+OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" OSHAL_VERIFY_DEV_NOTES_PATH="<its index path>" node scripts/operations/live-acceptance.js dev-workspace
+```
+
+There is no default for either input. A missing path is UNAVAILABLE naming
+`OSHAL_VERIFY_DEV_NOTES_PATH`, before any model turn. With both supplied, only a result whose path
+equals that index path literally and carries its own nonempty `doc_id` passes the handover leg.
+Any rank within the requested limit of five is valid; a cited different local note, an uncited exact
+hit alone or an exact hit beyond five fails. The receipt records the accepted path, `doc_id` and rank.
+The other three asks, anonymous denial, four dev-mode-off refusals and restoration/cleanup remain required.
+
+Source regressions over the doubled transport test this judgement; they are not installed proof.
+The remaining live receipt still needs the coordinated target's package/gates, developer grant and
+actual-checkout index with `--notes-dir` verified, then this host case PASS with the exact handover
+citation and cleanup `outstanding: []` / `errors: []`, plus the backlog's human dev-console asks.
+Historical installation/configuration snapshots do not establish the current target's state. This
+source fix does not install anything, claim a live run or close the full backlog item.
+
+#### Create region-edit: prerequisites, consent and evidence
+
+Run `node scripts/operations/live-acceptance.js create-region-edit` only against an operator-approved
+installed target. It needs Create's region-edit routes with `costConsentVersion: 1` in the provider
+report (region editing first appeared in 1.9.0), a configured image provider,
+and the caller's `project.view`, `read`, `create`, `change`, `delete` and `generate` permissions.
+Permission and provider reports are read before any fixture write. Missing installation, grants or
+provider configuration or the exact consent-contract version are unavailable, not a pass; upload quota, an existing in-flight edit and the
+daily edit limit are also named gaps. This case does not start or install any service.
+
+If preflight reports a paid provider, the explicit host command is
+`node scripts/operations/live-acceptance.js create-region-edit --allow-paid`. It can make one real
+image-generation request and incur a charge, including on a failed or cancelled run. The Lab never
+sets `allowPaid`. Every generation body carries `maxCostClass`: `paid` only when both the explicit
+flag and a paid preflight are present, otherwise `free` (even with the flag on a free preflight).
+The server captures this cap per job and checks the actual provider after queueing, immediately
+before generation, refusing an unknown class or paid provider under a free cap with
+`region_edit_cost_cap_exceeded` and zero generation calls. There must be no unchecked fallback.
+This is a cost-class cap, not a dollar cap or a specific-provider pin. Legacy callers may omit the
+optional server field; this driver never does. Servers without the exact advertised contract are
+refused before uploads or project writes; another client-side preflight is not a substitute.
+
+Possible admission is tracked before the generation POST is sent. A rejected connection or a 202
+without a usable edit ID retains the tagged project with a red cleanup receipt; it is not retried
+or treated as proof that no generation started. Only explicit in-flight/daily-limit refusal replies
+establish non-admission. Otherwise deletion requires a matching terminal record with a candidate ID
+when applicable and well-shaped reported spend metadata (a nonnegative finite amount or the
+contract's explicit null, never an inferred zero). This check applies to ordinary ready replies as
+well as cancellation. A malformed candidate does not discard valid spend evidence, nor malformed
+spend a known candidate ID. If cancellation loses to completion, its terminal record is read before
+deletion; a successful cancellation must itself affirm the matching cancelled record. Unresolved
+outcomes retain the project and any known edit as outstanding, with a red receipt. Create has no per-asset delete route: its source and candidate
+uploads remain eligible for owner-scoped cleanup after 24 hours; a late candidate can remain too.
+The case never invokes owner-wide asset cleanup or removes accounting records. Provider, model and
+cost in its evidence come from the edit response, not an independent read of the canonical ledger.
+Acceptance compares original layer order and every document property outside images/layers, not
+just layer IDs. The PNG reader explicitly refuses `tRNS` transparency rather than inventing opaque
+alpha. This is one API cycle proving mask/document preservation, not browser acceptance, two-cycle
+manual-edit/undo coverage, another owner's isolation, or instruction fidelity.
+
+Earlier verification (2026-09-29, before independent-review corrections): the focused region case
+(19), host runner (20) and Lab registration (7) guards passed serially with one worker, including real loopback HTTP/multer transport guards.
+Removing the persisted-document comparison caused three expected failures; removing early
+cancellation tracking caused four. Both fixes were restored and the region guard passed again.
+After the independent-review corrections, the region suite passed **37/37** and the final Lab
+registration suite **7/7**, each alone with 128 MiB runner / 384 MiB worker heap caps. A combined
+targeted mutation produced 16 expected failures (2 transparency, 5 unsupported consent versions,
+1 wrong class cap, 3 cancellation-race/provenance, 5 layer-order/document changes); restoring every
+safeguard returned the region suite to 37/37. The server cost-cap companion is handled separately;
+its compiled-route receipts below are separate from this driver's doubled-body guards.
+
+Current frozen revision (2026-09-29): the coordinating parent reports **73/73 tests across 3 files**
+passed for the region case, host runner and Lab registration, exit 0 in 35.32 s. The run started
+at 12:51:21 America/Chicago with 2084 MiB free at preflight, using one fork worker capped at
+384 MiB and a 128 MiB runner. No provider execution occurred. This run includes the latest
+admission-uncertainty/ordinary-terminal cleanup regressions. Independent source review approved
+the exact frozen implementation and tests with unchanged hashes. Subsequent minimal cleanup
+mutations caused exactly 2 expected failures when pre-POST admission tracking was removed and
+6 when ordinary terminal accounting was marked complete before validation. Each mutation was
+restored to the approved source hash. The nine new cleanup guards passed before and after those
+mutations; the full three-file focused set then passed **73/73** again in 24.04 s, exit 0, with
+no failures or skips, using the same 128 MiB runner / one 384 MiB fork limits. No test was edited.
+The parent also reports both full core typechecks passed: `tsconfig.json` and
+`tsconfig.server.json`, with outer exit 0 via file-redirected stdin. The locked compiler ran in a
+3 GiB container with `--noEmit --preserveSymlinks`, against the exact HEAD source archive plus
+the sole dirty TypeScript overlay for Lab scenarios. Implementation and tests remain unchanged.
+The parent reports actual compiled Create companions passed sequentially: API **7/7** (1.30 s),
+real PostgreSQL **22/22** (9.25 s), and real browser **6/6** (22.61 s), zero failures/skips. These
+use a synthetic provider, not an installed image provider. Each PostgreSQL fixture reported
+`cleanupVerified: true`; separate final fixture-inventory verification remains with the parent.
+Commit/push hooks are separate gates; these receipts do not imply they have run.
+No installed run or canonical accounting proof is claimed. See the
+[Create region-edit boundary audit](governance/real-boundary-regression-audit.md#create-region-edit-live-acceptance-2026-09-29)
+for the fixture boundaries and remaining evidence.
+
+#### Bot Forge edit-in-place: the guard run and the live case
+
+The guard for the Forge half of "Strategy Studio and Bot Forge conversational parity" is
+`tests/unit/forge-pack-edit-in-place.spec.ts`. Recorded run on core `main` at `ce998b00`
+(2026-10-01): `npx vitest run tests/unit/forge-pack-edit-in-place.spec.ts --reporter=verbose`
+answered `Test Files 1 passed (1)` and `Tests 5 passed (5)`.
+
+A mutation check of `src/app/routes/swarm-pack-routes.ts` found one check that never went red. An
+edit loaded from a second manifest path still passed, because the "same path reloaded" check
+compared the wrong pair of loads. With that check fixed, each of nine mutations turns the spec red:
+fresh agentIds, a followed ticketType drift, no version bump, a two-patch bump, a sibling manifest,
+a copied manifest, a different load path, `edited: false`, and no prior emission read. The table is
+in [Bot Forge edit-in-place](apps/bot-forge-edit-in-place.md).
+
+The live half is the `forge-edit` case in the table above:
+`node scripts/operations/live-acceptance.js forge-edit`. `tests/unit/live-acceptance-forge-edit.spec.ts`
+proves its logic over a doubled route, swarm and panel, and over the real pack router with real
+fixture files. On the box, 2026-10-01 (core `a6de96c5`), the case printed `PASS forge-edit
+(forge-edit-in-place-live)`: both agentIds and the ticket type kept, version `1.0.0 -> 1.0.1`, one
+manifest loaded from the same path, one app, the panel saying "Updated in place"; cleanup `removed 8;
+kept 2; outstanding 0; errors 0` (the two kept items are the authorization posture and catalog rows).
+The receipt is in [Bot Forge edit-in-place](apps/bot-forge-edit-in-place.md#live-receipt-2026-10-01).
 
 ### Messaging channels
 
@@ -725,6 +1027,28 @@ registered but pending a suitable approved runner. Registration itself does not 
 The **Installed application test registration** card (`installed-app-tests`) checks catalog identity
 and prerequisites without running application smokes. **Connector sign-in callback boundary**
 (`connector-oauth-boundary`) probes anonymous refusal paths without connecting a provider.
+Its linked callback suite separately exercises the real HTTP ceremony with fixture sessions,
+provider responses and SQL: missing issuer and same-subject/different-issuer relay/completion
+are refused before token exchange. A green anonymous card alone does not prove that consent
+flow, real provider access or legacy credential ownership.
+
+**Qualified personal connector grants** (`qualified-personal-connector`, Tools) checks
+anonymous refusal on metadata and SmartThings consent initiation. Its linked HTTP suite uses
+the actual routes, browser ceremony, crypto and session/store code with explicit session,
+provider-response and transactional SQL doubles. The SmartThings companion exercises a
+loopback provider protocol, not a real account. Held checkout/query/commit regressions cover
+HTTP identity changes and consent expiry: pre-commit invalidation rolls back; post-commit
+invalidation suppresses metadata without claiming to undo the commit. The dedicated
+PostgreSQL companions passed 35/35 in real owned enforcing-role fixtures on 2026-09-30;
+their [exact-source record](backlog/qualified-connector-postgres-proof.md) does not
+turn the installed card into a storage-boundary acceptance test. The card does
+not create a grant, arm a location rule or enable device actions. Utilities' separate qualified
+panel has actual-JavaScript tests with named DOM/fetch doubles and a real Chromium companion
+serving the shipped page over loopback. The latter proves frame-policy/top-navigation and
+native form/dialog behavior with explicit API/auth/provider responders, not installed consent.
+The endpoint contract and
+focused test command are in [the connector architecture](architecture/connectors-and-graph-architecture.md#36-fresh-issuer-qualified-personal-grants).
+
 **Multi-store discovery** (`multi-store-discovery`) reads registry status and qualified package
 identities without installing packages or changing trust. Their linked local suites run using
 `npm run test:platform-readiness`.
@@ -755,9 +1079,33 @@ ESPN kept apart, and `espn_s2` absent from every log event and returned value. R
 `npx vitest run tests/unit/fantasy-leagues-espn-client.spec.ts tests/unit/kernel-skills.spec.ts`.
 Reading a real league is an operator acceptance step behind a signed-in session.
 
+**Brand looks in the deck engine (deck-generation kernel skill)** (`brand-look-render`, Tools)
+uses the server's own deck engine to build a brand look from a synthetic kit
+([ADR-103](adr/103-ai-office-one-themed-engine.md) addendum). It renders a deck, a document and a
+workbook in memory, reads the kit's primary color, text color and body face back out of each file,
+then hands each renderer a forged look and requires a refusal. A missing value or a drawn forged look
+fails the step and names the format. It writes nothing, calls no route and spends nothing. Its linked
+suites also compare every part of the ten built-in looks with digests generated before brand looks
+existed. Run them with the command in [tests/README.md](../tests/README.md). Live, 2026-10-01 (core
+`a6de96c5`): `POST /api/test-lab/run {"scenarioId":"brand-look-render"}` returned `state: pass` with "A deck, a
+document and a workbook drawn in a synthetic brand look carry its colors and body face; each renderer refused a
+forged look and produced no file." The presentations 2.13.0 package case `brand-render` drives the compiled
+AI Office route with this engine and reads a kit's colors and faces back out of a generated deck, document and
+workbook, and requires the record to name the look `brand:<base>`. It passed live on 2026-10-02 (core `bbf062ce`, image `9d9bbd02607c`):
+`node scripts/operations/live-acceptance.js package-run` printed PASS, and Lab run `0c48d3ab` ended `passed`
+with 5 tests executed and 0 failed.
+
 Eligible offline package Node suites now use a disposable runner with Run/Cancel controls and
 durable versioned history. See [package test execution](testing/package-test-execution.md) for
 supported prerequisites, current-user authorization, isolation and local regression commands.
+Every authority check on a run decides only that run's application: the start, a read or
+cancellation, and the checks made while it runs. A slow check over the other installed
+applications therefore no longer cancels a healthy run. A denial, a 5 s timeout or an error for
+the run's own application still cancels it and withholds its output, and so do losing access to
+that application and a changed installed test. The controller logs which check refused a run and
+why. The regression cases are in `tests/unit/test-lab-run-history.spec.ts`, on the disposable
+PostgreSQL run store. On an installed build the check is the `package-run` case of the
+[automated live acceptance sweep](#automated-live-acceptance-sweep).
 Unsupported runners remain pending; further runner fixtures and remaining package adoption are in
 the [application registration backlog](backlog/app-test-lab-registration.md).
 Source registration and fixture tests do not establish deployed provider or production results.

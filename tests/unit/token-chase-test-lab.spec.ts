@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The Token Chase checkpoint + tail replay card is registered exactly once, every attached suite exists on disk, and its read-only step reports honestly over a REAL loopback HTTP seam: pass with the run count it read, degraded when nothing is captured or the caller is not signed in, gap when the route is missing, fail on a server error or a malformed list. It never fires a replay.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require the producing-bot execution-handler integration guard on the existing checkpoint/replay card; a capture guard on disk alone is not registered coverage.
  */
 
 import { existsSync } from 'node:fs';
@@ -34,6 +35,7 @@ describe('Token Chase Test Lab card', () => {
     const [scenario] = TOKEN_CHASE_SCENARIOS;
     expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);
     expect(scenario.group).toBe('tool');
+    expect(scenario.regressionTests).toContainEqual({ level: 'integration', path: 'tests/unit/token-chase-producing-bot.spec.ts' });
     expect(scenario.regressionTests!.map((t) => t.path)).toContain('tests/unit/token-chase-checkpoint-replay-e2e.spec.ts');
     expect(scenario.regressionTests!.map((t) => t.path)).toContain('tests/unit/token-chase-bot-tail-route.spec.ts');
     for (const test of scenario.regressionTests!) expect(existsSync(test.path), test.path).toBe(true);

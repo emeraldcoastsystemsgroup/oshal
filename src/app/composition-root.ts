@@ -34,6 +34,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Pass the orchestrator collaborators as one named object. costLedger is now a required field, so the inline-turn ledger wiring cannot be deleted from this call without failing the build - previously it was a trailing optional positional and its removal type-checked clean while silently zeroing every windowed budget cap.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | The LinkedIn queue binding receives the ticket service so it can write the draft id back onto the queue ticket that produced it.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | Wire the fixed read-only Yahoo inbox reader onto AppContext as `imapMail` (no dependency overrides, so the endpoint stays imap.mail.yahoo.com:993 and the broker stays getValidAccessToken).
+ * 32 | maintainer@emeraldcoastsystemsgroup.com   | Wire the fixed one-recipient Outlook send onto AppContext as `outlookMailSend` (no dependency overrides: the endpoint stays graph.microsoft.com/v1.0/me/sendMail and the broker stays getValidAccessToken).
  */
 
 import {
@@ -75,6 +76,7 @@ import { AgentConfigService, BotNodeClient, createRegistryEndpointResolver } fro
 import { startTicketGraphIngestion } from '@/features/graph';
 import { executeBotOrInline } from '@/app/routes/inline-bot-execution';
 import { createOutlookMailReader, createOutlookMailSyncReader } from '@/app/routes/outlook-mail-reader';
+import { createOutlookMailSender } from '@/app/routes/outlook-mail-sender';
 import { createImapMailReader } from '@/app/routes/imap-mail-reader';
 import { createRingcentralCallLogReader } from '@/app/routes/ringcentral-call-log';
 import { bindLinkedInContentWorker } from '@/app/linkedin-content-queue-workflow';
@@ -242,6 +244,7 @@ export function createAppContext(): CompositionAppContext {
     executeBot: (agentId, request) => executeBotOrInline(context, botNodeClient, agentId, request),
     outlookMail: createOutlookMailReader(pool),
     outlookMailSync: createOutlookMailSyncReader(pool),
+    outlookMailSend: createOutlookMailSender(pool),
     ringcentralCallLog: createRingcentralCallLogReader(pool),
     imapMail: createImapMailReader(pool),
   };

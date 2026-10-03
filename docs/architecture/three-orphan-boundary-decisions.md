@@ -1,6 +1,7 @@
 # Three orphan-boundary decisions — evidence and options
 
-**Status:** awaiting an operator decision. Nothing here is a to-do for a bot; each item is a
+**Status:** item 1 is decided (option A, 2026-09-21) and built (2026-09-26); see its section. Items 2
+and 3: see their sections. Nothing here is a to-do for a bot; each item is a
 boundary call with a real trade-off, which is why the 2026-07-29 orphan sweep (PR #26) deliberately
 left the code in place rather than guess.
 
@@ -15,6 +16,10 @@ shown.
 ---
 
 ## 1. `world-data` reaches the graph tier without being a kernel skill
+
+**Decided 2026-09-21: option A** (BACKLOG decision, PR #744). Built 2026-09-26: registry entry and
+build-anchor exports in core 0681d5a9, and `uses: world-data` in world, sports-edge and trading in
+store 4cd6c3b3.
 
 **The situation.** `src/features/world-data/world-intelligence-service.ts:24` imports
 `@/features/graph` and calls `getTenantGraph`. The `world` store package reaches the graph

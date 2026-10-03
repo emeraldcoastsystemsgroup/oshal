@@ -16,6 +16,7 @@ import { ProviderSwitchStore, type AgentConfigService } from '@/features/agent-m
 import {
   installedProviderSwitchCatalog,
   installedProviderSwitchSnapshot,
+  resolveInstalledProviderFallbackOrder,
   resolveInstalledProviderSwitch,
 } from '@/app/composition/provider-switch-runtime';
 import { registryHarnessEntry } from '../swarm-bot-registry';
@@ -50,11 +51,7 @@ export function mountAgentProviderRoutes(app: Application, auth: RequestHandler,
       // empty chain: returning [] here told every booting node "the administrator chose no
       // failover", which blanked OSHAL_PROVIDER_FALLBACK_ORDER on each pull in the default
       // configuration. Only a real answer travels; absence stays absent.
-      resolveFallbackChain: (agentId, primaryProviderId) => {
-        const chain = installedProviderSwitchSnapshot()?.resolveFallbackChain(agentId, primaryProviderId);
-        if (!chain || chain.source === 'none') return null;
-        return chain.order;
-      },
+      resolveFallbackChain: resolveInstalledProviderFallbackOrder,
       // A provider pick is the bot's own switch row (migration 147, scope = agent id), written under
       // the request identity so the table's operator-only policy is the enforcement.
       ...(store ? { writeBotSwitch: async (agentId, providerId, modelId, updatedBy) => { await store.upsert(agentId, providerId, modelId, updatedBy); } } : {}),

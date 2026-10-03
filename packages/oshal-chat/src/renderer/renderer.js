@@ -8,6 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Full-Jarvis mode UI: orb-row button + settings (open-on-launch checkbox, cockpit path) that open the swarm-hosted cockpit window
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Orb fallback polish (operator feedback): replies render as markdown (not raw text), TTS speaks a short sanitized summary (never URLs, ids, code, or tables), most-natural installed voice is the default
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: the Codex and Claude rows show the swarm's login state and offer "Log in + push" (vendor login here, pushed when it lands) and "Push to swarm" (push the login this machine already holds); a 401 offers the swarm sign-in and retries once.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Window style (Config -> Window, viewMode): Simple chat shows the plain text chat (chat-view.js) instead of the orb, and replies and worker events go to it with no speech; the orb window and every orb path are unchanged when the setting is Voice orb (the default).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Plain log lines on the worker channel ({ type: 'log' }: CLI setup, the print service) render as log lines and never reach the chat; they used to show as failed tasks (the Simple chat's "Failed: a task").
  */
 
 'use strict';
@@ -31,6 +33,8 @@ const CONFIG_FIELDS = [
 
 let busy = false;
 let wakeStatus = null;
+/** Config -> Window: 'orb' (default) or 'chat' (the simple text chat in chat-view.js). */
+let viewMode = 'orb';
 
 /* ===================== Orb (lifted from jarvis.html) ===================== */
 const cvs = $('orb'), cctx = cvs.getContext('2d');
@@ -300,6 +304,8 @@ async function handleInput(text) {
 }
 function applyReply(reply) {
   busy = false;
+  // Simple chat answers in its own history, never aloud.
+  if (viewMode === 'chat' && window.OshalNodeChat) { window.OshalNodeChat.reply(reply); return; }
   if (reply && reply.success && reply.text) speak(reply.text);
   else { setMode('idle'); setStatus((reply && reply.error) || 'The bot returned an empty reply.', true); }
 }
@@ -308,6 +314,15 @@ function applyReply(reply) {
 function applyWorkerEvent(ev) {
   const log = $('worklog');
   if (log.querySelector('.muted')) log.innerHTML = '';
+  // The main process also sends plain log lines on this channel ({ type: 'log', message }: CLI setup, the
+  // print service). They are not tasks, so they never read as a failed task.
+  if (ev && ev.type === 'log') {
+    const line = document.createElement('div');
+    line.className = 'work-row log';
+    line.innerHTML = '<div class="work-out">' + esc(String(ev.message || '').slice(0, 600)) + '</div>';
+    log.prepend(line);
+    return;
+  }
   const row = document.createElement('div');
   row.className = 'work-row ' + ev.phase;
   const tag = ev.phase === 'claimed' ? '▶ running' : ev.phase === 'completed' ? '✓ done' : '✕ failed';
@@ -315,6 +330,7 @@ function applyWorkerEvent(ev) {
     + (ev.text ? '<div class="work-out">' + esc(ev.text.slice(0, 600)) + '</div>' : '')
     + (ev.error ? '<div class="work-err">' + esc(ev.error) + '</div>' : '');
   log.prepend(row);
+  if (viewMode === 'chat' && window.OshalNodeChat) window.OshalNodeChat.work(ev);
 }
 
 /* ===================== Connection status ===================== */
@@ -368,8 +384,20 @@ async function toggleBackgroundWakePause() {
 /* ===================== Config screen ===================== */
 function showSettings(show) {
   $('settings').classList.toggle('hidden', !show);
-  $('orbView').classList.toggle('hidden', show);
+  $('orbView').classList.toggle('hidden', show || viewMode !== 'orb');
+  $('chatView').classList.toggle('hidden', show || viewMode !== 'chat');
   if (show) { refreshAccounts(); refreshEspn(); }
+}
+/** Show the chosen window (the orb or the simple chat) unless Config is open; the chat is drawn on first use. */
+function applyViewMode(mode) {
+  viewMode = mode === 'chat' ? 'chat' : 'orb';
+  const settingsOpen = !$('settings').classList.contains('hidden');
+  $('orbView').classList.toggle('hidden', settingsOpen || viewMode !== 'orb');
+  $('chatView').classList.toggle('hidden', settingsOpen || viewMode !== 'chat');
+  if (viewMode !== 'chat') return;
+  if (listening) stopListening(false);
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (window.OshalNodeChat) window.OshalNodeChat.start($('chatView'), oshal);
 }
 async function loadConfig() {
   const cfg = await oshal.getConfig();
@@ -385,6 +413,8 @@ async function loadConfig() {
   else if (cfg.userSub) $('identityMsg').textContent = 'Identity: ' + cfg.userSub;
   $('signOutBtn').disabled = !cfg.userSub;
   applyBackgroundWakeStatus(await oshal.getBackgroundWakeStatus());
+  $('viewMode').value = cfg.viewMode === 'chat' ? 'chat' : 'orb';
+  applyViewMode(cfg.viewMode);
   if (!cfg.controlPlaneUrl || !cfg.sharedSecret) showSettings(true);
 }
 async function saveSettings() {
@@ -393,7 +423,9 @@ async function saveSettings() {
   update.workerEnabled = $('workerEnabled').checked;
   update.allowSystemControl = $('allowSystemControl').checked;
   update.fullJarvisEnabled = $('fullJarvisEnabled').checked;
+  update.viewMode = $('viewMode').value === 'chat' ? 'chat' : 'orb';
   await oshal.saveConfig(update);
+  applyViewMode(update.viewMode);
   $('workerPill').textContent = update.workerEnabled ? 'worker on' : 'worker off';
   $('workerPill').className = 'worker-pill ' + (update.workerEnabled ? 'on' : 'off');
   setMsg('Saved.', 'ok');

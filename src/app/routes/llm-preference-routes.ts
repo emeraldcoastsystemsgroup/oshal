@@ -17,6 +17,9 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-127: GET /options + GET|PUT the caller's default brain, auth-gated and owner-scoped.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | GET / also reports the operator's HOT FALLBACK (2026-09-22): the configured chain (switch-row fallback_order, ADR-162 precedence, default openai-codex → claude-code), each rung's readiness from the token-free stored status (?refresh=1 probes on demand), whether the two gates admit THIS caller, and the exact PUT that changes the order. Same route, same shape the Settings AI-Providers card already reads — no second status endpoint.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two Google CLI options (gemini-cli, antigravity-cli), and every CLI option's availability moved onto cliBrainOffer - the same function the resolver calls, so what is OFFERED and what RESOLVES cannot drift. The first cut of this entry gated Gemini on the carve AND a pushed sign-in, and called that "exactly the conditions the resolver honours"; it was not. Nothing executes a gemini-cli dispatch (botNodeRuntime: null, and it is not a ProviderRegistry id), so pushing a login made the option selectable, PUT accepted it because PUT admits any option whose availability is true, and every turn afterwards was refused by name at the node. Availability is now the executability question for all four, and each unavailable option carries the piece that is missing rather than one generic sentence.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Offer `bot-default` as an explicit always-available choice. It is intentionally distinct from Automatic: Automatic keeps the user's demo/hosted ladder, while Bot administrator setting defers remote turns to the target bot's canonical per-bot/fleet/runtime record.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Explain the SEC-05 degradation on the always-available bot-default choice: an administrator-selected autonomous CLI that the caller cannot use falls through to their hosted lane.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Offer and accept `bot-default` only inside the existing demo-operator carve. Every useful dedicated bot provider, including catalog API ids such as Gemini, is reconciled to an autonomous bot-node runtime; presenting the raw catalog id as guest-safe made the UI promise a dispatch the node correctly refused. A formerly saved choice still degrades through the hosted ladder at resolution time.
  *
  * @module llm-preference-routes
  */
@@ -118,6 +121,14 @@ async function buildOptions(ctx: AppContext, sub: string): Promise<BrainOption[]
       label: 'Automatic',
       detail: 'Use the best available: your own key first, then whatever this deployment offers.',
       available: true,
+    },
+    {
+      id: 'bot-default',
+      label: 'Bot administrator setting (dedicated bots)',
+      detail: cli
+        ? 'For a bot with its own node, use its administrator-selected provider, then the fleet or built-in default. Inline assistants keep their safe hosted lane.'
+        : 'Available only to this demo deployment\'s operator because dedicated bot providers execute through an autonomous bot-node runtime; your hosted lane remains in use.',
+      available: cli,
     },
     cliOption('claude-code', 'Claude Code (signed in on this machine)',
       'Runs on the Claude Code subscription signed in on this machine.', offer('claude-code')),

@@ -32,6 +32,8 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Fail closed on inactive and duplicate-name concierge rows. A declared bot or workflow fallback must be the sole ACTIVE matching agent inside the app's executable agent_ids; only a metadata-only external chatBot may resolve outside that array, and only when exactly one ACTIVE global row owns the name. This keeps an unrelated lower-id name shadow from replacing a manifest's explicit agent id.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | A dynamically discovered borrowed-concierge route must be discoverable as BOTH the referencing application and the distinct bot-owning application. Checking only owner('bots', id) let a protected surface inherit a shared concierge owner's grant, leaking its name/deep link and, in delegate mode, execution reach. Curated routes retain their historical owner-or-key rule because their keys need not be registered applications.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Handle unbindable lineage in returnProtectedComplexSummaries: hand off to automatic summarizer when work product is not protected, or write a stated sentence in the thread when protected work product lacks bindable executions.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | buildCatalogBlock takes the user's words and delegates the text to jarvis-catalog-block.ts, which lists every effective route instead of the first 40 (66 on the live box on 2026-10-01: calendar, finance, rides and 23 more were invisible to routing and to the planner). The routes the ask names lead with their description; the rest are compact; the budget is what the 40 full lines cost.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Every bounded Jarvis step (haven passive learning; the legacy classify/synthesize) now runs through executeBotOrInline - the chokepoint that carries the caller's brain to wherever the bot runs - via runBrainStep in the new sibling jarvis-brain-steps.ts, instead of runInline calling the orchestrator directly, which built the controller's configured CLI harness in-process and was refused unattended. The learn step rides the brain this orchestrator resolved for the turn: the CLI stamp or hosted trio it started on, or the retry's hosted endpoint when the turn fell back here (a fallback the chokepoint performs on its own is not carried). hostedWire replaces the two hand-built trios. Live 2026-10-02 08:13 UTC on bbf062ce: the turn answered on the jarvis-bot node (antigravity-cli) and its jarvis-haven-learn task failed with UNBROKERED_AUTONOMOUS_PROVIDER, the only error-level event since boot. This file was over the 800-code-line threshold already (817); the change takes it below that count.
  *
  * @module jarvis-orchestrator
  */
@@ -60,12 +62,13 @@ import {
 } from '@/features/swarm-orchestration';
 import { reportResolvedLlmFailure, resolveUserLlmConnection } from './free-tier-rotation';
 import { isRetryableCliBrainFailure, resolveUserBrain } from './user-brain-resolution';
-import type { ByoLlmConnection } from './byo-llm-routes';
 import { executeBotOrInline } from './inline-bot-execution';
+import { hostedWire, runBrainStep, type TurnBrain } from './jarvis-brain-steps';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
 import { extractJsonObject, extractJarvisDirectives } from './jarvis-directives';
 import { finishTask, findJarvisTaskSessionId, saveTaskPending } from './jarvis-task-store';
 import { publishJarvisTaskCompletion } from './jarvis-task-complete-notify';
+import { renderCatalogBlock } from './jarvis-catalog-block';
 import { captureDeliverableFiles } from './jarvis-deliverable-files';
 import {
   providerRecordsMatchingTrustedIntent,
@@ -332,29 +335,12 @@ function freshTaskId(tag: string, sub: string): string {
   return `jarvis-${tag}-${sub}-${crypto.randomUUID()}`;
 }
 
-/**
- * @description Execute an INLINE bot (one that lives on this controller) in-process via the
- * orchestrator — the same path the cockpit PM chat uses. Threads the exact caller identity
- * so owner-scoped server operations and cost capture apply. Returns the bot's final text.
- */
-async function runInline(
-  ctx: AppContext, agentId: string, prompt: string, sub: string, tag: string,
-  byoLlmConnection?: ByoLlmConnection,
-): Promise<string> {
-  const result = await ctx.orchestrator.processMessage(freshTaskId(tag, sub), prompt, {
-    agenticMode: true, autoApprove: false, source: 'jarvis', agentId, userSub: sub,
-    // Same resolved endpoint the turn itself ran on. Without it these in-process steps fall to the
-    // controller's configured CLI harness, which is refused unattended — a silent no-brain step.
-    byoLlmConnection,
-  } as never);
-  return String(result.response || '').trim();
-}
-
-/** Run the oshal-assistant brain for a classify/synthesize step (inline, in-process). */
+/** Run the oshal-assistant brain for one bounded step (haven extraction, legacy classify/synthesize) through
+ *  the turn's own chokepoint, on the brain the turn ran on — see jarvis-brain-steps.ts for why. */
 async function runJarvis(
-  ctx: AppContext, sub: string, prompt: string, step: string, byoLlmConnection?: ByoLlmConnection,
+  ctx: AppContext, sub: string, prompt: string, step: string, brain?: TurnBrain,
 ): Promise<string> {
-  return runInline(ctx, JARVIS_AGENT_ID, prompt, sub, step, byoLlmConnection);
+  return runBrainStep(ctx, botClient, JARVIS_AGENT_ID, prompt, sub, freshTaskId(step, sub), brain);
 }
 
 /**
@@ -373,11 +359,7 @@ export async function runJarvisBot(
   // authoritative provider so the node reconciles onto that harness before executing.
   const brain = await resolveUserBrain(ctx.pool, sub);
   const resolvedLlmConnection = brain.kind === 'hosted' ? brain.connection : undefined;
-  const byoLlmConnection = resolvedLlmConnection ? {
-    baseUrl: resolvedLlmConnection.baseUrl,
-    apiKey: resolvedLlmConnection.apiKey,
-    model: resolvedLlmConnection.model,
-  } : undefined;
+  const byoLlmConnection = hostedWire(resolvedLlmConnection);
   const cliProvider = brain.kind === 'cli'
     ? { providerId: brain.providerId, ...(brain.model ? { model: brain.model } : {}) }
     : {};
@@ -405,6 +387,9 @@ export async function runJarvisBot(
     ...(resolvedLlmConnection ? { byoLlmResolutionSource: resolvedLlmConnection.resolutionSource } : {}),
     ...cliProvider,
   };
+  // The brain this turn actually runs on, carried to the passive-learning step below: the CLI stamp
+  // or hosted connection it starts with, replaced by the retry's endpoint when the turn falls back.
+  let ranOn: TurnBrain = { byoLlmConnection, ...cliProvider };
   let result: Awaited<ReturnType<typeof executeBotOrInline>>;
   try {
     result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, request);
@@ -431,22 +416,23 @@ export async function runJarvisBot(
     // The retry is a HOSTED leg by construction: it drops the CLI stamp, because the failure we are
     // recovering from may BE that harness, and a hosted endpoint is the one thing a SEC-05 node
     // always accepts.
+    const retryConnection = hostedWire(nextConnection);
+    ranOn = retryConnection ? { byoLlmConnection: retryConnection } : {};
     result = await executeBotOrInline(ctx, botClient, JARVIS_AGENT_ID, {
       ...request,
       providerId: undefined,
       model: undefined,
-      byoLlmConnection: nextConnection
-        ? { baseUrl: nextConnection.baseUrl, apiKey: nextConnection.apiKey, model: nextConnection.model }
-        : undefined,
+      byoLlmConnection: retryConnection,
     });
   }
   const answer = String(result.response || '').trim();
-  // Passive learning (fire-and-forget, throttled): extraction runs on the same accountable
-  // inline brain so its LLM cost lands in chat_tasks (ADR-036/050). Never blocks the reply.
+  // Passive learning (fire-and-forget, throttled): extraction runs on the same accountable brain the
+  // turn answered on, through the same chokepoint, so its LLM cost lands in chat_tasks (ADR-036/050).
+  // Never blocks the reply.
   // Learn from what the USER said. `message` here is the assembled prompt, and the extraction
   // reads only its first 2,000 characters: under the old context-first order those characters were
   // the tool catalog, so the loop was recording the catalog as durable facts about the person.
-  void learnFromExchange(ctx.pool, sub, userText ?? message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', byoLlmConnection));
+  void learnFromExchange(ctx.pool, sub, userText ?? message, answer, (p) => runJarvis(ctx, sub, p, 'haven-learn', ranOn));
   return { answer, routed: [], handoffs: [], ...(result.brainFallback ? { brainFallback: result.brainFallback } : {}) };
 }
 
@@ -623,36 +609,17 @@ export async function loadEffectiveRoutes(ctx: AppContext): Promise<{ routes: Ap
  * box lists its CRM, and a store install joins Jarvis's world the moment it activates (ADR-085) -
  * subject to the same ADR-087 role filter as every other reach path. Without it, Jarvis answered
  * "I don't have that data" about an app running on the same box (operator report, 2026-09-04).
- * Bounded (40 routes, trimmed blurbs); returns '' on failure so a catalog hiccup never blocks the
- * turn - the same degrade contract as buildOpenWorkBlock.
+ * Every route is listed within a fixed budget (jarvis-catalog-block.ts): the ones the ask names
+ * first with their description, the rest compact. Returns '' on failure so a catalog hiccup never
+ * blocks the turn - the same degrade contract as buildOpenWorkBlock.
  * @param ctx - app context (pool for dynamic discovery).
+ * @param ask - The user's words this turn, which decide the order and which entries carry a description.
  * @returns The catalog text block, or '' when it cannot be built.
  */
-export async function buildCatalogBlock(ctx: AppContext): Promise<string> {
+export async function buildCatalogBlock(ctx: AppContext, ask = ''): Promise<string> {
   try {
     const { routes } = await loadEffectiveRoutes(ctx);
-    if (!routes.length) return '';
-    const lines = routes.slice(0, 40).map((r) => {
-      const reach = r.mode === 'delegate'
-        ? 'you can hand work to it'
-        : `point the user to it: ${r.deepLink}`;
-      return `- ${r.key}: ${r.name} - ${r.blurb.slice(0, 180)} (${reach})`;
-    });
-    return [
-      'ASSISTANT CATALOG - the specialists and apps ON THIS DEPLOYMENT. This list is authoritative',
-      'and supersedes any baked-in specialist list in your instructions: installations differ, and',
-      'what is listed here is what exists for this user. When a question belongs to one of these',
-      'domains and you do not hold its data in this turn, never answer with a bare "I do not know" -',
-      'hand the work off, or name the owning app and point the user to it (with its link). These',
-      'are also the "catalog keys" the multi-app plan directive refers to. FRESHNESS: a result',
-      'in OPEN WORK is a record of that past task - it answers questions about that task only.',
-      'For a question about the CURRENT state of a catalog domain (counts, totals, what is in a',
-      'stage or list right now), FILE THE FRESH HANDOFF YOURSELF in this same reply - a data',
-      'read is not outward, so never ask permission first and never lead with the old number;',
-      'say the pull is under way. Point the user at the owning app only when its screen is',
-      'genuinely the better answer - never present an old task result as today\'s numbers.',
-      ...lines,
-    ].join('\n');
+    return renderCatalogBlock(routes, ask);
   } catch (err) {
     logger.warn({ err }, 'jarvis: buildCatalogBlock failed - the turn proceeds without the catalog');
     return '';

@@ -8,9 +8,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The two extra modes. `--complete`: a run that ends succeeded on its own after every call passes on the attribution with no cancellation issued; a run still running at the budget is cancelled by the cleanup and red; a run someone else cancelled is red (the default mode still accepts it); no rail call is not-runnable. `--worker-loss` (container half, over the same in-memory run registry plus a registry double the phase hook drives the way docker would): the run fails 503 career-worker-unavailable once the stop phase took the bot away and a strictly newer heartbeat after the start phase passes; a bot that never comes back is red, and so is a stale-online record whose heartbeat never moves (the record a dead bot leaves behind) or a registration that vanished; a run that ends succeeded, fails for another reason, or whose route answers 502 after the stop is red; a run that hangs after the stop is red and cancelled; a run that ends before the stop, a bot that is offline before, and a refused start stop nothing. Host half: the reactor stops on the stop phase, starts on the start phase, each once, and restarts in finish() when the proof died between them; hostVerdict turns a failed stop/start, a never-issued start or a container not running afterwards red. The mode flags exclude each other and the host spec carries the mode's flag after --in-container. stageAndStream keeps stageAndRun's argv and PAT-by-name contract, hands lines to the reactor as they arrive and always unstages.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | `--complete` now also runs the approve -> draft half (career-rail-draft.js, its own spec career-rail-draft.spec.ts): the staged set is four files for every mode, the complete mode's host ceiling adds the draft budget and its attribution wait, and a score half that passes on a package without the Test Lab application seam (below career-hunter 1.27.0) makes the mode unavailable, naming the seam, with no draft route touched.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Guard the announced window itself. Removing the host's refusal of `--worker-loss` without `--announced-window` (runWorkerLossOnHost) left every case above green: the flag was only proven to be READ (parseArgs), never to be REQUIRED. The new block runs the real script as a child process, the boundary an operator's command line crosses: without the flag it must exit 2 naming the flag with nothing started and docker never consulted; with the flag it must get past that refusal and stop at the next one (the Career bot's container is not running), still stopping nothing. The child has no docker on its PATH and names containers that do not exist, so neither the cases nor a regression of the refusal can reach a real container.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The held POST that drops. On 2026-10-01 `--complete` run c203d69e failed as "still running after 1800s": undici's 300 s headers timeout dropped the held `POST /run/score` about 311 s in, and the proof stopped watching a run that was still going. The fake POST could only settle at run end or on cancel, so no case modelled this. The fake POST can now be rejected the way undici rejects it (`fetch failed`, cause `UND_ERR_HEADERS_TIMEOUT`) at a chosen poll. In the first new case the drop comes mid-run and the run later ends succeeded on its own; the proof passes, reports the measured time and the drop, and cancels nothing. The draft half has its own spec and is stood in here. In the second, a run that never ends is watched to the budget, and the verdict prints the measured time beside the budget. The real-transport case runs the proof's own `bearerApi` against a loopback server in the route shapes that never answers the POST. Node's own fetch uses its global dispatcher with the headers timeout shortened to 1 s. The run ends three polls after the server sees the socket close, so a proof that stops at the drop reads it still running. The refresh-chain gate: resolveContainerContext refuses (nothing started) while `GET /run/refresh` answers `running: true` or answers without the flag, and proceeds only on `running: false`.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -28,6 +31,7 @@ import { DisposablePostgres } from '../helpers/disposable-postgres';
 const requireCjs = createRequire(import.meta.url);
 const proof = requireCjs('../../scripts/operations/career-rail-live-proof.js');
 const workerLoss = requireCjs('../../scripts/operations/career-rail-worker-loss.js');
+const draft = requireCjs('../../scripts/operations/career-rail-draft.js');
 const runner = requireCjs('../../scripts/operations/live-proof-runner.js');
 
 /** A plain subject, like the live owner's: its canonical rail workspace is `career-engine-<owner>` verbatim. */
@@ -71,11 +75,19 @@ interface FakeOptions {
   admit?: (at: Date, call: number) => Promise<void>;
   /** Cancellation is acknowledged but the child never exits. */
   stayRunningAfterCancel?: boolean;
+  /** Reject the held POST the way undici's headers timeout does when this poll of GET /runs is served (1-based); the run goes on. */
+  dropPostAtPoll?: number;
 }
 
 interface FakeRun { runId: string; verb: string; state: string; reason: string | null; startedAt: number; finishedAt: number | null; railCalls: number }
 type RouteAnswer = { status: number; json: Record<string, unknown> };
-interface FakeState { clock: number; run: FakeRun | null; settle: null | ((value: RouteAnswer) => void); ledger: Array<{ ts: number; taskId: string }>; cancels: number; posts: number }
+interface FakeState { clock: number; run: FakeRun | null; settle: null | ((value: RouteAnswer) => void); ledger: Array<{ ts: number; taskId: string }>; cancels: number; posts: number;
+  polls?: number; drop?: (error: Error) => void }
+
+/** What Node's fetch rejects with when undici's headersTimeout expires on a request that has had no response headers. */
+function headersTimeout(): Error {
+  return Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' }) });
+}
 
 /** Settle one admitted call the way the node does: one ledger row under a fresh protected execution. */
 async function settleCall(state: FakeState, options: FakeOptions, call: number): Promise<void> {
@@ -111,9 +123,11 @@ function fakeRunRoutes(state: FakeState, options: FakeOptions) {
       state.posts += 1;
       if (options.refuseStart) return { status: options.refuseStart.status, json: { ok: false, error: options.refuseStart.error, err: options.refuseStart.error } };
       state.run = { runId: RUN_ID, verb: 'score', state: 'running', reason: null, startedAt: state.clock, finishedAt: null, railCalls: 0 };
-      return new Promise<RouteAnswer>((settle) => { state.settle = settle; });
+      return new Promise<RouteAnswer>((settle, drop) => { state.settle = settle; state.drop = drop; });
     }
     if (method === 'GET' && route === '/api/career-hunter/runs') {
+      state.polls = (state.polls ?? 0) + 1;
+      if (state.polls === options.dropPostAtPoll) { state.drop?.(headersTimeout()); state.settle = null; }
       if (state.run?.state === 'running') await advanceRun(state, options);
       return { status: 200, json: { runs: state.run ? [{ ...state.run }] : [] } };
     }
@@ -252,7 +266,7 @@ describe('runCareerRailAcceptance', () => {
     const f = fake({ calls: 40, stayRunningAfterCancel: true });
     const result = await proof.runCareerRailAcceptance(f.ports, { runBudgetMs: 10_000, pollMs: 1_000 });
     expect(result.state).toBe('fail');
-    expect(result.detail).toContain(`Run ${RUN_ID} was still running after 10s`);
+    expect(result.detail).toContain(`Run ${RUN_ID} was still running ${Math.round(result.evidence.elapsedMs / 1000)}s after the proof started it (budget 10s;`);
     expect(result.detail).toContain(`CLEANUP INCOMPLETE: run ${RUN_ID} is still running after cancellation`);
     expect(f.state.cancels).toBeGreaterThanOrEqual(2);
   });
@@ -302,9 +316,40 @@ describe('--complete: the score run finishes on its own', () => {
     const f = fake({ calls: 40, finish: 'never' });
     const result = await proof.runCareerRailAcceptance(f.ports, { mode: 'complete', runBudgetMs: 10_000, pollMs: 1_000 });
     expect(result.state).toBe('fail');
-    expect(result.detail).toContain(`Run ${RUN_ID} was still running after 10s`);
+    expect(result.detail).toContain(`Run ${RUN_ID} was still running ${Math.round(result.evidence.elapsedMs / 1000)}s after the proof started it (budget 10s;`);
     expect(result.evidence).toMatchObject({ mode: 'complete', cancelledByProof: false, runState: 'running', cleanupErrors: [] });
     expect(f.state.cancels).toBe(1);
+    expect(f.state.run!.state).toBe('cancelled');
+  });
+
+  it('keeps watching GET /runs after the held POST drops mid-run (status 0), and passes when the run later ends succeeded, reporting the measured time', async () => {
+    const f = fake({ calls: 40, dropPostAtPoll: 22 });
+    const standIn = { state: 'pass', detail: 'the draft half passed (career-rail-draft.spec.ts proves it).', evidence: { planted: true }, cleanupErrors: [] };
+    const drafted = vi.spyOn(draft, 'runDraftHalf').mockResolvedValueOnce(standIn);
+    try {
+      const result = await proof.runCareerRailAcceptance(f.ports, { mode: 'complete' });
+      expect(result.state, result.detail).toBe('pass');
+      const { elapsedMs, postDropped } = result.evidence;
+      expect(postDropped).toMatchObject({ code: 'UND_ERR_HEADERS_TIMEOUT', error: 'fetch failed' });
+      expect(elapsedMs).toBeGreaterThan(postDropped.afterMs);
+      expect(result.detail).toContain('ended succeeded after 40 rail calls, uncancelled');
+      expect(result.detail).toContain(`The run had ended ${Math.round(elapsedMs / 1000)}s after the proof started it.`);
+      expect(result.detail).toContain(`The held POST /run/score dropped ${Math.round(postDropped.afterMs / 1000)}s in with no answer (UND_ERR_HEADERS_TIMEOUT: fetch failed); the proof kept watching GET /runs.`);
+      expect(result.evidence).toMatchObject({ runState: 'succeeded', railCalls: 40, routeStatus: 0, cancelledByProof: false, ledger: { calls: 40 }, cleanupErrors: [] });
+      expect(f.state.cancels).toBe(0);
+      expect(drafted).toHaveBeenCalledTimes(1);
+    } finally { drafted.mockRestore(); }
+  });
+
+  it('after a drop, watches a run that never ends until the budget is spent and prints the measured time beside the budget', async () => {
+    const f = fake({ calls: 40, finish: 'never', dropPostAtPoll: 2 });
+    const result = await proof.runCareerRailAcceptance(f.ports, { mode: 'complete', runBudgetMs: 20_000, pollMs: 1_000 });
+    expect(result.state).toBe('fail');
+    expect(f.state.polls).toBeGreaterThan(10); // a proof that stops at the drop reads GET /runs 4 times, the cleanup included
+    expect(result.evidence.elapsedMs).toBeGreaterThanOrEqual(20_000);
+    expect(result.detail).toContain(`Run ${RUN_ID} was still running ${Math.round(result.evidence.elapsedMs / 1000)}s after the proof started it (budget 20s;`);
+    expect(result.detail).toContain('The held POST /run/score dropped ');
+    expect(result.evidence).toMatchObject({ routeStatus: 0, runState: 'running', cleanupErrors: [] });
     expect(f.state.run!.state).toBe('cancelled');
   });
 
@@ -324,6 +369,75 @@ describe('--complete: the score run finishes on its own', () => {
     const failed = await proof.runCareerRailAcceptance(fake({ calls: 2, finish: 'failed', reason: 'career-worker-timeout' }).ports, { mode: 'complete' });
     expect(failed.state).toBe('fail');
     expect(failed.detail).toContain(`Run ${RUN_ID} failed with reason career-worker-timeout after 2 admitted rail calls`);
+  });
+});
+
+describe('the held POST over a real HTTP transport (undici headers timeout)', () => {
+  type Dispatcher = { constructor: new (options: object) => Dispatcher; destroy(): Promise<void> };
+  const DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+  const globals = globalThis as unknown as Record<symbol, Dispatcher | undefined>;
+
+  it("records the proof's own fetch dropping the unanswered POST as a dropped transport, and keeps watching until the run ends", async () => {
+    const f = fake();
+    let run: FakeRun | null = null;
+    let pollsAfterDrop: number | null = null;
+    const server = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/career-hunter/run/score') {
+        run = { runId: RUN_ID, verb: 'score', state: 'running', reason: null, startedAt: Date.now(), finishedAt: null, railCalls: 0 };
+        req.socket.once('close', () => { pollsAfterDrop = 0; }); // never answered: only the client can end it
+        return;
+      }
+      if (req.method === 'GET' && req.url === '/api/career-hunter/runs' && run?.state === 'running' && pollsAfterDrop !== null && ++pollsAfterDrop >= 3) {
+        Object.assign(run, { state: 'succeeded', railCalls: 2, finishedAt: Date.now() });
+        for (const id of ['execution-1', 'execution-2']) f.state.ledger.push({ ts: Date.now(), taskId: protectedTaskId(OWNER, id) });
+      }
+      res.writeHead(req.url === '/api/career-hunter/runs' ? 200 : 404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(req.url === '/api/career-hunter/runs' ? { runs: run ? [run] : [] } : { error: 'not found' }));
+    });
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    await fetch(`${base}/warm`).then((answer) => answer.text()); // Node creates its global dispatcher on first use
+    const original = globals[DISPATCHER]!;
+    const short = new original.constructor({ headersTimeout: 1_000 });
+    globals[DISPATCHER] = short;
+    try {
+      const result = await proof.runCareerRailAcceptance({ ...f.ports, api: proof.bearerApi(base, 'fixture-operator-pat-marker'), now: Date.now,
+        sleep: (ms: number) => new Promise((done) => setTimeout(done, ms)) }, { runBudgetMs: 20_000, ledgerBudgetMs: 2_000, pollMs: 200 });
+      expect(result.state, result.detail).toBe('pass');
+      expect(result.evidence).toMatchObject({ runState: 'succeeded', railCalls: 2, routeStatus: 0, cancelledByProof: false,
+        postDropped: { code: 'UND_ERR_HEADERS_TIMEOUT', error: 'fetch failed' }, ledger: { calls: 2 }, cleanupErrors: [] });
+      expect(result.detail).toContain('with no answer (UND_ERR_HEADERS_TIMEOUT: fetch failed); the proof kept watching GET /runs.');
+    } finally {
+      globals[DISPATCHER] = original;
+      await short.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }, 60_000);
+});
+
+describe('the evening refresh chain gate (every mode, before anything starts)', () => {
+  /** whoami, the active apps and GET /run/refresh; any other call would be a start and fails the case. */
+  function contextApi(refresh: RouteAnswer) {
+    return vi.fn(async (method: string, route: string): Promise<RouteAnswer> => {
+      if (route === '/api/cli-tokens/whoami') return { status: 200, json: { sub: OWNER } };
+      if (route === '/api/swarm/apps?status=active') return { status: 200, json: { apps: [{ name: 'career-hunter', version: '1.27.0' }] } };
+      if (method === 'GET' && route === '/api/career-hunter/run/refresh') return refresh;
+      throw new Error(`the gate must start nothing: ${method} ${route}`);
+    });
+  }
+
+  it('refuses while GET /run/refresh answers running: true or answers without the flag, and proceeds only on running: false', async () => {
+    const busy = await proof.resolveContainerContext(contextApi({ status: 200, json: { running: true, corpusFreshAt: null } }));
+    expect(busy.evidence).toEqual({ careerVersion: '1.27.0' });
+    expect(busy.unavailable).toContain('The career-hunter evening refresh chain is running (GET /run/refresh answered running: true).');
+    expect(busy.unavailable).toContain('nothing was started. Re-run once it answers running: false.');
+    for (const answer of [{ status: 403, json: { error: 'authorization_app_admin_required' } }, { status: 200, json: { corpusFreshAt: null } }]) {
+      const unknown = await proof.resolveContainerContext(contextApi(answer));
+      expect(unknown.unavailable).toContain(`GET /run/refresh answered HTTP ${answer.status} without a running flag`);
+    }
+    const idle = await proof.resolveContainerContext(contextApi({ status: 200, json: { running: false, corpusFreshAt: '2026-10-01T23:00:00Z' } }));
+    expect(idle).toEqual({ ownerSub: OWNER, career: { name: 'career-hunter', version: '1.27.0' } });
   });
 });
 

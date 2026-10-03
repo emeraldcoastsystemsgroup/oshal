@@ -16,6 +16,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'espn-fantasy' connector (category 'media') for the Sports Edge Fantasy tab: two-value paste of the SWID + espn_s2 cookies, stored "SWID:espn_s2". ESPN publishes NO OAuth for fantasy, so the only credential that exists is a pair of ACCOUNT SESSION cookies — unscoped, with no per-app revocation — which is why the entry says so at the point someone would otherwise assume it is an API key. The PUBLIC half of the fantasy API (the full player universe including ESPN's own projections) needs no credential; this connector exists solely for a private league, which answers 401 without it.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Add explicit chat:write and files:write defaults for the approval-gated Office Slack upload leg; existing connections must reconnect to receive the expanded consent.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Add the 'yahoo' Yahoo Mail token connector (category 'email', backlog "Email providers beyond Gmail"): two-value paste of the Yahoo address + a Yahoo APP PASSWORD, stored "address:app-password" and validated by a real IMAP LOGIN on the fixed imap.mail.yahoo.com:993 (imap-mail-reader). No partner app to register; the secret is read only by core's fixed read-only inbox reader.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Add calendar.events to default Google connector scopes so calendar operations have create, read, update, and delete access for meetings.
  * -----------------------------------------------------------------------------
  *
  * @module connector-provider-registry
@@ -99,7 +100,7 @@ export const PROVIDERS: Record<string, ProviderDef> = {
     // MINIMAL Drive scope: per-file access to files THIS app creates — it cannot read the user's
     // existing Drive. Sensitive/restricted scopes need Google verification before NON-OWNER users; the
     // owner's own account is granted immediately. Existing connections must RECONNECT to gain new scopes.
-    scopes: (process.env.GOOGLE_CONNECT_SCOPES || 'openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/drive.file').split(/[\s,]+/).filter(Boolean),
+    scopes: (process.env.GOOGLE_CONNECT_SCOPES || 'openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.file').split(/[\s,]+/).filter(Boolean),
     authParams: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
     flavor: 'google',
     scopeSep: ' ',

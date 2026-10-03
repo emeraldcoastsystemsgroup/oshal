@@ -9,16 +9,33 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Runner inputs are host-only. A card may not name an OSHAL_VERIFY_* variable as an api-environment source unless compose forwards it; today compose forwards none. Such a variable may appear only inside the host command that supplies it. And the dev-workspace card, run with OSHAL_VERIFY_DEV_NOTES_PROBE set in this process (standing in for the api's environment), must still answer the handover ask as a host-runner gap: no anonymous query, no Jarvis call, dev mode put back. Red if the Lab adapter stops passing its empty runner environment, or if the description again sends the operator to the api's environment.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the vids-publish case. The adapter's replies carry the raw body's byte length and sha256, and its `files` port answers a named probe from this process's disk (a real file under a temporary workspace root) and refuses any other probe name.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the token-chase-replay case (explicit-only: it may spend one model turn starting a tagged file-tools run).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the create-region-edit case. The adapter's replies carry the raw body as `bytes`, and its upload names the file part the case gives (`image` for Create). The card, run as the Lab's principal against a PAID provider, answers a gap naming the host command that carries --allow-paid after the two read-only preconditions and nothing else; against a free provider its upload reaches Create's route with exactly one `image` part carrying a real PNG.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the Lab ports against a real loopback Express/multer server: exact PNG bytes, the single image part Create accepts, default file compatibility, session-cookie isolation and anonymous reads. No replacement fetch or installed service.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The Create provider fixture advertises costConsentVersion 1, matching the required server-enforced cost-cap contract.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Require the handover words and exact index path in the host command, and prove the Lab ignores both api-environment inputs before any model turn.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the forge-edit case (explicit-only: it writes a tagged pack, deploys and edits it, and removes it).
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | The tickets-in-tickets card: its key in the registered order, its REGRESSION_TESTS on the card, and the Lab's new `files.dir` port listing a build root folder by name only, refusing an unknown probe and a non-UUID id.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's named statements run under the owner's identity without operator rights, as the host runner's container helper runs them.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | The registry gains the package-run case (explicit-only: it starts a package sandbox run and keeps its run-history row).
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | The registration list ends with storyboard-agy (the storyboard render on the render bot's own antigravity harness, ADR-130 amendment 2026-10-02).
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `api` port honours a case's per-call `timeoutMs` as the host runner's does, over a real loopback listener that answers late: the call bounded at 80 ms is aborted by the adapter's own signal (its headers and cookie still sent), while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it and answers when the listener does (the 30 s default applies). The storyboard-agy card run from the Lab aborted at 30 s because the adapter read only `options.headers`. The file also references the dom.iterable lib: tsconfig.tests.json's lib is DOM without DOM.Iterable, so `form.keys()` in the Create upload case (entry 7) did not typecheck.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | The timeoutMs guard no longer races its abort against loopback connection setup: on a loaded host the 80 ms budget fired before the request reached the listener (red once, green on the same tree a minute later). The bounded call now carries 500 ms against a listener that answers at 3 s, its arrival at the listener is awaited (bounded, named failure) before the header and cookie assertion because Node delivers an expired timer before it polls the socket, the wall-clock upper bound is gone (a default-budget call resolves 200 at 3 s, so the TimeoutError name alone proves the per-call signal), the defaults' still-pending probe sits at 1 s past the case budget, and the case declares its own 20 s timeout.
  */
+/// <reference lib="dom.iterable" />
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SCENARIOS, scenariosForRun, type ScenarioRunContext } from '@/app/routes/test-lab-scenarios';
 import { LIVE_ACCEPTANCE_SCENARIOS } from '@/app/routes/test-lab-live-acceptance-scenarios';
 import { LIVE_ACCEPTANCE_CASES, labPorts, runLiveAcceptanceCase } from '@/app/routes/test-lab-live-acceptance';
+import { getRequestIdentity, runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import type { AppContext } from '@/app/composition/app-context';
+import { assertImageHttpPorts, type ImageHttpPorts } from '../fixtures/live-acceptance-http';
 
 /** Runner-input variables a card names; compose forwards none of them to the api today. */
 const RUNNER_VARIABLE = /\bOSHAL_VERIFY_[A-Z0-9_]*[A-Z0-9]\b/g;
@@ -47,10 +64,117 @@ async function labFileProbe(ports: { files: { state: (n: string, id: string) => 
   }
 }
 
+/**
+ * @description The Lab's `files.dir` port against a real folder under a temporary workspace root.
+ * @param ports - The Lab ports.
+ * @param root - The workspace root the ports list under.
+ * @returns Resolves once the probe listed names, reported a missing folder and refused bad input.
+ */
+async function labDirProbe(ports: { files: { dir: (n: string, id: string) => Promise<{ path: string; exists: boolean; files: string[] }> } }, root: string): Promise<void> {
+  const id = '1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e';
+  expect(await ports.files.dir('build.root', id)).toMatchObject({ exists: false, files: [] });
+  mkdirSync(path.join(root, id, 'deliverables', 'src'), { recursive: true });
+  writeFileSync(path.join(root, id, 'IMPLEMENTATION-PLAN.md'), 'plan');
+  writeFileSync(path.join(root, id, 'deliverables', 'src', 'slugify.ts'), 'code');
+  const listing = await ports.files.dir('build.root', id);
+  expect(listing).toMatchObject({ path: path.join(path.resolve(root), id), exists: true, files: ['IMPLEMENTATION-PLAN.md', 'deliverables/src/slugify.ts'] });
+  await expect(ports.files.dir('/etc', id)).rejects.toThrow('unknown live-acceptance directory probe');
+  await expect(ports.files.dir('build.root', '../escape')).rejects.toThrow('invalid id for directory probe');
+}
+
+/** A real loopback listener that records every request and answers each one late, after `answerAfterMs`. */
+async function lateListener(answerAfterMs: number): Promise<{ server: Server; base: string; seen: Array<{ url: string; cookie: string | undefined; marker: string | undefined }> }> {
+  const seen: Array<{ url: string; cookie: string | undefined; marker: string | undefined }> = [];
+  const server = createServer((req, res) => {
+    seen.push({ url: String(req.url), cookie: req.headers.cookie, marker: typeof req.headers['x-case'] === 'string' ? req.headers['x-case'] : undefined });
+    setTimeout(() => {
+      if (res.destroyed || res.socket?.destroyed) return;
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+    }, answerAfterMs);
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return { server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
+}
+
+/**
+ * @description Resolves once the listener has read its next request. Armed BEFORE the call is issued, and awaited
+ * instead of assumed: Node runs every expired timer before it polls the sockets, so on a loaded host the client's
+ * abort can be delivered ahead of the server-side read of a request the client had already sent.
+ * @param server - The loopback listener.
+ * @param withinMs - How long the request may take to arrive before this rejects with a named failure.
+ * @returns Resolves on the listener's next `request` event.
+ */
+function nextRequest(server: Server, withinMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const late = setTimeout(() => reject(new Error(`no request reached the listener within ${withinMs} ms`)), withinMs);
+    server.once('request', () => { clearTimeout(late); resolve(); });
+  });
+}
+
 describe('live-acceptance Test Lab cards', () => {
+  it('bounds one Lab api call by the case\'s own timeoutMs and every other call by the default, over a real loopback listener', async () => {
+    // The listener answers 200 at 3 s: a call under the 30 s default resolves, so only the adapter's own per-call signal
+    // can produce a TimeoutError here. The bounded call's budget outlasts loopback connection setup on a loaded host.
+    const { server, base, seen } = await lateListener(3_000);
+    const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: base, ctx: {} as AppContext } as ScenarioRunContext;
+    const ports = labPorts('sid=abc', runtime) as { api: (m: string, r: string, b?: unknown, o?: Record<string, unknown>) => Promise<{ status: number; json: Record<string, unknown> }> };
+    const settled = (call: Promise<unknown>) => Promise.race([call.then(() => 'answered', (err: Error) => `rejected ${err.name}`), new Promise((resolve) => setTimeout(() => resolve('still pending'), 1_000))]);
+    try {
+      // The storyboard-agy case's one blocking call carries its own budget: the adapter's signal aborts it, headers and cookie still sent.
+      const arrived = nextRequest(server, 2_000);
+      await expect(ports.api('POST', '/api/test-lab/run', { scenarioId: 'storyboard-antigravity-render' }, { timeoutMs: 500, headers: { 'x-case': 'storyboard-agy' } }))
+        .rejects.toMatchObject({ name: 'TimeoutError' });
+      await arrived;
+      expect(seen[0]).toEqual({ url: '/api/test-lab/run', cookie: 'sid=abc', marker: 'storyboard-agy' });
+      // Without the option, and with a budget that is not a positive number, the 30 s default applies: still pending well past the case budget, then answered.
+      const defaults = [
+        ports.api('POST', '/api/test-lab/run', { scenarioId: 'storyboard-antigravity-render' }),
+        ports.api('GET', '/api/version', undefined, { timeoutMs: -5 }),
+        ports.api('GET', '/api/version', undefined, { timeoutMs: 'soon' }),
+      ];
+      for (const call of defaults) call.catch(() => undefined);
+      expect(await Promise.all(defaults.map(settled))).toEqual(['still pending', 'still pending', 'still pending']);
+      expect((await Promise.all(defaults)).map((reply) => [reply.status, reply.json])).toEqual([[200, { ok: true }], [200, { ok: true }], [200, { ok: true }]]);
+      expect(seen.map((s) => s.cookie)).toEqual(['sid=abc', 'sid=abc', 'sid=abc', 'sid=abc']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 20_000);
+
+  it('lists a build root folder by name only through the Lab files port, refusing paths and bad ids', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'lab-live-acceptance-dir-'));
+    const saved = process.env.OSHAL_WORKSPACE_ROOT;
+    process.env.OSHAL_WORKSPACE_ROOT = root;
+    try {
+      const ports = labPorts('sid=fixture', { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000', ctx: {} as AppContext } as ScenarioRunContext);
+      await labDirProbe(ports as never, root);
+    } finally {
+      if (saved === undefined) delete process.env.OSHAL_WORKSPACE_ROOT; else process.env.OSHAL_WORKSPACE_ROOT = saved;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('lists the specs guarding each live seam on the tickets-in-tickets card', () => {
+    const card = LIVE_ACCEPTANCE_SCENARIOS.find((s) => s.id === 'live-acceptance-tickets-in-tickets');
+    const paths = (card?.regressionTests ?? []).map((t) => t.path);
+    for (const name of ['controller-pm-planning-node-postgres', 'planning-output-source', 'child-ticket-owner-inheritance-postgres',
+      'build-child-dispatch-gate', 'signed-swarm-child-dispatch', 'swarm-verification-enforced-fallback']) {
+      expect(paths).toContain(`tests/unit/${name}.spec.ts`);
+    }
+    expect(paths).toContain('tests/unit/live-acceptance-tickets-in-tickets.spec.ts');
+  });
+
+  it('carries binary bodies and multipart image fields over real HTTP as the Lab caller', async () => {
+    await assertImageHttpPorts(apiBaseUrl => labPorts('sid=fixture', {
+      ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl, ctx: {} as AppContext,
+    } as ScenarioRunContext) as unknown as ImageHttpPorts, { cookie: 'sid=fixture' });
+  });
+
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit', 'tickets-in-tickets', 'package-run', 'storyboard-agy']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);
@@ -75,18 +199,21 @@ describe('live-acceptance Test Lab cards', () => {
         if (new RegExp(String.raw`^\s*${variable}:\s`, 'm').test(compose)) continue;
         expect(scenario.description, `${key} must not send the operator to the api environment for ${variable}`).not.toMatch(API_ENV_CLAIM);
         expect(scenario.description, `${key} must name the host command that supplies ${variable}`)
-          .toMatch(new RegExp(String.raw`${variable}="[^"]*" node scripts/operations/live-acceptance\.js ${key}\b`));
+          .toMatch(new RegExp(String.raw`${variable}="[^"]*"(?: OSHAL_VERIFY_[A-Z0-9_]+="[^"]*")* node scripts/operations/live-acceptance\.js ${key}\b`));
       }
     }
     expect(named).toContain('dev-workspace:OSHAL_VERIFY_DEV_NOTES_PROBE');
+    expect(named).toContain('dev-workspace:OSHAL_VERIFY_DEV_NOTES_PATH');
   });
 
-  it('answers the dev-workspace handover ask as a host-runner gap even when the api environment carries the words', async () => {
+  it('answers the dev-workspace handover ask as a host-runner gap even when the api environment carries words and path', async () => {
     const seen: string[] = [];
     let on = false;
     const realFetch = globalThis.fetch;
     const saved = process.env.OSHAL_VERIFY_DEV_NOTES_PROBE;
+    const savedPath = process.env.OSHAL_VERIFY_DEV_NOTES_PATH;
     process.env.OSHAL_VERIFY_DEV_NOTES_PROBE = 'fixture handover words';
+    process.env.OSHAL_VERIFY_DEV_NOTES_PATH = 'local-notes/handover.md';
     const reply = (status: number, json: unknown) => new Response(JSON.stringify(json), { status, headers: { 'content-type': 'application/json' } });
     globalThis.fetch = (async (url: string, init: RequestInit) => {
       const route = `${init.method} ${new URL(url).pathname}`;
@@ -102,7 +229,8 @@ describe('live-acceptance Test Lab cards', () => {
     try {
       const step = await runLiveAcceptanceCase('dev-workspace', 'sid=abc', runtime);
       expect(step.state).toBe('gap');
-      expect(step.detail).toContain('run OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" node scripts/operations/live-acceptance.js dev-workspace');
+      expect(step.detail).toContain('run OSHAL_VERIFY_DEV_NOTES_PROBE="<its words>" OSHAL_VERIFY_DEV_NOTES_PATH="<its index path>" node scripts/operations/live-acceptance.js dev-workspace');
+      expect(step.detail).toContain('the handover ask needs OSHAL_VERIFY_DEV_NOTES_PATH');
       expect(seen.filter((route) => route.includes('/api/jarvis/') || route.includes('/query'))).toEqual([]);
       expect(seen).toContain('POST /api/dev-workspace-index/dev-mode');
       expect(on).toBe(false);
@@ -110,6 +238,7 @@ describe('live-acceptance Test Lab cards', () => {
     } finally {
       globalThis.fetch = realFetch;
       if (saved === undefined) delete process.env.OSHAL_VERIFY_DEV_NOTES_PROBE; else process.env.OSHAL_VERIFY_DEV_NOTES_PROBE = saved;
+      if (savedPath === undefined) delete process.env.OSHAL_VERIFY_DEV_NOTES_PATH; else process.env.OSHAL_VERIFY_DEV_NOTES_PATH = savedPath;
     }
   });
 
@@ -127,12 +256,15 @@ describe('live-acceptance Test Lab cards', () => {
       return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
     const queries: string[] = [];
+    const identities: Array<{ sub: string | null; isOperator: boolean } | undefined> = [];
     const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000',
-      ctx: { pool: { query: async (text: string) => { queries.push(text); return { rows: [] }; } }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
+      ctx: { pool: { query: async (text: string) => { queries.push(text); identities.push(getRequestIdentity()); return { rows: [] }; } }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
     try {
       const ports = labPorts('sid=abc', runtime) as { sql: (n: string, p: unknown[]) => Promise<unknown>; browser?: unknown; logs?: unknown };
-      await ports.sql('linkedin.draft-residue', ['fixture|lab-owner', 't']);
+      // The Lab caller is an operator; the statements still run as the owner without operator rights.
+      await runWithRequestIdentity({ sub: 'fixture|lab-owner', isOperator: true }, () => ports.sql('linkedin.draft-residue', ['fixture|lab-owner', 't']));
       expect(queries[0]).toContain('FROM social_content_drafts WHERE user_sub = $1');
+      expect(identities[0]).toMatchObject({ sub: 'fixture|lab-owner', isOperator: false });
       expect(ports.browser).toBeUndefined();
       expect(ports.logs).toBeUndefined();
       const step = await runLiveAcceptanceCase('floater', 'sid=abc', runtime);
@@ -146,6 +278,7 @@ describe('live-acceptance Test Lab cards', () => {
       const anonymous = (labPorts('sid=abc', runtime) as { anonymous: (m: string, r: string) => Promise<{ status: number; byteLength: number; sha256: string }> }).anonymous;
       const refused = await anonymous('GET', '/api/dev-workspace-index/query?q=ADR-077');
       expect(refused).toMatchObject({ status: 404, byteLength: 2, sha256: createHash('sha256').update('{}').digest('hex') });
+      expect((refused as unknown as { bytes: Buffer }).bytes).toEqual(Buffer.from('{}'));
       expect(seen).toEqual([{ url: 'http://127.0.0.1:5000/api/dev-workspace-index/query?q=ADR-077', cookie: null }]);
       seen.length = 0;
       await labFileProbe(labPorts('sid=abc', runtime) as { files: { state: (n: string, id: string) => Promise<string> } });
@@ -156,6 +289,41 @@ describe('live-acceptance Test Lab cards', () => {
       }
       expect(seen).toEqual([]);
       expect((await runLiveAcceptanceCase('congress', '', runtime)).state).toBe('degraded');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('never runs a paid image edit from the Lab, and uploads the one `image` part Create reads on a free provider', async () => {
+    const seen: Array<{ route: string; cookie: string | null; parts: string[]; png: boolean }> = [];
+    let costClass = 'paid';
+    const realFetch = globalThis.fetch;
+    const reply = (status: number, json: unknown) => new Response(JSON.stringify(json), { status, headers: { 'content-type': 'application/json' } });
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      const route = `${init.method} ${new URL(url).pathname}`;
+      const form = init.body instanceof FormData ? init.body : null;
+      const file = form?.get('image');
+      const png = file instanceof Blob && Buffer.from(await file.arrayBuffer()).subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      seen.push({ route, cookie: new Headers(init.headers).get('cookie'), parts: form ? [...form.keys()] : [], png });
+      if (route === 'GET /api/create/permissions') return reply(200, { permissions: { view: true, read: true, create: true, change: true, delete: true, export: true, generate: true } });
+      if (route === 'GET /api/create/region-edit-provider') return reply(200, { configured: true, provider: 'fixture-image', costClass, dailyCap: 25, costConsentVersion: 1 });
+      return reply(400, { error: 'invalid_project_upload' });
+    }) as typeof fetch;
+    const runtime = { ownerSub: 'fixture|lab-owner', issuer: 'https://issuer.example', apiBaseUrl: 'http://127.0.0.1:5000',
+      ctx: { pool: { query: async () => ({ rows: [] }) }, ticketService: { getTicket: async () => null, deleteTicket: async () => undefined } } as unknown as AppContext } as ScenarioRunContext;
+    try {
+      const paid = await runLiveAcceptanceCase('create-region-edit', 'sid=abc', runtime);
+      expect(paid.state).toBe('gap');
+      expect(paid.detail).toContain('The operator consents by running node scripts/operations/live-acceptance.js create-region-edit --allow-paid on the host.');
+      expect(seen.map((s) => s.route)).toEqual(['GET /api/create/permissions', 'GET /api/create/region-edit-provider']);
+      seen.length = 0;
+      costClass = 'free';
+      const free = await runLiveAcceptanceCase('create-region-edit', 'sid=abc', runtime);
+      expect(free.state).toBe('fail');
+      expect(free.detail).toContain('the image upload answered HTTP 400 invalid_project_upload, not 201 with an asset');
+      expect(seen[2]).toEqual({ route: 'POST /api/create/project-assets', cookie: 'sid=abc', parts: ['image'], png: true });
+      expect(seen).toHaveLength(3);
+      expect(seen.every((s) => s.cookie === 'sid=abc')).toBe(true);
     } finally {
       globalThis.fetch = realFetch;
     }

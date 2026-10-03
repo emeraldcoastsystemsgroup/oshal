@@ -323,6 +323,20 @@ The click-path (Azure wraps the standard Shape A steps in its own console names)
 > have each user **reconnect** on `/utilities` — an existing token without the scope
 > gets a 403 `ErrorAccessDenied` from `POST /me/sendMail`.
 
+**Sending from an installed package (`outlookMailSend`).** The delegated `Mail.Send` scope also
+backs the AppContext seam `outlookMailSend` (src/app/routes/outlook-mail-sender.ts): a package
+names the user whose personal Outlook grant sends, the mailbox address that grant must belong to
+(exact match, never a guess among several connections) and one recipient; core resolves and
+spends the token on the fixed `graph.microsoft.com/v1.0/me/sendMail`, keeps a copy in Sent Items,
+and may set Reply-To from another user's own connection (`replyToUserSub`). The package gets a
+status word (`sent`, `not_connected`, `missing_scope`, `reconnect_required`, `throttled`,
+`rejected`, `unavailable`), never a token or a provider error body. With `provider: 'google'`
+the same call sends through the Google connection (`gmail.send`, already in its default scopes)
+as a raw RFC 2822 message to `gmail.googleapis.com` — for a test box without this Azure
+registration. A shared mailbox such as `info@` is connected the same way: someone signs into the
+CRM once, connects Outlook **as that mailbox** at `/utilities`, and the package names that user
+and address. First consumer: the Intelligent Sales prospecting add-on's heads-up emails.
+
 ### Microsoft Entra ID **login** (`MICROSOFT_LOGIN`) — same Azure app, different purpose (ADR-126)
 
 Sign-in with Microsoft ([ADR-126](adr/126-multi-provider-oidc-login.md)) reuses this same app

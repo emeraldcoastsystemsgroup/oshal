@@ -1,95 +1,83 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                      | DESCRIPTION
+ * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial shared server logger.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Use the cross-runtime Pino contract on stdout while retaining message/metadata, child and Morgan APIs.
  */
+'use strict';
 
-/**
- * Logger Configuration
- * Uses Winston for structured logging
- */
+const pino = require('pino');
+const { format } = require('node:util');
+const config = require('../../../src/shared/logger/pino-config.json');
 
-const winston = require('winston');
-const path = require('path');
-
-// Define log levels
-const levels = {
-  error: 0,
-  warn: 1,
-  info: 2,
-  debug: 3,
-};
-
-// Define log colors
-const colors = {
-  error: 'red',
-  warn: 'yellow',
-  info: 'green',
-  debug: 'blue',
-};
-
-winston.addColors(colors);
-
-// Custom format for console output
-const consoleFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.colorize({ all: true }),
-  winston.format.printf(
-    (info) => `${info.timestamp} [${info.level}]: ${info.message}`
-  )
-);
-
-// Custom format for file output
-const fileFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.json()
-);
-
-// Create logger instance
-/**
- * @description Shared Winston logger for the server, exported as the module's
- * single point of truth so all components emit consistently formatted,
- * level-filtered output. Centralizing it keeps log format/levels/rotation in
- * one place, mirrors records to console (human-readable) and rotating JSON
- * files (errors plus a combined stream for retention and post-hoc analysis),
- * and stays alive on errors so logging never crashes the process. The active
- * level is driven by LOG_LEVEL to allow runtime-tunable verbosity.
- */
-const logger = winston.createLogger({
-  levels,
-  level: process.env.LOG_LEVEL || 'info',
-  transports: [
-    // Console transport
-    new winston.transports.Console({
-      format: consoleFormat,
-    }),
-    // File transport for errors
-    new winston.transports.File({
-      filename: path.join(__dirname, '../../logs/error.log'),
-      level: 'error',
-      format: fileFormat,
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
-    // File transport for all logs
-    new winston.transports.File({
-      filename: path.join(__dirname, '../../logs/combined.log'),
-      format: fileFormat,
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
-  ],
-  // Don't exit on error
-  exitOnError: false,
-});
-
-// Create a stream object for Morgan HTTP logger
-logger.stream = {
-  write: (message) => {
-    logger.info(message.trim());
+const raw = pino({
+  ...config,
+  level: process.env.LOG_LEVEL || config.level,
+  name: process.env.SERVICE_NAME || config.name,
+  base: {
+    ...config.base,
+    module: 'any-bot',
+    service: process.env.SERVICE_NAME ? `${process.env.SERVICE_NAME}-control-plane` : config.base.service,
+    env: process.env.NODE_ENV || config.base.env,
   },
-};
+  timestamp: pino.stdTimeFunctions.isoTime,
+  serializers: { err: pino.stdSerializers.err },
+}, process.stdout);
 
-module.exports = logger;
+/** Normalize legacy metadata without flattening objects or losing Error's stack. */
+function metadata(value) {
+  if (value instanceof Error) return { err: value };
+  if (!value || typeof value !== 'object') return {};
+  const fields = { ...value };
+  if (fields.error instanceof Error) {
+    fields.err ??= fields.error;
+    delete fields.error;
+  }
+  return fields;
+}
+
+/** Preserve message-first legacy calls and native object/Error-first Pino calls. */
+function write(target, level, first, ...rest) {
+  if (typeof first !== 'string') {
+    target[level](first instanceof Error ? { err: first } : metadata(first), ...rest);
+    return;
+  }
+  const fields = {};
+  const values = [];
+  for (const value of rest) {
+    if (value && typeof value === 'object') Object.assign(fields, metadata(value));
+    else values.push(value);
+  }
+  target[level](fields, values.length ? format(first, ...values) : first);
+}
+
+/**
+ * @description Wrap the real Pino instance, retaining the existing server logging API.
+ * @param target - Pino logger with shared redaction and serializers.
+ * @returns Message-first adapter; structured child bindings are inherited.
+ */
+function adapt(target) {
+  const log = {};
+  for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal']) {
+    log[level] = (...args) => write(target, level, ...args);
+  }
+  log.child = (bindings) => adapt(target.child(bindings));
+  log.log = (level, ...args) => {
+    if (typeof level === 'object') {
+      const { level: severity, message, ...fields } = level;
+      write(target, severity, message, fields);
+    } else write(target, level, ...args);
+  };
+  log.isLevelEnabled = (level) => target.isLevelEnabled(level);
+  log.flush = (...args) => target.flush(...args);
+  Object.defineProperty(log, 'level', {
+    get: () => target.level,
+    set: (value) => { target.level = value; },
+  });
+  log.stream = { write: (message) => log.info(message.trim()) };
+  return log;
+}
+
+module.exports = adapt(raw);

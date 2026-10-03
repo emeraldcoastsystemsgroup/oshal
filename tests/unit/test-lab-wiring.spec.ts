@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise real history HTTP with unrelated held access and fresh selected-app revocation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Switch the boot-time runner probe off: this composition boundary is proven without starting a browser container.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise the issuer-qualified coarse visibility port.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Prove a run read through the composition root decides only the run's own application (identity first, then that application) while unrelated access is held past the authority cap, and that an identity-only scope decides no application yet still refuses an inactive account.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Request } from 'express';
@@ -29,9 +30,10 @@ afterEach(() => { for (const stop of cleanup.splice(0)) stop(); });
 function fixture() {
   const state = { actor: { issuer: 'https://provider.test', sub: 'owner', isActive: true, isSwarmAdmin: true,
     directory: [] } as AuthorizationActor, discovered: true, legacy: 'viewer', reads: 0,
-    extra: false, checked: [] as string[], hold: Promise.resolve(), revokeAfterList: false, listed: 0 };
-  const apps = { testLabCatalog: new InstalledAppTestCatalog(), listApps: async () =>
-    (state.extra ? ['fixture','unrelated'] : ['fixture']).map(name => ({ name })),
+    extra: false, checked: [] as string[], hold: Promise.resolve(), revokeAfterList: false, listed: 0, appLists: 0 };
+  const apps = { testLabCatalog: new InstalledAppTestCatalog(), listApps: async () => {
+    state.appLists++; return (state.extra ? ['fixture','unrelated'] : ['fixture']).map(name => ({ name }));
+  },
     getActiveManifests: async () => (state.extra ? ['fixture','unrelated'] : ['fixture'])
       .map(name => ({ name, access: { defaultTier: 'viewer' } })) } as unknown as SwarmAppService;
   const access = { resolveForPrincipal: async (name: string) => {
@@ -41,7 +43,12 @@ function fixture() {
   const authorization = { ready: () => Promise.resolve(), targetActor: async () => state.actor, refreshActor: async () => state.actor,
     resolveActor: async () => { state.reads++; return state.actor; },
     runtime: { protectedApp: () => true, canDiscover: async () => state.discovered } };
-  const ctx = { pool: { query: async (sql: string) => {
+  const ctx = { pool: { query: async (sql: string, args: unknown[] = []) => {
+    // One stored run, read by its exact owner and id (the run store's own lookup).
+    if (sql.startsWith('SELECT * FROM oshal_test_lab_runs WHERE issuer=$1 AND user_sub=$2 AND id=$3')) {
+      return { rows: [{ id: args[2],issuer: state.actor.issuer,user_sub: state.actor.sub,request_id: 'request',
+        state: 'passed',test: { id: 'app:fixture:test:example',appName: 'fixture' },created_at: new Date(),updated_at: new Date() }] };
+    }
     if (!sql.startsWith('SELECT id,issuer')) return { rows: [] };
     state.listed++; if (state.revokeAfterList) state.discovered = false;
     return { rows: [{ id: 'receipt',issuer: state.actor.issuer,user_sub: state.actor.sub,
@@ -103,4 +110,28 @@ it('retains all-app discovery and retracts selected-app history after current ac
     expect((await (await fetch(`${server.url}?app=fixture`)).json()).runs).toEqual([]);
     f.state.actor.isActive = false; expect((await fetch(`${server.url}?app=fixture`)).status).toBe(401);
   } finally { await server.close(); }
+});
+
+it('reads a run by deciding only its own application while unrelated access stays held beyond the authority deadline', async () => {
+  const f = fixture(); f.state.extra = true;
+  let release!: () => void; f.state.hold = new Promise<void>(resolve => { release = resolve; });
+  const server = await historyServer(f);
+  try {
+    const response = await fetch(`${server.url}/0b5c8a4e-1d2f-4c3b-9a7e-6f1e2d3c4b5a`);
+    expect(response.status).toBe(200); expect((await response.json()).run.test.appName).toBe('fixture');
+    // Identity first (no application decided), then the run's own application only.
+    expect(f.state.reads).toBe(2); expect(f.state.checked).toEqual(['fixture']); expect(f.state.appLists).toBe(1);
+  } finally { release(); await server.close(); }
+},10000);
+
+it('resolves an identity-only scope without deciding any application and still refuses an inactive account', async () => {
+  const f = fixture(); f.state.extra = true;
+  const identity = await f.wiring.runContext!(f.req, null);
+  expect(identity.actor).toEqual({ issuer: 'https://provider.test', sub: 'owner' });
+  expect(identity.visibleApps.size).toBe(0); expect(identity.auth.canRunSuites).toBe(true);
+  expect(f.state.checked).toEqual([]); expect(f.state.appLists).toBe(0);
+  expect([...(await f.wiring.runContext!(f.req, 'fixture')).visibleApps.keys()]).toEqual(['fixture']);
+  expect(f.state.checked).toEqual(['fixture']);
+  f.state.actor.isActive = false;
+  await expect(f.wiring.runContext!(f.req, null)).rejects.toMatchObject({ status: 401 });
 });

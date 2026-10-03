@@ -10,6 +10,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: compose the scheduled-service activation authority, register it with the service-route runner, and expose it to the kernel-served services routes the way the scheduler handle is already exposed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Take and hand on schema readiness as a re-requestable thunk. A single chained promise kept its own rejection, so a bootstrap that lost the pool at boot refused every activation read for the life of the process.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the registered authorization mode to scheduled-service admission without changing scheduler or grant behavior.
  *
  * @module application-service-activation-wiring
  */
@@ -59,7 +60,7 @@ export interface ApplicationServiceActivationWiringDeps {
   /** Schema readiness for the ADR-149 control plane. */
   ready: () => Promise<unknown>;
   policy: AuthorizationStore;
-  describeApp(app: string): { source: string; catalogRevision: string; catalog: import('@/shared/application-authorization').AuthorizationCatalog | null } | null;
+  describeApp(app: string): { source: string; catalogRevision: string; catalog: import('@/shared/application-authorization').AuthorizationCatalog | null; mode: 'legacy' | 'enforce' } | null;
   authorize(actor: AuthorizationActor, operation: AuthorizationOperation): Promise<AuthorizationDecision>;
   getApps(): SwarmAppService;
   /** Resolves the verified caller behind an authenticated request. */

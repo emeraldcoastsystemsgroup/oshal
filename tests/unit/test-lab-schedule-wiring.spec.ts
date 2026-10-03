@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove unattended execution re-resolves an exact observed account and its current administrator authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise real batch and runner watchdogs with fixed/all selectors and current operator revocation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove local schedule polling survives a first-attempt bootstrap failure instead of staying stopped until the process restarts.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | A wildcard batch resolves every application only for discovery; each case's checks name that case's application (or the owner's identity alone). A fixed-package batch still decides only its package.
  */
 import type { Request } from 'express';
 import type { Pool } from 'pg';
@@ -69,7 +70,7 @@ function memoryRuns() {
 }
 
 function batchFixture(appName: string, revoke = false) {
-  const actor = { issuer: 'https://schedule-provider.test',sub: 'owner' }, scopes: Array<string | undefined> = [];
+  const actor = { issuer: 'https://schedule-provider.test',sub: 'owner' }, scopes: Array<string | null | undefined> = [];
   const state = { admin: true,finished: null as TestLabScheduleBatch | null,executing: Promise.resolve() };
   const schedule = { id: randomUUID(),actor,appName,levels: ['unit'],cadence: 'daily',enabled: false,revision: 1 } as TestLabSchedule;
   const batch = { id: randomUUID(),scheduleId: schedule.id,actor,state: 'running',oneOff: true,scheduleRevision: 1,
@@ -101,17 +102,27 @@ it.each(['fixture','*'])('reuses the %s selector in fresh batch, read and runner
     await f.start(); await vi.waitFor(() => expect(f.state.finished?.state).toBe('completed'),{ timeout: 6000 });
     expect(f.storage.state.row?.state).toBe('passed'); expect(f.storage.state.pulses).toBeGreaterThanOrEqual(3);
     expect(f.scopes.length).toBeGreaterThan(5);
-    expect(new Set(f.scopes)).toEqual(new Set([appName === '*' ? undefined : appName]));
+    if (appName === '*') {
+      // Discovery alone decides every installed application; each case's own checks (its start, the batch
+      // polls, the run's watch and revalidation) decide that case's application, or only the owner's identity.
+      expect(f.scopes[0]).toBeUndefined(); expect(f.scopes.filter(scope => scope === undefined)).toHaveLength(1);
+      expect(f.scopes.slice(1).filter(scope => scope !== 'fixture' && scope !== null)).toEqual([]);
+      expect(f.scopes).toContain('fixture');
+    } else expect(new Set(f.scopes)).toEqual(new Set([appName]));
   } finally { await f.state.executing; f.service.stop(); }
 },10000);
 
-it('cancels a fixed-package batch and withholds output after current operator revocation', async () => {
-  const f = batchFixture('fixture',true);
+it.each(['fixture','*'])('cancels a %s batch and withholds output after current operator revocation', async appName => {
+  const f = batchFixture(appName,true);
   try {
     await f.start(); await vi.waitFor(() => expect(f.state.finished?.state).toBe('cancelled'),{ timeout: 6000 });
     await vi.waitFor(() => expect(f.storage.state.row?.state).toBe('cancelled'),{ timeout: 6000 });
     expect(f.storage.state.row?.result).toMatchObject({ status: 'pending',cancelled: true,cleanupVerified: true });
-    expect(new Set(f.scopes)).toEqual(new Set(['fixture'])); expect(f.storage.state.row?.result?.output).toBeUndefined();
+    expect(f.storage.state.row?.result?.output).toBeUndefined();
+    // Scoping the case checks to the case's application leaves the revocation just as fatal to the run.
+    expect(f.scopes.filter(scope => scope === undefined)).toHaveLength(appName === '*' ? 1 : 0);
+    expect(f.scopes.filter(scope => scope !== undefined && scope !== 'fixture' && scope !== null)).toEqual([]);
+    if (appName === 'fixture') expect(new Set(f.scopes)).toEqual(new Set(['fixture']));
   } finally { await f.state.executing; f.service.stop(); }
 },10000);
 

@@ -32,6 +32,22 @@
           "items": { "type": "string", "pattern": "^[a-z0-9_]+$" },
           "minItems": 1,
           "uniqueItems": true
+        },
+        "credentialOwner": {
+          "enum": ["deployment", "user", "none", "hybrid"],
+          "description": "Who owns and pays for the underlying provider credential: deployment/shared, user/BYO, none, or hybrid."
+        },
+        "executionActor": {
+          "enum": ["user", "service-principal", "any"],
+          "description": "Who is permitted to invoke the connector: signed-in user, activated service principal, or any."
+        },
+        "provisioningOwner": {
+          "enum": ["operator", "user", "none"],
+          "description": "Who provisions the credential into the store: operator, user, or none."
+        },
+        "fallbackPolicy": {
+          "enum": ["fail-closed", "prompt", "none"],
+          "description": "Policy when user credential is missing: fail-closed, prompt for consent/BYO, or none."
         }
       }
     },

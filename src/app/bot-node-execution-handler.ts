@@ -31,6 +31,13 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Bill and relay the real usage split when TaskController reports one. The cost record and the HTTP usage block wrote `inputTokens = totalTokens, outputTokens = 0, cacheReadTokens = 0` unconditionally, so chat_tasks could never show the invariant-preamble cache's saving (fewer input tokens, a cached-token count). resolveExecutionUsage maps apiMetrics.inputTokens/outputTokens/cacheReads through when present and keeps the legacy total-as-input mapping when the runtime reports only a total, so an agentic result is billed exactly as before.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Mark a direct (interactive) dispatch hostToolsOnly. Such a turn is conversation plus the tools the agentic loop brokers itself (Jarvis's conversation_query/conversation_fetch); it never needs the CLI's own file or command tools. On the Antigravity brain those native tools were what a recall ask spent 10 min 45 s on before a headless read_file denial killed it. Protected work keeps its own path (toolLess + the controller MCP bridge) and is never marked.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Read a message text by its type instead of assuming a string. The any-bot layer is untyped JavaScript, and its parser hands back a Number or Boolean for a bare numeric or true/false value; the response extraction called m.text.trim() on it and threw "m.text.trim is not a function", so a Jarvis answer of 5 was reported as a failed execution with no answer (live case jarvis-cache, 2026-09-29, 3 of 3). The source is fixed in AgenticController; this is the guard on the reading side: a finite number or a boolean is delivered as its text, any other non-string value is passed over, and the declared message type says text is unknown so the compiler requires the check.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Reuse the shared SEC-05 autonomous-provider classifier so controller `bot-default` validation and node preflight cannot disagree about aliases such as `openai-codex`.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Bind agentic capture to the producing bot identity supplied by runtime composition, never an envelope target or payload/frame field. Without that trusted identity capture remains unbound and tail replay keeps failing closed.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Mark a protected direct request as single-shot/tool-less only when its server-resolved application tool set is empty. The autonomous-CLI preflight is deferred only for that candidate, then re-run after authorization resolution with a dedicated hosted-single-shot proof; nonempty brokered tools retain the existing refusal/bridge path. This lets a Cline-backed bot use its configured backing model for one hosted reasoning call without treating the request as BYO or entering Cline's native tool loop.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com | Resolve zero-cost runtime usage through the shared provider/model pricing registry before recording or relaying it. Protected Gemini single-shot usage now reaches the ledger as a catalog estimate with an input/output split, while an actual nonzero provider total still wins and an unknown model remains zero instead of receiving an invented rate; execution attribution stays on the actual runtime provider.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward the payload's imageTurn marker into the TaskController options (ADR-130 amendment 2026-10-02). Only a literal true is forwarded. It is set by the storyboard render executor; the Antigravity wrapper uses it to collect generate_image's output from its private HOME into the task workspace before the HOME is removed, and refuses it on a host-tools-only or bridged turn. Every other provider ignores it. An image turn's prompt is also assembled verbatim, like a direct call (no persona layers, swarm memory, handover or ticket scaffolding, which told the render to write handovers and deliverables while its own prompt forbids creating files), but it is NOT marked hostToolsOnly: the image tool is the CLI's own.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | SEC-05 carve for image turns, server-authored instruction only (operator decision 2026-10-02 b; ADR-130 amendment). The live render of 2026-10-02 19:00 was refused by the model: the only text naming generate_image sat inside the data-only UNTRUSTED_CONTENT record, under an authority rebind of ["attempt_completion"], so the model read the render as an injection and never called the tool (the same text rendered in a repro after three turns of deliberation: variance, not a rule). On an image turn the render instruction now arrives in its own carrier (payload.renderInstruction, written by the storyboard providers in the api process and validated at the HTTP boundary), is placed under TRUSTED CONFIGURATION as [trusted-config source="image-render-instruction"], and the harness's own image tool (anyBotImageTurnToolFor: generate_image on antigravity-cli) joins attempt_completion in that turn's allowed_tools and authorized_scopes. The brief, the one user-originated field, still travels as payload.text and stays inside the UNTRUSTED record; the instruction tells the model to read it from there as data. An image turn without the carrier is refused before any task exists, and no other turn reads either field. Guard: tests/unit/image-turn-prompt-framing.spec.ts.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | Where a failed execution leaves the node, an error's untrusted diagnostic (error.diagnostic: an Antigravity image-turn refusal's image-tool error and model reply) is re-attached to the error text behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER. AntigravityProvider keeps it off the error's message and stderr so the node's provider failover never classifies tool or model text (verifier finding on core PR #1031: a throttle word in either sent the render to the fallback rung); the api's render provider splits it off again for its own callers. Every other failure's text is unchanged.
  */
 
 /**
@@ -64,7 +71,9 @@ import {
   RALFHandoverManager,
   type EnvelopeExecutionResult,
   type CostRecordFn,
+  type PromptAuthorityBinding,
   type PromptAuthorizationResolver,
+  type TrustedPromptConfiguration,
 } from '@/features/swarm-orchestration';
 import type { TicketService } from '@/features/ticketing';
 import {
@@ -86,29 +95,56 @@ import {
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
+import { ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, anyBotImageTurnToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
+import { isUnbrokeredAutonomousProvider, resolveUsageCost } from '@/features/llm-provider';
 import { getProtectedBotExecution } from './bot-node-protected-context';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
-/**
- * The local CLI harnesses this preflight refuses before a task or workspace is accepted.
- *
- * `gemini-cli` and `antigravity-cli` joined the set when Google got the same push-a-login rail
- * Codex and Claude Code have: before that they were absent, so the preflight — the check that runs
- * BEFORE any task or workspace exists — let both through, and the only thing standing between them
- * and a spawn was `assertAuditedAutonomousHarness` deeper in the adapter. That is one guard where
- * the two siblings have two, and giving Google a credential to run under is exactly the change
- * that makes the gap worth closing rather than noting.
- *
- * The hosted Google lane is deliberately NOT in here. `gemini` (the Cline-backed API provider id)
- * and `google-gemini` (the apiType) name an HTTP endpoint with no tool loop and no credential home,
- * so refusing them would break the ordinary hosted path this rail exists to give the operator an
- * alternative to. Only the two CLI harness ids are listed.
- */
-const UNBROKERED_AUTONOMOUS_PROVIDERS = new Set([
-  'cline', 'cline-cli', 'claude', 'claude-code', 'codex', 'codex-cli', 'openai-codex',
-  'gemini-cli', 'antigravity-cli',
-]);
 
+/** The trusted-config source label an image turn's server-authored render instruction is filed under. */
+export const IMAGE_RENDER_INSTRUCTION_SOURCE = 'image-render-instruction';
+
+/**
+ * @description The server-authored render instruction an image turn carries (ADR-130; the SEC-05
+ * carve for image turns). It is read on an image turn only. The field is written by the storyboard
+ * image providers in the api process and validated at the bot's HTTP boundary
+ * (parseBotNodePromptCarrier), so what reaches here is server configuration, never a user field:
+ * the user's brief travels separately as the untrusted body. An image turn without it is refused
+ * before a task or workspace exists, because the alternative is to render from the data-only
+ * record alone, which is exactly the shape the model refused live on 2026-10-02.
+ * @param payload - The envelope payload.
+ * @returns The instruction text.
+ */
+function readImageTurnInstruction(payload: Record<string, unknown> | undefined): string {
+  const value = payload?.renderInstruction;
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('An image turn requires the server-authored render instruction (renderInstruction); refusing to render from the untrusted body alone');
+  }
+  return value;
+}
+
+/**
+ * @description An image turn's authority: the harness's own native image tool beside what the
+ * resolver granted (the completion floor), with its exact operation scope, so the final rebind
+ * names the tool the trusted instruction asks for. A harness with no recorded image tool keeps
+ * the resolved binding unchanged and says so in the log; nothing else is widened.
+ * @param binding - The resolved server authority for this execution.
+ * @param harness - The provider the bot runs this turn on.
+ * @param taskId - For the log line.
+ * @returns The binding, widened by the one image tool when the harness has one.
+ */
+function grantImageTurnTool(binding: PromptAuthorityBinding, harness: string, taskId: string): PromptAuthorityBinding {
+  const tool = anyBotImageTurnToolFor(harness);
+  if (!tool) {
+    logger.warn({ taskId, harness }, 'Image turn on a harness with no recorded image tool: the authority keeps the completion floor alone');
+    return binding;
+  }
+  return {
+    ...binding,
+    allowedTools: [...binding.allowedTools, tool],
+    scopes: [...binding.scopes, anyBotRuntimeToolScope(tool)],
+  };
+}
 /**
  * @description ADR-127: the ONE carve in which an autonomous CLI harness may execute at a bot node.
  * Requires BOTH a demo deployment AND an operator-owned request. A missing identity is refused on
@@ -131,19 +167,23 @@ function demoOperatorCliUnlock(providerName: string, userSub: unknown): boolean 
  * @description Refuse autonomous CLI harnesses before a task/workspace is accepted. These
  * providers own an internal tool loop, can read their credential home, and cannot revalidate
  * OSHAL's exact handler generation/scopes. A deterministic provider intent and a caller's BYO
- * hosted endpoint bypass the local CLI entirely and are therefore admissible; so, on a DEMO
- * deployment, is the operator's own request (ADR-127 — off by default, audited, operator-only).
+ * hosted endpoint bypass the local CLI entirely and are therefore admissible. So is a protected
+ * request whose exact server-resolved tool set proved empty and which will use the configured
+ * provider's hosted single-shot adapter. On a DEMO deployment, the operator's own request is also
+ * admitted (ADR-127 — off by default, audited, operator-only).
  */
 export function assertUnattendedProviderPreflight(input: {
   providerName: unknown;
   deterministicIntent?: boolean;
   byoHostedInference?: boolean;
+  protectedHostedSingleShot?: boolean;
   userSub?: unknown;
 }): void {
-  if (input.deterministicIntent === true || input.byoHostedInference === true) return;
+  if (input.deterministicIntent === true || input.byoHostedInference === true
+    || input.protectedHostedSingleShot === true) return;
   const providerName = typeof input.providerName === 'string'
     ? input.providerName.trim().toLowerCase() : '';
-  if (!UNBROKERED_AUTONOMOUS_PROVIDERS.has(providerName)) return;
+  if (!isUnbrokeredAutonomousProvider(providerName)) return;
   if (demoOperatorCliUnlock(providerName, input.userSub)) return;
   const error = new Error(
     `${providerName} is an unbrokered autonomous CLI; unattended execution requires a hosted provider or audited brokered sandbox`,
@@ -170,6 +210,8 @@ let activeExecutions = 0;
  * cost attribution, and prompt assembly decisions.
  */
 export interface BotNodeExecutionDeps {
+  /** Actual executing bot from runtime composition; absent stays unbound, never inferred from a request. */
+  runtimeAgentId?: string;
   /** Trusted runtime wrapper; raw payloads cannot install protected execution authority. */
   runApplicationExecution?: (envelope: MeshEnvelope, operation: () => Promise<EnvelopeExecutionResult>) => Promise<EnvelopeExecutionResult>;
   /** Runtime-owned guard over local and requested bot identities, shared by HTTP/mesh/batch. */
@@ -188,6 +230,8 @@ export interface BotNodeExecutionDeps {
       /** Actual provider/model reported by the provider response for the final turn. */
       provider?: string | null;
       model?: string | null;
+      /** Backing API provider reported out of band when a harness fronts hosted inference. */
+      apiProvider?: string | null;
       /** Post-model provider evidence captured from trusted runtime command events. */
       providerRecords?: Array<Record<string, unknown>>;
     }>;
@@ -239,6 +283,13 @@ export function createBotNodeExecutionHandler(
     // orchestration layers (handover / awareness / swarm-memory). A lean reasoner
     // persona correctly treats that ticket scaffolding as out-of-place noise.
     const direct = payload?.direct === true;
+    // ADR-130 storyboard render: the server-authored render prompt goes to the bot verbatim (no
+    // ticket/handover scaffolding, which would contradict "create no files"), yet the CLI keeps its
+    // workspace-task shape because the image tool is one of its own (unlike hostToolsOnly).
+    const imageTurn = payload?.imageTurn === true;
+    const verbatimPrompt = direct || imageTurn;
+    const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
+    const runtimeAgentId = normalizeRuntimeIdentity(deps.runtimeAgentId, 256);
     // Exact authenticated owner identity. This binds memory, workspaces, and audited
     // server operations; it is not authority to place connector secrets in a CLI.
     const userSub = normalizeBotNodeUserSub(payload?.userSub);
@@ -255,6 +306,12 @@ export function createBotNodeExecutionHandler(
     // an OpenAIProvider) instead of the bot's configured provider.
     const byoLlmConnection = (payload?.byoLlmConnection && typeof payload.byoLlmConnection === 'object')
       ? (payload.byoLlmConnection as { baseUrl: string; apiKey: string; model: string }) : undefined;
+    // The candidate is not admitted yet. Its autonomous-provider preflight is deferred only until
+    // the server resolves the final application tool set below; a nonempty set re-enters the
+    // ordinary refusal path, while an empty set proves this request can avoid the CLI entirely.
+    const protectedDirectCandidate = Boolean(
+      protectedExecution && direct && agenticMode === false && !providerIntent && !byoLlmConnection,
+    );
     const workspaceTaskId = readOptionalWorkspaceSource(payload, 'workspaceTaskId');
     const originalTicket = typeof payload?.originalTicket === 'object' && payload?.originalTicket !== null
       ? payload.originalTicket as Record<string, unknown> : undefined;
@@ -289,6 +346,9 @@ export function createBotNodeExecutionHandler(
     // a concurrent dispatch would silently change a running task's provider + mis-attribute its cost).
     activeExecutions += 1;
     try {
+      // SEC-05 carve for image turns: the server-authored instruction is its own carrier, read here
+      // and nowhere else; the brief stays the (untrusted) text. Refused before any task exists.
+      const renderInstruction = imageTurn ? readImageTurnInstruction(payload) : null;
       if (hasProviderIntent && !providerIntent) throw new Error('Invalid trusted provider intent');
       if (hasCredentialCarrier && !providerIntent) {
         throw new Error('Connector credentials require a validated deterministic provider intent');
@@ -335,14 +395,20 @@ export function createBotNodeExecutionHandler(
       }
       const selectedProvider = deps.dispatchConfigRuntime?.getActiveProvider().provider
         ?? deps.providerName;
-      assertUnattendedProviderPreflight({
-        providerName: selectedProvider,
-        deterministicIntent: Boolean(providerIntent),
-        byoHostedInference: Boolean(byoLlmConnection),
-        // ADR-127: the demo CLI carve is scoped to the deployment operator, so the preflight needs
-        // the request's exact owner. Absent identity keeps the refusal.
-        userSub,
-      });
+      const normalizedSelectedProvider = typeof selectedProvider === 'string'
+        ? selectedProvider.trim().toLowerCase() : '';
+      const protectedSingleShotCandidate = protectedDirectCandidate
+        && (normalizedSelectedProvider === 'cline' || normalizedSelectedProvider === 'cline-cli');
+      if (!protectedSingleShotCandidate) {
+        assertUnattendedProviderPreflight({
+          providerName: selectedProvider,
+          deterministicIntent: Boolean(providerIntent),
+          byoHostedInference: Boolean(byoLlmConnection),
+          // ADR-127: the demo CLI carve is scoped to the deployment operator, so the preflight needs
+          // the request's exact owner. Absent identity keeps the refusal.
+          userSub,
+        });
+      }
       if (providerIntent) {
         // Deterministic provider reads bypass persona/memory/prompt/task construction entirely.
         // This is both a credential boundary and a no-hidden-side-effect completion boundary.
@@ -385,12 +451,12 @@ export function createBotNodeExecutionHandler(
       // no file-persona "read your context" scaffolding, and no phase/handover
       // execution framing — all of which a reasoner reads as out-of-place noise
       // (it flags them as a prompt injection against its real role).
-      const profile = !direct && deps.agentProfileRepository
+      const profile = !verbatimPrompt && deps.agentProfileRepository
         ? await deps.agentProfileRepository.getAgentProfile(agentId) : null;
-      const personaLayers = direct
+      const personaLayers = verbatimPrompt
         ? []
         : await loadPersonaLayers(agentId, envelope, deps.personaLayerStore);
-      if (!direct) {
+      if (!verbatimPrompt) {
         const agentDisplayName = profile?.name || agentId;
         const payloadType = payload?.type ? String(payload.type) : '';
         const reviewRole = payload?.role ? String(payload.role) : 'reviewer';
@@ -407,7 +473,7 @@ export function createBotNodeExecutionHandler(
         const awarenessLayer = buildSwarmAwarenessLayer(envelope, agentId);
         if (awarenessLayer) personaLayers.push(awarenessLayer);
       }
-      const promptAuthority = await resolvePromptAuthorityBinding({
+      const resolvedAuthority = await resolvePromptAuthorityBinding({
         userSub: userSub ?? null,
         ticketId: ticketExternalId ?? workspaceFolderId,
         workloadId: agentId,
@@ -415,17 +481,43 @@ export function createBotNodeExecutionHandler(
         layers: personaLayers,
         resolver: protectedExecution ? deps.resolveBrokeredPromptAuthorization : deps.resolvePromptAuthorization,
       });
+      // An image turn's rebind names the harness's own image tool beside the completion floor, so
+      // the trusted instruction and the authority agree. Every other turn keeps the resolved binding.
+      const promptAuthority = imageTurn
+        ? grantImageTurnTool(resolvedAuthority, normalizedSelectedProvider, taskId)
+        : resolvedAuthority;
+      const singleShotToolless = Boolean(
+        protectedSingleShotCandidate
+        && promptAuthority.allowedTools.length === 0
+        && runtimeAgentId
+        && runtimeAgentId === agentId,
+      );
+      if (protectedSingleShotCandidate) {
+        assertUnattendedProviderPreflight({
+          providerName: selectedProvider,
+          protectedHostedSingleShot: singleShotToolless,
+          userSub,
+        });
+      }
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
+      // Server-authored configuration, in order: the image turn's render instruction (the carve),
+      // then the controller-resolved skill profile. Both are server text; neither is the user's.
+      const trustedConfiguration: TrustedPromptConfiguration[] = [
+        ...(renderInstruction ? [{ source: IMAGE_RENDER_INSTRUCTION_SOURCE, content: renderInstruction }] : []),
+        ...(skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : []),
+      ];
+      // The text is always the untrusted body: on an image turn it is the brief, the one
+      // user-originated field, which the trusted instruction tells the model to read as data.
       const assembledPrompt = assemblePromptForAnyBot(
         personaLayers,
-        direct ? String(payload?.text ?? '') : buildUserMessage(envelope),
+        verbatimPrompt ? String(payload?.text ?? '') : buildUserMessage(envelope),
         promptAuthority,
-        skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : [],
+        trustedConfiguration,
       );
       const layerCount = personaLayers.length;
 
       logger.info(
-        { correlationId: envelope.correlationId, agentId, taskId, direct, layerCount, promptLength: assembledPrompt.length },
+        { correlationId: envelope.correlationId, agentId, taskId, direct, imageTurn, layerCount, promptLength: assembledPrompt.length },
         'Executing envelope via any-bot provider (in-process)',
       );
 
@@ -462,14 +554,18 @@ export function createBotNodeExecutionHandler(
       // Honor the requested mode (was hardcoded true). A direct reasoning request
       // (e.g. summarize/draft) passes agenticMode:false to skip the tool loop —
       // which otherwise non-deterministically emits an unparseable tool call.
-      const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
       const result = await deps.anyBotTaskController.processMessage(task.id, { text: assembledPrompt }, {
           agenticMode,
+          // Capture and protected persona selection must point to this executor, never a caller-selected target or supplied frame.
+          agentId: runtimeAgentId ?? undefined,
           autoApprove: protectedExecution ? {} : { 'use_mcp_tool': true },
           ...(protectedExecution ? { toolLess: true, assertCurrentAuthorization: () => protectedExecution.check() } : {}),
+          ...(singleShotToolless ? { singleShotToolless: true } : {}),
           // An interactive turn's tools are brokered by the agentic loop itself; a CLI brain gets none
           // of its own (AntigravityProvider runs agy tool-less). Protected work keeps its bridge path.
           ...(direct && !protectedExecution ? { hostToolsOnly: true } : {}),
+          // A storyboard render (ADR-130): the Antigravity wrapper collects generate_image's output.
+          ...(imageTurn ? { imageTurn: true } : {}),
           source: 'swarm-dispatch',
           allowedTools: [...promptAuthority.allowedTools],
           authorizedScopes: [...promptAuthority.scopes],
@@ -493,7 +589,7 @@ export function createBotNodeExecutionHandler(
       const durationMs = Date.now() - execStart;
       // Runtime accountability is structured out-of-band data from TaskController.
       // Request payload fields and assistant text never participate in this choice.
-      const runtimeIdentity = result as { provider?: unknown; model?: unknown };
+      const runtimeIdentity = result;
       const enforcedRuntimeIdentity = configReconciliation.active
         ?? deps.dispatchConfigRuntime?.getActiveProvider();
       const actualProvider = normalizeRuntimeIdentity(runtimeIdentity.provider, 128)
@@ -502,7 +598,7 @@ export function createBotNodeExecutionHandler(
       const actualModel = normalizeRuntimeIdentity(runtimeIdentity.model, 256)
         ?? enforcedRuntimeIdentity?.model
         ?? deps.modelName;
-      const actualApiProvider = normalizeRuntimeIdentity((runtimeIdentity as any).apiProvider, 128)
+      const actualApiProvider = normalizeRuntimeIdentity(runtimeIdentity.apiProvider, 128)
         ?? enforcedRuntimeIdentity?.apiProvider
         ?? null;
       if (carriedConfig && !byoLlmConnection
@@ -553,6 +649,20 @@ export function createBotNodeExecutionHandler(
       // Record cost — the bot owns cost capture (HTTP callers must NOT double-record).
       const apiMetrics = result.apiMetrics || {};
       const usage = resolveExecutionUsage(apiMetrics);
+      const reportedTotalCost = Number(apiMetrics.totalCost);
+      const cost = resolveUsageCost({
+        providerCost: {
+          inputCost: 0,
+          outputCost: 0,
+          totalCost: Number.isFinite(reportedTotalCost) && reportedTotalCost > 0 ? reportedTotalCost : 0,
+          currency: 'USD',
+        },
+        usage,
+        // The ledger remains attributed to the actual runtime provider below, while pricing uses
+        // the hosted API identity when a harness (for example Cline) fronts Gemini.
+        providerId: actualApiProvider ?? actualProvider,
+        modelId: actualModel,
+      });
       if (deps.recordCost) {
         try {
           await deps.recordCost({
@@ -560,8 +670,8 @@ export function createBotNodeExecutionHandler(
             providerId: actualProvider,
             modelId: actualModel,
             inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-            inputCost: 0, outputCost: 0, totalCost: apiMetrics.totalCost || 0,
-            currency: 'USD', ticketExternalId,
+            inputCost: cost.inputCost, outputCost: cost.outputCost, totalCost: cost.totalCost,
+            currency: cost.currency, ticketExternalId,
             ownerSub: userSub, // per-owner budget attribution (Phase 2)
             durationMs, // measured above — lands per-call latency on the 090 ledger columns
           });
@@ -596,7 +706,7 @@ export function createBotNodeExecutionHandler(
         providerRecords: Array.isArray(result.providerRecords)
           ? result.providerRecords.filter((record) => record && typeof record === 'object').slice(0, 8)
           : [],
-        cost: apiMetrics.totalCost || 0,
+        cost: cost.totalCost,
         usage,
         model: actualModel,
         provider: actualProvider,
@@ -625,7 +735,7 @@ export function createBotNodeExecutionHandler(
       );
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown execution error',
+        error: failureLeavingNode(error),
       };
     } finally {
       activeExecutions -= 1;
@@ -633,6 +743,21 @@ export function createBotNodeExecutionHandler(
   };
   return envelope => deps.runApplicationExecution
     ? deps.runApplicationExecution(envelope, () => execute(envelope)) : execute(envelope);
+}
+
+/**
+ * @description The error text a failed execution leaves the node with. An Antigravity image-turn
+ * refusal carries its untrusted diagnostic (the image tool's error, the model's reply) on
+ * `error.diagnostic`, off the message every classifier on the node reads (provider failover among
+ * them); it is re-attached here, behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, so the api's render
+ * provider can split it off again. Any other error leaves with its message, as before.
+ * @param error - What the execution threw.
+ * @returns The error text for the response.
+ */
+function failureLeavingNode(error: unknown): string {
+  if (!(error instanceof Error)) return 'Unknown execution error';
+  const diagnostic = (error as Error & { diagnostic?: unknown }).diagnostic;
+  return typeof diagnostic === 'string' && diagnostic ? `${error.message}${ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER}${diagnostic}` : error.message;
 }
 
 /**

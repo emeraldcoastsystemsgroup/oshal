@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Preserve transaction dates by aggregating per ticker/day and writing dated metric points, so downstream watchlists can show the feed-backed disclosure date instead of the collector's observation time.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Key every point on the disclosure ReportDate and refuse a row without a real calendar ReportDate. Seq 2 used `TransactionDate || ReportDate`, so the day the Trading watchlist labels "disclosed" was the trade day, up to ~45 days before the trade became public. Each point now also records when the collector read the feed (observed_at), and a re-run writes only points whose value changed: the 6-hourly depth cycle re-read the whole 90-day window and appended an identical copy of every point each time.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The default feed is no longer keyless: on 2026-09-28 GET https://api.quiverquant.com/beta/live/congresstrading answered HTTP 401 {"detail":"Authentication credentials were not provided."} to this collector's exact request, and "Invalid token." once any Bearer credential was sent. Forward WORLD_POLITICAL_TOKEN as `Authorization: Bearer <token>`, log a 401/403 at ERROR as a refusal that names the setting (and whether one was configured), never the token, and report the feed outcome (ok / refused / failed / world-disabled) in the result so the depth-cycle line says what happened instead of "collected" with zero tickers.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | congressFeedTarget(): which feed a run reads and where (WORLD_POLITICAL_URL, else Quiver when WORLD_POLITICAL_TOKEN is set, else the free community mirror), shared by the fetch and the World sources screen. A whitespace-only token now counts as unset, as the request header already treated it. The module comment described the Quiver feed as the only source; it now describes all three and names the free feed's `filer_name` field, which the normalizer does not read yet (every free-feed row is stored with representative "Unknown"; BACKLOG "Political-trades (STOCK Act) signal").
  */
 
 /**
@@ -18,10 +19,13 @@
  * every point is keyed on the disclosure (report) day: that is the first day the information existed
  * publicly, so a series keyed on the trade day would claim knowledge weeks before anyone had it.
  *
- * Source: Quiver Quantitative's live congress-trading endpoint. It needs an API token
- * (WORLD_POLITICAL_TOKEN, sent as a Bearer credential): without one it answers HTTP 401, which is logged
- * as a refusal naming that setting. We aggregate recent disclosures per ticker and report day into
- * world_metrics (the miner auto-discovers them):
+ * Source, chosen per run by congressFeedTarget(): WORLD_POLITICAL_URL when set; otherwise Quiver
+ * Quantitative's live congress-trading endpoint when WORLD_POLITICAL_TOKEN is set (sent as a Bearer
+ * credential; a 401/403 is logged as a refusal naming that setting); otherwise a free community-maintained
+ * mirror of the House and Senate STOCK Act filings. Rows keep the `quiver-congress` source label on every
+ * path. The free mirror names the member in `filer_name`, which the normalizer below does not read yet,
+ * so its rows are stored with representative "Unknown". We aggregate recent disclosures per ticker and
+ * report day into world_metrics (the miner auto-discovers them):
  *   congress_buys / congress_sells (counts), congress_net (buys−sells),
  *   congress_sentiment ((buys−sells)/total, [-1,1]), congress_notional (summed lower-bound $).
  * This collector is the only writer of that namespace: world contributions refuse `congress_*` facts and
@@ -31,16 +35,19 @@
  * federal contracts" — the same idea from the spending side.
  */
 
+import { createHash } from 'node:crypto';
 import { createWorldIntelligenceService, type WorldIntelligenceService } from './world-intelligence-service';
-import { CONGRESS_FEED_SOURCE } from './world-types';
+import { CONGRESS_FEED_SOURCE, type CongressTradeRecord } from './world-types';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'political-trades' });
 
 const DEFAULT_CONGRESS_URL = 'https://api.quiverquant.com/beta/live/congresstrading';
+/** Free public community-maintained feed derived from official STOCK Act disclosures. */
+const DEFAULT_FREE_CONGRESS_URL = 'https://raw.githubusercontent.com/kadoa-org/congress-trading-monitor/main/public/data/trades.json';
 /** The setting that carries the feed credential; named in every refusal log. */
 const TOKEN_SETTING = 'WORLD_POLITICAL_TOKEN';
-/** Quiver serves this to a browser UA. Override via WORLD_POLITICAL_UA. */
+/** Quiver / web feeds serve this to a browser UA. Override via WORLD_POLITICAL_UA. */
 const DEFAULT_POLITICAL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 /** Lookback window (days) over the disclosure ReportDate (default 90 — covers the ~45d lag + a tail). */
 const POLITICAL_DAYS = Math.max(7, Number(process.env.WORLD_POLITICAL_DAYS) || 90);
@@ -48,7 +55,52 @@ const FETCH_TIMEOUT_MS = 15_000;
 const DAY_MS = 86_400_000;
 const CALENDAR_DAY = /^(\d{4})-(\d{2})-(\d{2})/;
 
-export interface CongressTrade { Ticker?: string; Transaction?: string; ReportDate?: string; TransactionDate?: string; Amount?: string | number; }
+export interface CongressTrade {
+  Ticker?: string;
+  ticker?: string;
+  symbol?: string;
+  Symbol?: string;
+  Transaction?: string;
+  transaction?: string;
+  transaction_type?: string;
+  type?: string;
+  ReportDate?: string;
+  reportDate?: string;
+  disclosure_date?: string;
+  filing_date?: string;
+  TransactionDate?: string;
+  transaction_date?: string;
+  Amount?: string | number;
+  amount?: string | number;
+  amount_range_low?: number;
+  amount_range_high?: number;
+  representative?: string;
+  Representative?: string;
+  senator?: string;
+  Senator?: string;
+  name?: string;
+  Member?: string;
+  party?: string;
+  Party?: string;
+  chamber?: string;
+  Chamber?: string;
+  state?: string;
+  State?: string;
+  district?: string;
+  District?: string;
+  office?: string;
+  Office?: string;
+  asset_description?: string;
+  description?: string;
+  Asset?: string;
+  bio_guide_id?: string;
+  bioguide_id?: string;
+  ptr_link?: string;
+  ptr_url?: string;
+  link?: string;
+  url?: string;
+  PtrLink?: string;
+}
 
 export interface PoliticalTradeObservation {
   ticker: string;
@@ -97,8 +149,8 @@ export function disclosureDay(raw: unknown): { day: string; epoch: number } | nu
 /** Purchase / sale classification; anything else (exchange, dividend, blank) is not a directional trade. */
 function tradeDirection(transaction: unknown): 'buy' | 'sell' | null {
   const tx = String(transaction || '').toLowerCase();
-  if (tx.includes('purchase')) return 'buy';
-  if (tx.includes('sale') || tx.includes('sold')) return 'sell';
+  if (tx.includes('purchase') || tx.includes('buy')) return 'buy';
+  if (tx.includes('sale') || tx.includes('sold') || tx.includes('sell')) return 'sell';
   return null;
 }
 
@@ -120,23 +172,122 @@ export function aggregatePoliticalTrades(
   const agg = new Map<string, PoliticalTradeObservation>();
   let trades = 0;
   for (const t of raw) {
-    const sym = String(t?.Ticker || '').toUpperCase().trim();
+    const rawTicker = t?.Ticker ?? t?.ticker ?? t?.symbol ?? t?.Symbol;
+    const sym = String(rawTicker || '').toUpperCase().trim();
     if (!sym || !/^[A-Z][A-Z.]{0,5}$/.test(sym)) continue;
-    const disclosed = disclosureDay(t?.ReportDate);
+    const rawReportDate = t?.ReportDate ?? t?.reportDate ?? t?.filing_date ?? t?.disclosure_date;
+    const disclosed = disclosureDay(rawReportDate);
     if (!disclosed || disclosed.epoch < cutoff || disclosed.epoch > today) continue;
-    const direction = tradeDirection(t?.Transaction);
+    const rawTransaction = t?.Transaction ?? t?.transaction ?? t?.transaction_type ?? t?.type;
+    const direction = tradeDirection(rawTransaction);
     if (!direction) continue;
     const disclosureDate = `${disclosed.day}T00:00:00.000Z`;
     const key = `${sym}\0${disclosureDate}`;
     const e = agg.get(key) || { ticker: sym, disclosureDate, buys: 0, sells: 0, notional: 0 };
     if (direction === 'buy') e.buys += 1; else e.sells += 1;
-    e.notional += Number(String(t?.Amount ?? '').replace(/[,$]/g, '')) || 0;
+    const rawAmount = t?.Amount ?? t?.amount ?? t?.amount_range_low;
+    const notionalMatch = String(rawAmount ?? '').replace(/[,$]/g, '').match(/\d+/);
+    e.notional += notionalMatch ? Number(notionalMatch[0]) : 0;
     agg.set(key, e);
     trades += 1;
   }
   const observations = [...agg.values()]
     .sort((a, b) => a.ticker.localeCompare(b.ticker) || a.disclosureDate.localeCompare(b.disclosureDate));
   return { observations, trades };
+}
+
+/**
+ * @description Extract granular, individual congressional trade records from the feed.
+ * Normalizes politicians, chambers, parties, amounts, filing links, and generates a deterministic
+ * trade_id hash so persistence is completely idempotent.
+ * @param raw - Untrusted feed rows.
+ * @param now - Clock used for lookback/future filtering.
+ * @param lookbackDays - Inclusive lookback window in days.
+ * @param observedAt - When this run read the feed.
+ * @param source - Feed source provenance.
+ * @returns Array of normalized individual congressional trade records.
+ */
+export function extractCongressTradeRecords(
+  raw: CongressTrade[],
+  now = new Date(),
+  lookbackDays = POLITICAL_DAYS,
+  observedAt = now.toISOString(),
+  source = CONGRESS_FEED_SOURCE,
+): CongressTradeRecord[] {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const cutoff = today - Math.max(1, lookbackDays) * DAY_MS;
+  const out: CongressTradeRecord[] = [];
+
+  for (const t of raw) {
+    const rawTicker = t?.Ticker ?? t?.ticker ?? t?.symbol ?? t?.Symbol;
+    const sym = String(rawTicker || '').toUpperCase().trim();
+    if (!sym || !/^[A-Z][A-Z.]{0,5}$/.test(sym)) continue;
+
+    const rawReportDate = t?.ReportDate ?? t?.reportDate ?? t?.filing_date ?? t?.disclosure_date;
+    const disclosed = disclosureDay(rawReportDate);
+    if (!disclosed || disclosed.epoch < cutoff || disclosed.epoch > today) continue;
+
+    const rawTransaction = t?.Transaction ?? t?.transaction ?? t?.transaction_type ?? t?.type;
+    const direction = tradeDirection(rawTransaction);
+    if (!direction) continue;
+
+    const disclosureDate = `${disclosed.day}T00:00:00.000Z`;
+    const representative = String(
+      t?.representative ?? t?.Representative ?? t?.senator ?? t?.Senator ?? t?.name ?? t?.Member ?? 'Unknown',
+    ).trim();
+
+    const rawTxDate = t?.TransactionDate ?? t?.transaction_date;
+    const txDisclosed = disclosureDay(rawTxDate);
+    const transactionDate = txDisclosed ? txDisclosed.day : null;
+
+    const party = t?.party ?? t?.Party ?? null;
+    const chamber = t?.chamber ?? t?.Chamber ?? null;
+    const state = t?.state ?? t?.State ?? null;
+    const district = t?.district ?? t?.District ?? t?.office ?? t?.Office ?? null;
+    const assetDescription = t?.asset_description ?? t?.description ?? t?.Asset ?? null;
+    const bioGuideId = t?.bio_guide_id ?? t?.bioguide_id ?? null;
+    const ptrLink = t?.ptr_link ?? t?.ptr_url ?? t?.link ?? t?.url ?? t?.PtrLink ?? null;
+    const rawAmount = t?.Amount ?? t?.amount ?? t?.amount_range_low;
+    const amountStr = rawAmount == null ? null : String(rawAmount);
+
+    let amountLow: number | null = t?.amount_range_low != null ? Number(t.amount_range_low) : null;
+    let amountHigh: number | null = t?.amount_range_high != null ? Number(t.amount_range_high) : null;
+    if (amountLow == null && amountStr) {
+      const nums = amountStr.replace(/[,$]/g, '').match(/\d+/g);
+      if (nums && nums.length > 0) {
+        amountLow = Number(nums[0]);
+        if (nums.length > 1) amountHigh = Number(nums[1]);
+      }
+    }
+
+    const transactionType = String(rawTransaction).trim();
+    const hashPayload = `${representative}|${sym}|${transactionDate || ''}|${disclosed.day}|${transactionType}|${amountStr || ''}|${ptrLink || ''}`;
+    const tradeId = createHash('sha256').update(hashPayload).digest('hex').slice(0, 32);
+
+    out.push({
+      tradeId,
+      representative: representative || 'Unknown',
+      bioGuideId: bioGuideId ? String(bioGuideId).trim() : null,
+      party: party ? String(party).trim() : null,
+      chamber: chamber ? String(chamber).trim() : null,
+      state: state ? String(state).trim() : null,
+      district: district ? String(district).trim() : null,
+      ticker: sym,
+      assetDescription: assetDescription ? String(assetDescription).trim() : null,
+      transactionType,
+      direction,
+      transactionDate,
+      disclosureDate,
+      amount: amountStr,
+      amountRangeLow: amountLow,
+      amountRangeHigh: amountHigh,
+      ptrLink: ptrLink ? String(ptrLink).trim() : null,
+      source,
+      observedAt,
+    });
+  }
+
+  return out;
 }
 
 /** One feed read: the rows, or why there are none. */
@@ -158,6 +309,20 @@ function feedHeaders(token: string): Record<string, string> {
 }
 
 /**
+ * @description Which congress feed a run reads, and where: the WORLD_POLITICAL_URL override, else Quiver
+ * when a token is configured, else the free community mirror. Read at call time, like the fetch.
+ * @param env - Environment carrying WORLD_POLITICAL_URL / WORLD_POLITICAL_TOKEN.
+ * @returns The mode, the URL, and whether a token is configured (never the token).
+ */
+export function congressFeedTarget(env: NodeJS.ProcessEnv = process.env): { mode: 'custom' | 'quiver' | 'free'; url: string; tokenConfigured: boolean } {
+  const tokenConfigured = Boolean((env[TOKEN_SETTING] || '').trim());
+  if (env.WORLD_POLITICAL_URL) return { mode: 'custom', url: env.WORLD_POLITICAL_URL, tokenConfigured };
+  return tokenConfigured
+    ? { mode: 'quiver', url: DEFAULT_CONGRESS_URL, tokenConfigured }
+    : { mode: 'free', url: DEFAULT_FREE_CONGRESS_URL, tokenConfigured };
+}
+
+/**
  * @description Fetch the live disclosure feed. The URL, UA and credential are read at call time so an
  * operator override (WORLD_POLITICAL_URL / WORLD_POLITICAL_UA / WORLD_POLITICAL_TOKEN) applies to the
  * next run. A 401/403 means the credential is missing or rejected: it is logged at ERROR naming the
@@ -165,7 +330,7 @@ function feedHeaders(token: string): Record<string, string> {
  * @returns The rows (`ok`), or `refused` / `failed` with nothing to write.
  */
 async function fetchCongressTrades(): Promise<FeedRead> {
-  const url = process.env.WORLD_POLITICAL_URL || DEFAULT_CONGRESS_URL;
+  const url = congressFeedTarget().url;
   const token = (process.env[TOKEN_SETTING] || '').trim();
   try {
     const res = await fetch(url, { headers: feedHeaders(token), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -241,6 +406,16 @@ export async function collectPoliticalTrades(svcInput?: WorldIntelligenceService
   const { observations, trades } = aggregatePoliticalTrades(read.rows, now);
   const { written, unchanged } = await writeObservations(svc, observations, now.toISOString());
   const tickers = new Set(observations.map((e) => e.ticker)).size;
+
+  if (typeof (svc as unknown as { recordCongressTrades?: unknown }).recordCongressTrades === 'function') {
+    try {
+      const records = extractCongressTradeRecords(read.rows, now, POLITICAL_DAYS, now.toISOString(), CONGRESS_FEED_SOURCE);
+      await (svc as unknown as { recordCongressTrades: (r: unknown[]) => Promise<unknown> }).recordCongressTrades(records);
+    } catch (err) {
+      logger.error({ err }, 'failed to record granular congress trades');
+    }
+  }
+
   logger.info({ feed: 'ok', tickers, trades, observations: observations.length, written, unchanged }, 'political trades collected');
   return { feed: 'ok', tickers, trades, written, unchanged };
 }

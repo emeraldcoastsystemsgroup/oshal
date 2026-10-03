@@ -12,6 +12,26 @@ Pillow are required, and all output stays in the fixture's temporary directory. 
 registers actual package HTTP, forced-RLS disposable PostgreSQL and Chromium pixel/expiry/deletion
 acceptance; run its documented `lora/tests/gallery.config.mjs` command from the store checkout.
 
+## Kernel manifest route-auth inventory
+
+Run the focused source/manifest guard with one bounded worker:
+
+```sh
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/manifest-route-auth.spec.ts --pool=forks --execArgv=--max-old-space-size=384 --no-file-parallelism --maxWorkers=1 --testTimeout=90000
+```
+
+The spec scans top-level YAML files in `swarm-apps/` and `swarm-apps-build/`, not connector
+definitions or installed store packages. It pins the required Security declaration by file,
+module, factory, mount path and `operator` auth instead of a historical count floor. Both
+Engineering variants intentionally leave framework-owned routes undeclared; adding them to
+satisfy a count would incorrectly assign app ownership. A changed inventory requires review of
+the named contract, not a relaxed threshold. The existing explicit-auth and server-mount comparison
+guards remain in place, and the loader cases use real temporary YAML files through `readManifest`.
+
+This is filesystem/YAML and source-contract verification, not live HTTP authentication or installed
+package acceptance. The [boundary audit](../docs/governance/real-boundary-regression-audit.md#kernel-manifest-route-auth-inventory-2026-09-29)
+records the reproduced failure, deletion/substitution mutations and restored focused results.
+
 ## General requirements
 
 New functionality needs behavior tests in the same change. Bug fixes need a regression test that
@@ -42,12 +62,26 @@ browser teardown allowance. Its registration test verifies that the referenced f
 are included in the command. The two Lab scenarios are `artifact-discovery` and
 `jarvis-artifact-handoff`; [the Test Lab guide](../docs/test-lab.md) describes their live effects.
 
+For brand looks in the deck engine (the `brand-look-render` card), run
+`npx vitest run tests/unit/brand-look-render.spec.ts tests/unit/deck-looks-unchanged.spec.ts tests/unit/test-lab-brand-look-registration.spec.ts`.
+The first opens a .pptx, .docx and .xlsx drawn in a brand look and reads the colors and faces back,
+and proves an invalid kit or forged look is refused. The second compares every OOXML part of the ten
+built-in looks, and the picker catalog, with `tests/fixtures/deck-look-digests-2026-10-01.json`,
+which was generated from the renderer before brand looks existed. Regenerate that fixture only for a
+change meant to alter a built-in look: `OSHAL_WRITE_DECK_LOOK_DIGESTS=1 npx vitest run tests/unit/deck-looks-unchanged.spec.ts`.
+No suite touches a database, a route or the network.
+
 Suites that own a fixture browser through `tests/fixtures/isolated-browser.ts` set their hook timeout
 from the fixture's own `BROWSER_HOOK_TIMEOUT_MS`, so the runner's hook deadline can never fire before
 the fixture reaches a verdict about the browser process. The fixture gives that process one exit
 budget - 45 s by default, raised for a slower host with `OSHAL_FIXTURE_BROWSER_EXIT_TIMEOUT_MS` - and
 a browser that misses it still fails the suite by name. `tests/unit/isolated-browser.spec.ts` guards
 both halves, including against a real headless Chromium.
+
+An explicit cleanup-hook timeout is sufficient without a redundant global setting;
+when both exist, the explicit timeout wins and must not shorten the fixture budget.
+[The browser-fixture acceptance record](../docs/testing/isolated-browser-acceptance.md)
+retains five consecutive Chromium/Jarvis/Budgets runs and the real-boundary limits.
 
 Keep local regression results separate from deployed acceptance. A model fixture proves routing
 and enforcement, while a live-model scenario measures semantic selection. Report both honestly.
@@ -152,6 +186,53 @@ The autonomous backlog suites have matching Lab registrations and local commands
 
 Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
 run the unrestricted historical unit collection against a live application database.
+
+### Tree-walk default-runner isolation
+
+`npm run test:unit` still discovers both original test trees, with no removed specs or new skips.
+The three Tree-walk guards (`alert-incident-cutover`, `alert-incident-reopen`, `topology-traversal`)
+run in the `tree-walk-postgres` project: one isolated fork, no file parallelism, in a later scheduling
+group than `unit`. They already own disposable PostgreSQL instances; this partition prevents their
+files from competing with one another or with the ordinary corpus in the same invocation. Other
+database suites are not reclassified by this narrow change. Separate Vitest invocations still need
+host resource coordination. Existing global/per-suite budgets and zero default retries are unchanged.
+
+Database-free configuration/discovery proof:
+
+```sh
+node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/vitest-db-serialization.spec.ts tests/unit/autonomous-test-lab-registration.spec.ts tests/unit/nightly-isolated-runner.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+```
+
+The new guard uses the real Vitest resolver and file discovery, compares against the original full
+collection, and checks exact membership, scheduler groups, worker isolation, budgets and retries.
+It does not collect or execute the PostgreSQL specs. The existing Isolated nightly regressions Lab
+card and fixed runner include this guard. Removing the database exclusion or its serial group must
+make it fail. With an authorized disposable-container slot, `npx vitest run --project tree-walk-postgres`
+runs the three actual database suites. That execution, a real scheduler-overlap receipt and the
+backlog's three consecutive complete unit runs remain required; discovery proof alone closes none
+of those runtime claims.
+
+### Host-owned PostgreSQL test transport
+
+[DisposablePostgres](./helpers/disposable-postgres.ts) keeps its existing Docker-owned default.
+A separately coordinated Linux runner may opt into the
+[owned transport](./helpers/owned-postgres-transport.ts) through the fixed read-only
+`/contract/access.json` mount. This is not a deployment DSN option: inherited database configuration,
+foreign/expired contracts, wrong server markers, populated databases and repeat claims are refused.
+The fixture still creates real non-superuser/non-bypass roles and applies the actual migrations;
+only the host that created the server removes it. An invalid opt-in never falls back to Docker.
+
+The database-free guard exercises the actual transport and fixture control flow with explicitly
+named filesystem, PostgreSQL-client and Docker collaborators:
+
+```sh
+NODE_OPTIONS=--max-old-space-size=384 node --max-old-space-size=128 node_modules/vitest/vitest.mjs run tests/unit/owned-postgres-transport.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism --execArgv=--max-old-space-size=384
+```
+
+It is discovered by the normal unit gate. Its results do not establish real database/RLS proof.
+Real fixture receipts must separately identify the exact product/spec source, any test-helper
+overlay, dependency and PostgreSQL images, enforcing role, actual assertions and owned cleanup.
+Neither a transport guard nor a prepared host contract is a provider or installed-device result.
 
 ## Line coverage is measured, and the figure carries its scope
 

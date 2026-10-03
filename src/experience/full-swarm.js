@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | A related application in Studio's selected workspace becomes the context, and in Orbit's inspector it opens its own suite and inspector (the demo's cross-suite follow). Orbit seats six suites at the demo's positions, clear of the legend the computed circle covered. The Commons Applications tab uses the shared catalog card with its pin; a pin changed there re-renders at once and keeps focus.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Commons names the caller's team or household as its workspace (else '<name>'s swarm'), seats up to three fellow members beside the caller and Jarvis in the room header, and lists the members by role, the caller with their own place, above the swarm roster. Membership, not presence: nobody else's availability or place is shown.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Commons' Room details button, its 'What is shared here?' link and the Private rail button open their panels: the panel content was defined but no handler opened it, so all three did nothing.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Derive tenant roster member initials honestly in roomAvatars from initials or name instead of displaying a static bullet for known peers.
  */
 (() => {
   'use strict';
@@ -127,7 +128,8 @@
   function roomAvatars() {
     const m = team(), others = m ? m.members.filter(x => !x.self).slice(0, 3) : [];
     const label = m ? `${m.members.length} member${m.members.length === 1 ? '' : 's'} of ${m.tenant.name}, and Jarvis` : 'You and Jarvis';
-    return `<div class="avatars" role="img" aria-label="${esc(label)}" title="${esc(label)}">${avatar(me().initials, 'person')}${others.map(() => avatar('·', 'person blue')).join('')}${avatar('J')}</div>`;
+    const peerInitials = o => o.initials || (o.name ? o.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() : '·');
+    return `<div class="avatars" role="img" aria-label="${esc(label)}" title="${esc(label)}">${avatar(me().initials, 'person')}${others.map(o => avatar(peerInitials(o), 'person blue')).join('')}${avatar('J')}</div>`;
   }
   function roomThread() {
     if (!roomThreads.has(state.room)) {
