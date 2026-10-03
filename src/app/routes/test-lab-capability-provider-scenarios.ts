@@ -78,6 +78,7 @@ export const CAPABILITY_PROVIDER_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/capability-resolution.spec.ts' },
     { level: 'unit', path: 'tests/unit/capability-options-agree.spec.ts' },
     { level: 'integration', path: 'tests/unit/capability-swarm-rows-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/capability-row-snapshot.spec.ts' },
     { level: 'integration', path: 'tests/unit/capability-provider-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/capability-principal-guard.spec.ts' },
     { level: 'unit', path: 'tests/unit/voice-stt-failover.spec.ts' },

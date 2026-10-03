@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D6: the swarm rows (migration 183) held in memory so every capability call reads them without a query, refreshed at boot, after every write through the operator route, and on a timer, so one operator write moves the next call with no restart (the provider-switch snapshot pattern, ProviderSwitchSnapshot). A failed refresh keeps the last good rows and logs at ERROR. The process installs one snapshot; an installed snapshot that has never completed a read answers "not loaded", which the resolver refuses on rather than guessing the seed, and with nothing installed (no Postgres) the reader answers "no rows", which is today's behaviour.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D6: a refresh asked for while a read is running no longer shares that read. The running read (the timer's, say) may have begun before the operator's write committed, so the route's refresh after the write could answer with the old rows and the next call would resolve the old default until the next tick. Such a call now gets one further read that starts when the running one ends (shared by every caller that asks meanwhile). Guard: tests/unit/capability-row-snapshot.spec.ts.
  */
 
 /**
@@ -60,17 +61,27 @@ export class CapabilityRowSnapshot implements CapabilitySwarmRowReader {
   private lastError: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
+  private queued: Promise<void> | null = null;
 
   constructor(private readonly source: CapabilitySwarmRowSource) {}
 
   /**
    * @description Re-read every row under the system identity (the table is readable by every
-   * identity; the system context keeps a strict GUC mode from starving the read). Concurrent
-   * callers share one read. A failure keeps the previous rows and is logged — never thrown into a call.
-   * @returns Resolves when the read completed or failed.
+   * identity; the system context keeps a strict GUC mode from starving the read). A call made while
+   * a read is running gets ONE further read that starts when it ends, shared by every such caller:
+   * the running read may have begun before the caller's write committed, so a refresh asked for after
+   * a write always answers with a read that began after it. A failure keeps the previous rows and is
+   * logged — never thrown into a call.
+   * @returns Resolves when a read that began after this call completed or failed.
    */
   refresh(): Promise<void> {
-    if (this.inFlight) return this.inFlight;
+    if (this.inFlight) {
+      this.queued ??= this.inFlight.then(() => {
+        this.queued = null;
+        return this.refresh();
+      });
+      return this.queued;
+    }
     this.inFlight = runWithSystemIdentity(async () => {
       const startedAt = Date.now();
       try {
