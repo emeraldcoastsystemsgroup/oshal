@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: the vocabulary every capability resolution shares. Four capabilities (tts, stt, image, video), three cost classes (D4), the five rungs of the resolution order (D1), the principal every call carries (D8), a swarm row (D2, migration 183), a provider declaration, the availability answer that names the missing piece (D3), and the adapter each capability supplies so one resolver serves all four. Bottom layer on purpose: the voice and media features both resolve through the same rule, and the app layer installs the rows they read.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): CapabilityResolveRequest.requested, a provider the request names (the body of POST /api/voice/synthesize). Unlike `explicit` (server code: required), it is a preference that falls through to the next rung under D5 when it is not registered or not available. A change from main for that route, where only an unregistered requested provider fell back to the swarm default, and a registered one that was not usable was called and returned its own unconfigured or failed result.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the offer row (migration 184: unit price, quota label, who a user-written choice may name the provider for), the unit each capability is priced per, and the spend event a TTS or STT call records with its accountable bot and caller (D4).
  */
 
 /**
@@ -35,6 +36,17 @@ export type CapabilityRung = (typeof CAPABILITY_RUNGS)[number];
 
 /** The reserved swarm scope whose row is the swarm default ("Portal default" to users). */
 export const CAPABILITY_FLEET_SCOPE = 'fleet-default';
+
+/** What one capability's unit price is per (ADR-173 D4): the amount of a call is its units times the price. */
+export const CAPABILITY_PRICE_UNITS = Object.freeze({
+  tts: 'characters',
+  stt: 'audio-seconds',
+  image: 'images',
+  video: 'video-seconds',
+} as const);
+
+/** Who a user-written choice may name a provider for (ADR-173 D4). */
+export type CapabilityOfferAudience = 'operator' | 'everyone' | 'nobody';
 
 /**
  * The identity a capability call is made for (ADR-173 D8). A signed-in person (a guest included),
@@ -183,6 +195,46 @@ export interface CapabilityRefused {
 
 /** The answer of one resolution. */
 export type CapabilityResolution = CapabilityResolved | CapabilityRefused;
+
+/** One row of oshal_capability_provider_offers (migration 184). Never a secret. */
+export interface CapabilityProviderOffer {
+  capability: Capability;
+  providerId: string;
+  /** Who a user-written choice may name it for; null = the class default (enforced from slice S2). */
+  offeredTo: CapabilityOfferAudience | null;
+  /** USD per unit of {@link CAPABILITY_PRICE_UNITS}; null when no price is set. */
+  unitPriceUsd: number | null;
+  /** A label the options list shows, e.g. a shared free-tier quota. */
+  quotaLabel: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
+/** The offers a spend recording reads, from the installed snapshot or a test double. */
+export interface CapabilityOfferReader {
+  offerFor(capability: Capability, providerId: string): CapabilityProviderOffer | null;
+}
+
+/** One capability call's spend (ADR-173 D4): who called, which bot is accountable, and the units. */
+export interface CapabilitySpendEvent {
+  capability: Capability;
+  providerId: string;
+  costClass: CapabilityCostClass;
+  /** The call's units ({@link CAPABILITY_PRICE_UNITS}); null when they could not be measured. */
+  units: number | null;
+  /** The offer row's unit price; null when no price is set. */
+  unitPriceUsd: number | null;
+  principal: CapabilityPrincipal;
+  agentId: string | null;
+  appId: string | null;
+  /** The provider's model, when it names one. */
+  model: string | null;
+  /** Wall-clock duration of the vendor call in ms. */
+  durationMs: number;
+}
+
+/** Records one spend event; never throws (cost capture must not break a call that succeeded). */
+export type CapabilitySpendRecorder = (event: CapabilitySpendEvent) => Promise<void>;
 
 /** The swarm rows a resolution reads, from the installed snapshot or a test double. */
 export interface CapabilitySwarmRowReader {
