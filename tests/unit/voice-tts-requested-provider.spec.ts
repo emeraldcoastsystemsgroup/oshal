@@ -3,7 +3,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 guard at the VoiceService boundary for the provider a synthesize request names (the body of POST /api/voice/synthesize). It is a preference, as before ADR-173: an UNREGISTERED one and a registered but UNAVAILABLE one both fall through to the swarm default instead of refusing the call, each with a structured warning that names the provider, what is missing and why, and the request's voice never travels to the provider that answers (D9). An available requested provider answers at the app rung with no warning. Over the REAL TTS registry built from a swarm config on disk and the real Gemini and OpenAI provider classes; only their status probes and synthesize calls are doubled, and the resolver's logger is captured.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 guard at the VoiceService boundary for the provider a synthesize request names (the body of POST /api/voice/synthesize). It is a preference (D10's default): an UNREGISTERED one and a registered but UNAVAILABLE one both fall through to the swarm default under D5 instead of refusing the call (a change from main, where only an unregistered requested provider fell back to the swarm default, and a registered one that was not usable was called and returned its own unconfigured or failed result), each with a structured warning that names the provider, what is missing and why, and the request's voice never travels to the provider that answers (D9). An available requested provider answers at the app rung with no warning. Over the REAL TTS registry built from a swarm config on disk and the real Gemini and OpenAI provider classes; only their status probes and synthesize calls are doubled, and the resolver's logger is captured.
  */
 
 import fs from 'node:fs';
@@ -86,7 +86,7 @@ afterEach(() => {
 /** The fall-through warnings the resolver logged, as [fields, message] pairs. */
 const fallThroughWarnings = () => resolutionLog.warn.mock.calls.filter((call) => call[1] === FALL_THROUGH);
 
-describe('D10: the provider a synthesize request names is a preference, as before ADR-173', () => {
+describe('D10: the provider a synthesize request names is a preference that falls through under D5', () => {
   it('an UNREGISTERED requested provider falls through to the swarm default, with a warning naming it and why', async () => {
     const out = await new VoiceService({ rows: NO_ROWS }).synthesizeSpeech('hello', 'Joanna', 'polly-tts', { caller: CALLER });
     expect(out).toMatchObject({ providerId: 'openai-tts', rung: 'swarm-default', voiceId: 'marin' });

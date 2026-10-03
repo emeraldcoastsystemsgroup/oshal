@@ -4,7 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: the vocabulary every capability resolution shares. Four capabilities (tts, stt, image, video), three cost classes (D4), the five rungs of the resolution order (D1), the principal every call carries (D8), a swarm row (D2, migration 183), a provider declaration, the availability answer that names the missing piece (D3), and the adapter each capability supplies so one resolver serves all four. Bottom layer on purpose: the voice and media features both resolve through the same rule, and the app layer installs the rows they read.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): CapabilityResolveRequest.requested, a provider the request names (the body of POST /api/voice/synthesize). Unlike `explicit` (server code: required), it is a preference that falls through to the next rung when it is not registered or not available, as that route did before ADR-173.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): CapabilityResolveRequest.requested, a provider the request names (the body of POST /api/voice/synthesize). Unlike `explicit` (server code: required), it is a preference that falls through to the next rung under D5 when it is not registered or not available. A change from main for that route, where only an unregistered requested provider fell back to the swarm default, and a registered one that was not usable was called and returned its own unconfigured or failed result.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the offer row (migration 184: unit price, quota label, who a user-written choice may name the provider for), the unit each capability is priced per, and the spend event a TTS or STT call records with its accountable bot and caller (D4).
  */
 
@@ -265,8 +265,9 @@ export interface CapabilityResolveRequest extends CapabilityCaller {
   /**
    * A provider the request names (a client's choice, such as the `providerId` in the body of
    * `POST /api/voice/synthesize`): a preference (D10's default). It is used when available; when it
-   * is not registered or not available the walk falls through to the next rung, as that route did
-   * before ADR-173, and a warning names the provider and the reason. Ignored when `explicit` is set.
+   * is not registered or not available the walk falls through to the next rung under D5 (so a free
+   * one is refused with `payer-changes` rather than land on a paid one), and a warning names the
+   * provider and the reason. Ignored when `explicit` is set.
    */
   requested?: CapabilityChoice | null;
   /** Rung 3: the caller's own default, read by the route that knows the user. */

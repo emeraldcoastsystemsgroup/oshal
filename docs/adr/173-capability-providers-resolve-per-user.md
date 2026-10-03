@@ -645,8 +645,8 @@ functionality"). Database claims are proved against the real enforcing role and 
     (migration `183`, `(scope_id, capability)`, forced row-level security: every identity reads, only the operator
     identity or system work writes). The shared resolver is `resolveCapabilityProvider` (`src/shared/capability-providers`):
     a provider server code names (required, D10) or one a request names, such as the `providerId` in the body of
-    `POST /api/voice/synthesize` (a preference, D10's default: when it is not registered or not available the next rung
-    answers, as that route did before, with a warning naming the provider and the reason), then the caller's own default
+    `POST /api/voice/synthesize` (a preference, D10's default: when it is not registered or not available the walk moves to
+    the next rung under D5, with a warning naming the provider and the reason), then the caller's own default
     (rung 3: the saved text-to-speech choice in `voice_user_prefs` until S2), then the `fleet-default` row, then the seed
     (`config-seed/global-config.json`, or for images
     `selectStoryboardImageSeed`: `STORYBOARD_IMAGE_PROVIDER`, `codex`, or the render bot's harness), then a refusal naming the
@@ -659,6 +659,10 @@ functionality"). Database claims are proved against the real enforcing role and 
     wired: `/api/voice/transcribe` and `/api/voice/synthesize` (the caller, and the Jarvis bot as the voice rail's accountable
     bot until S4), the ambient speaker transcription, and storyboard images (`resolveStoryboardImageProvider`). Video has an
     adapter and no caller yet (S4). The live case is `node scripts/operations/live-acceptance.js capability-stt --allow-paid`.
+    A change from main under D1 and D5: on main, an unregistered provider named in a synthesize request fell back to the
+    swarm default, and a registered one that was not usable was called and returned its own `unconfigured` or `failed`
+    result. Now both fall through under D5: a swarm-paid one may land on the swarm-paid default (`gemini-tts` on
+    `google-cloud-tts` on the box, billed to the service account), and a free one is refused with `payer-changes`.
     Not yet: the offer table with unit prices, TTS and STT spend events, and the config-admin card (S1b).
   - As built, S1b (2026-10-03, locally tested, not live-proven). The offer table is `oshal_capability_provider_offers`
     (migration `184`, `(capability, provider_id)`, the same forced row-level security): `unit_price_usd` per character (tts),
