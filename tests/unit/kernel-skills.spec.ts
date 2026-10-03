@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -95,6 +96,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'application-authorization',
         'authenticated-artifacts',
         'bound-workflow-results',
+        'experience',
         'futures-forward-receipts',
         'futures-archive-import',
         'package-tools',

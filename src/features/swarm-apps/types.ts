@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -304,6 +305,8 @@ export interface SwarmAppToolDeclaration {
 
 /** A static ribbon icon declared in the manifest. */
 export interface SwarmAppStaticUi {
+  /** Runtime borrowed-surface metadata: retain the member's caller-filtered tool identity. */
+  visibilityToolName?: string;
   toolName: string;
   label: string;
   icon: string;
@@ -825,7 +828,7 @@ export interface SwarmAppDependencyLists {
 
 /** The YAML manifest shape, as parsed from swarm-apps/*.yaml. */
 export interface SwarmAppManifest {
-  /** ADR-164 staged declaration; installation requires the completed experience kernel skill. */
+  /** ADR-164 package-owned entry, palette and supported member surfaces; requires the experience skill. */
   experience?: import('@/shared/experience-contract').ExperienceDeclaration;
   name: string;
   displayName: string;

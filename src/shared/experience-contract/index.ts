@@ -1,11 +1,12 @@
 /**
  * CHANGE LOG
  * SEQ | AUTHOR | DESCRIPTION
- * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-164: validate experience declarations before installation; the hosting compatibility floor stays unavailable until hosting and discovery ship.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-164: validate experience declarations before installation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve named member surfaces against active manifests without coupling packages to member URLs or markup.
  */
 import { readAppDependencies, type AppDependencySource } from '@/shared/app-dependencies';
 
-/** Compatibility floor; register it only with the completed hosting implementation. */
+/** Compatibility floor for package discovery, shell hosting and supported member surfaces. */
 export const EXPERIENCE_SKILL = 'experience';
 
 /** A supported member surface; identity is independent of a member's internal URL or DOM. */
@@ -54,7 +55,7 @@ function canonicalPath(value: unknown): value is string {
 /**
  * Validate the package declaration without granting access or resolving member catalogs.
  * Cross-package surface existence is checked at activation, against active member manifests.
- * The loader independently checks that the hosting skill is actually implemented on this core.
+ * The loader independently checks that the hosting skill is implemented on this core.
  */
 export function validateExperienceDeclaration(manifest: ExperienceManifestSource): void {
   if (manifest.experience === undefined) return;
@@ -103,4 +104,32 @@ export function validateExperienceDeclaration(manifest: ExperienceManifestSource
     if (seen.has(key)) throw new Error('experience surfaces must not repeat an app/surface reference');
     seen.add(key);
   }
+}
+
+/** Resolve the member's current declared surface, preserving its supported query and fragment. */
+export function resolveExperienceSurfaces<T extends { toolName: string; iframeUrl: string }>(
+  manifest: ExperienceManifestSource,
+  members: ReadonlyMap<string, { ui?: { static?: T[] } }>,
+): { surfaces: Array<T & { visibilityToolName: string }>; unavailable: Array<ExperienceSurface & { reason: string }> } {
+  const experience = manifest.experience as ExperienceDeclaration | undefined;
+  if (!experience) return { surfaces: [], unavailable: [] };
+  const required = new Set(readAppDependencies(manifest).required.apps);
+  const surfaces: Array<T & { visibilityToolName: string }> = [], unavailable: Array<ExperienceSurface & { reason: string }> = [];
+  for (const ref of experience.surfaces ?? []) {
+    const member = members.get(ref.app);
+    const surface = member?.ui?.static?.find(candidate => candidate.toolName === ref.surface);
+    if (!surface) {
+      if (required.has(ref.app)) throw new Error(`experience required surface unavailable: ${ref.app}/${ref.surface}`);
+      unavailable.push({ ...ref, reason: member ? 'surface-unavailable' : 'application-unavailable' });
+      continue;
+    }
+    const local = new URL(surface.iframeUrl, 'https://experience.invalid');
+    if (local.origin !== 'https://experience.invalid' || !surface.iframeUrl.startsWith('/')
+      || local.pathname.startsWith('//')) throw new Error(`experience member surface must be same-origin: ${ref.app}/${ref.surface}`);
+    if (ref.audience && !local.searchParams.has('audience')) local.searchParams.set('audience', ref.audience);
+    // Identity includes its owner: different member apps may have equally named surfaces.
+    surfaces.push({ ...surface, toolName: `${ref.app}--${surface.toolName}`, visibilityToolName: surface.toolName,
+      iframeUrl: `${local.pathname}${local.search}${local.hash}` });
+  }
+  return { surfaces, unavailable };
 }

@@ -11,16 +11,19 @@ application-hosting baseline.
 | --- | --- | --- |
 | E1 inventory and contracts | Source inventory and delivery contract recorded here | The tables below identify source owners and migration gates |
 | E2a declaration validation | Implemented in `src/shared/experience-contract/`, called by the manifest loader | `tests/unit/experience-package-contract.spec.ts` |
-| E2b hosting and discovery | Pending | Two installed experiences, distinct authorized callers, refused direct entry, dynamic menus |
+| E2b hosting and discovery | Implemented locally; deployed proof pending | Loader/service/runtime fixtures prove two installed packages with distinct callers, entry denial, private scope and member visibility; 36 browser cases pass, including the chooser at four widths |
 | E3 composite roles | Semantics specified; assignment implementation pending | Exact-role preview, provenance, overlap-safe removal and reviewed upgrades |
 | E4 Home pilot | Pending; operational headings updated in the existing runtime | Installed household journeys and negative API/database cases |
 | E5 remaining six | Pending | Individual package releases and acceptance receipts |
 | E6 installed acceptance | Pending | Deployed revisions, fixture cleanup and registered Test Lab results |
 
-E2a deliberately does **not** register `experience` as an available kernel skill.
-The current core refuses an experience package until E2b provides its hosting and
-discovery semantics. A manifest block must not advertise features this runtime ignores.
-Validation is not installation or authorization proof.
+The `experience` compatibility floor now supplies package hosting and discovery:
+`GET /api/ui/experiences` lists active scope-visible packages under current authorization;
+`GET /api/ui/experiences/:name/open` checks the named entry operation and refuses a
+changed installation before redirecting. Page entries use package routes; rail entries
+reuse the existing focused cockpit profile. The portal and cockpit menu consume this
+catalog. Discovery failure offers no static fallback. Installation and deployed acceptance
+are separate gates, and E3–E6 remain open.
 
 ## Existing mechanisms to reuse
 
@@ -128,10 +131,11 @@ above is illustrative; it must not be assumed to exist in the current member man
   profile/ribbon. Own route catalogs enforce direct entry as well as menu entry.
 - `surfaces` references `ui.static[].toolName` in explicitly declared member packages.
   Activation resolves required references against active manifests; an absent optional
-  member produces an unavailable tile without failing the experience.
+  member omits its surface and reports an unavailable reference without failing the experience.
 - Package-owned skins use existing theme hooks. A stylesheet declaration/registration
   must resolve only to package-owned assets; layout defaults must not overwrite a
-  person's saved appearance. Final packaged-skin schema is part of E2b.
+  person's saved appearance. `experience.skin` selects the palette; an optional
+  package-owned `ui/<skin>.css` uses the existing theme route and profile theme hooks.
 - Discovery uses active installation, scope visibility and current `canDiscover` for a
   verified issuer/subject. Resolution failure refuses discovery, not static fallback.
   Opening independently checks `app.open`; cached discovery never authorizes a route.

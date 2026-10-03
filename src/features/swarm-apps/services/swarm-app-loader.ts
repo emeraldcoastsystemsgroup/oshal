@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 27 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -60,6 +61,7 @@ import { validatePackageTools } from '@/shared/package-tools';
 import { loadPackageTestCatalog } from '@/shared/package-testing';
 import { readAppDependencies } from '@/shared/app-dependencies';
 import { validateExperienceDeclaration } from '@/shared/experience-contract';
+import { validateExperienceEntryCatalog } from './swarm-app-experience';
 import { validateAppScope } from '@/shared/app-scope';
 import { validateGroupManifest, validateReadinessDeclarations, validateGuestSeedDeclaration, validateSummaryDeclaration } from './swarm-app-group';
 import { validateAppIntegrations } from './app-integrations';
@@ -791,6 +793,7 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // fail at load. Omission is deliberate rollout compatibility and keeps current behavior.
   validateAppAccess(manifest, absPath);
   const authorizationCatalog = loadApplicationAuthorization(path.dirname(absPath), manifest);
+  validateExperienceEntryCatalog(manifest, authorizationCatalog);
   validatePackageTools(manifest);
   loadPackageTestCatalog(path.dirname(absPath), manifest);
 

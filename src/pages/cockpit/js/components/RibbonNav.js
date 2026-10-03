@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -317,6 +318,10 @@ export class RibbonNav {
     await this._loadGuestState();
     await this._loadOperatorState();
     this.profile = await this._fetchProfile();
+    if (this.profile?.experience?.shell === 'page') {
+      window.location.replace(`/api/ui/experiences/${encodeURIComponent(this.profile.name)}/open`);
+      return;
+    }
     this._applyAppBranding();
     this.activeView = this.profile?.defaultView || 'tickets';
     this.views = this._buildFrameworkViews();
@@ -334,6 +339,7 @@ export class RibbonNav {
     this.shellLocked = resolveShellLock({ isOperator: this.profileOperator ?? this.isOperator, landingApp: this.landingApp });
     if (this.hidePlatformChrome && !this.shellLocked) this._appendPlatformHub();
     if (this.shellLocked) this._applyShellLock();
+    else await this._loadExperiences();
 
     logger.info('Ribbon initialised with profile', {
       profile: this.profile?.name,
@@ -359,6 +365,30 @@ export class RibbonNav {
       home.setAttribute('aria-label', `${this.profile?.displayName || this.landingApp} — home`);
     }
     for (const el of document.querySelectorAll('[data-experience], [data-experiences-label]')) el.hidden = true;
+  }
+
+  /** Build choices from installed packages and this caller's policy; no static experience menu. */
+  async _loadExperiences() {
+    const host = document.getElementById('experience-menu');
+    if (!host) return;
+    host.replaceChildren(); host.hidden = true;
+    try {
+      const response = await fetch('/api/ui/experiences', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!Array.isArray(data.experiences) || data.experiences.length < 2) return;
+      const heading = document.createElement('div'); heading.className = 'header-utilities-label';
+      heading.dataset.experiencesLabel = ''; heading.textContent = 'Experiences'; host.append(heading);
+      for (const row of data.experiences) {
+        if (typeof row.app !== 'string' || typeof row.label !== 'string') continue;
+        const link = document.createElement('a'); link.className = 'header-btn';
+        link.href = `/api/ui/experiences/${encodeURIComponent(row.app)}/open`;
+        link.dataset.experience = row.app; link.textContent = row.label; host.append(link);
+      }
+      const all = document.createElement('a'); all.className = 'header-btn'; all.href = '/portal';
+      all.dataset.experience = '/portal'; all.textContent = 'All experiences'; host.append(all);
+      host.hidden = false;
+    } catch (error) { logger.warn('Experience menu unavailable', { error: String(error) }); }
   }
 
   /**

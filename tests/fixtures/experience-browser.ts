@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -56,6 +57,7 @@ export function experienceState() {
   ];
   return {
     apps, authenticated: true, user: { sub: 'synthetic-user', email: 'synthetic@fixture.test', preferred_username: 'synthetic@fixture.test' },
+    experiences: ['studio', 'jarvis', 'orbit', 'commons', 'family', 'classroom', 'company'].map(skin => ({ app: `${skin}-experience`, skin, label: `Synthetic ${skin}`, entry: `/fixture/experience/${skin}.html`, shell: 'page' })),
     status: {} as Record<string, number>, calls: [] as string[], asks: [] as Array<{ message: string; sessionId: string }>,
     tickets: [
       { ticketId: '11111111-1111-4111-8111-111111111111', title: 'Synthetic ledger review', status: 'in_process', ticketType: 'ledger-review', updatedAt: iso(-HOUR), description: 'A synthetic ticket for the shells.' },
@@ -205,6 +207,13 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
   // One request log for every case, then each lane's override routes (they answer only what their case state asks
   // for and fall through otherwise), then the default synthetic routes, whose `/api` 404 catch-all stays last.
   app.use((req, _res, next) => { state.calls.push(`${req.method} ${req.path}`); next(); });
+  app.get('/api/ui/experiences', requiresAuth, (_req, res) => res.status(state.status.experiences || 200).json({ experiences: state.experiences }));
+  app.get('/api/ui/experiences/:name/open', requiresAuth, (req, res) => {
+    const experience = state.experiences.find(row => row.app === req.params.name);
+    if (!experience) { res.sendStatus(404); return; }
+    res.redirect(302, experience.entry);
+  });
+  app.get('/fixture/experience/:document', requiresAuth, (req, res) => res.type('html').send(`<h1>${req.params.document.replace(/[^a-z.-]/g, '')}</h1>`));
   portalBuildRoutes(app, state);
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   assemblyHostRoutes(app, state);

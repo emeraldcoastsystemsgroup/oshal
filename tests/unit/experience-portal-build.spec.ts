@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -233,7 +234,7 @@ describe('Routines panel over the schedules and Workflow Studio routes', () => {
     await page.waitForFunction(() => document.querySelector('[data-routine-note="own-1"]')?.textContent === 'Resumed for you.');
     expect(portalState(fixture.state).schedules.find(s => s.id === 'own-1')?.status).toBe('active');
     portalState(fixture.state).schedules.find(s => s.id === 'own-1')!.ownerSub = 'another-user';
-    await toggle().uncheck();
+    await toggle().click();
     await page.waitForFunction(() => document.querySelector('[data-routine-note="own-1"]')?.textContent?.includes('HTTP 404'));
     expect(await page.locator('[data-routine-note="own-1"]').innerText()).toBe('Could not pause this routine (HTTP 404: Schedule not found).');
     expect(await toggle().isChecked()).toBe(true);
@@ -536,41 +537,39 @@ describe('household and team membership, and the caller’s own place', () => {
   });
 });
 
-describe('portal sections over the live swarm', () => {
-  it('the central assistant feature, the three homebases and the four numbered layouts each carry a live fact, and no screenshot', async () => {
-    await open('/portal', '.experience-cards');
-    expect(await page.locator('.experience-card').count()).toBe(8);
-    const central = page.locator('.experience-card.central-feature');
-    expect(await central.getAttribute('href')).toBe('/nexus');
-    expect(await central.locator('small').innerText()).toBe('1 of 2 assistants online · 1 open work item');
-    expect(await central.locator('.central-orb').count()).toBe(1);
-    const homes = page.locator('.live-homebases .homebase-card');
-    expect(await homes.evaluateAll(es => es.map(e => e.getAttribute('href')))).toEqual(['/homebase?preset=family', '/homebase?preset=classroom', '/homebase?preset=company']);
-    expect(await homes.locator('.card-meta span:first-child').allTextContents()).toEqual(['3 Home & life applications', 'Little Monsters is available to you', '6 Productivity applications']);
-    const concepts = page.locator('.concept-grid .concept-card');
-    expect(await concepts.locator('.concept-number').allInnerTexts()).toEqual(['01 / CONVERSATION FIRST', '02 / ASSISTANT FIRST', '03 / CONNECTIONS FIRST', '04 / PEOPLE FIRST']);
-    expect(await concepts.locator('.live-fact').allInnerTexts()).toEqual(['1 open work item', '1 item needs you', '6 suites · 19 apps', '7 rooms']);
-    expect(await concepts.evaluateAll(es => es.map(e => e.getAttribute('href')))).toEqual(['/studio', '/jarvis', '/orbit', '/commons']);
+describe('portal sections over the installed authorized experiences', () => {
+  it('lists package entries and current work without advertising an uninstalled layout', async () => {
+    await open('/portal', '[data-experience-package]');
+    expect(await page.locator('[data-experience-package]').count()).toBe(7);
+    expect(await page.locator('[data-experience-package]').evaluateAll(es => es.map(e => e.getAttribute('href')))).toEqual(fixture.state.experiences.map(e => `/api/ui/experiences/${e.app}/open`));
+    expect(await page.locator('#recent-work').innerText()).toContain('Synthetic ledger review');
     expect(await page.locator('#portal-root img').count()).toBe(0);
-    const order = await page.evaluate(() => ['.gallery-intro', '.gallery-inventory', '.central-feature', '.live-homebases', '.concept-grid', '#recent-work', '#catalog-directory']
-      .map(sel => document.querySelector(sel)!.getBoundingClientRect().top));
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(await page.getByRole('link', { name: 'Assistant', exact: true }).getAttribute('href')).toBe('/nexus');
+    expect(await page.getByRole('link', { name: 'Simple chat', exact: true }).getAttribute('href')).toBe('/simple');
     expect(errors).toEqual([]);
   });
 
-  it('a Little Monsters outside the plan or absent from the catalog is named as such on the classroom card', async () => {
-    const lm = fixture.state.apps.find(a => a.summary.name === 'little-monsters')!;
-    (lm as { plan: unknown }).plan = null;
-    await open('/portal', '.experience-cards');
-    expect(await page.locator('.live-homebases .homebase-card').nth(1).locator('.card-meta span:first-child').textContent()).toBe('Little Monsters is listed, not admitted for you');
-    fixture.state.apps = fixture.state.apps.filter(a => a.summary.name !== 'little-monsters');
-    await page.reload(); await page.waitForSelector('.experience-cards');
-    expect(await page.locator('.live-homebases .homebase-card').nth(1).locator('.card-meta span:first-child').textContent()).toBe('Little Monsters is not in your catalog');
-    expect(fixture.state.calls.filter(c => c.includes('/api/education/') || c.includes('little-monsters/home-summary'))).toEqual([]);
+  it('updates the chooser from discovery and follows the package entry', async () => {
+    fixture.state.experiences = fixture.state.experiences.filter(e => e.skin === 'classroom');
+    await open('/portal', '[data-experience-package]');
+    expect(await page.locator('[data-experience-package]').count()).toBe(1);
+    await page.locator('[data-experience-package]').focus();
+    await page.keyboard.press('Enter');
+    await page.waitForURL('**/fixture/experience/classroom.html');
+    expect(errors).toEqual([]);
+  });
+
+  it('distinguishes an empty authorized catalog from a discovery outage', async () => {
+    fixture.state.experiences = [];
+    await open('/portal', '#experiences');
+    expect(await page.locator('#experiences').innerText()).toContain('No experiences are available');
+    fixture.state.status.experiences = 503;
+    await page.reload();
+    await page.getByRole('heading', { name: 'Experiences unavailable' }).waitFor();
+    expect(await page.locator('[data-experience-package]').count()).toBe(0);
     expect(errors).toEqual([]);
   });
 });
-
 /** @description The demo's layout check: no horizontal page overflow and no control or heading outside the viewport (closed dialogs excepted). */
 async function layoutProblems() {
   return page.evaluate(() => {
@@ -615,7 +614,7 @@ describe('six widths, the provenance of on-demand reads, and the other games', (
   it('the portal fits at 1440, 768, 390 and 320 pixels', async () => {
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
-      await open('/portal', '.experience-cards');
+      await open('/portal', '#experiences');
       expect(await layoutProblems(), `portal ${width}`).toEqual(CLEAN);
     }
   });

@@ -633,3 +633,12 @@ Home is the reference pilot, then Business, Classroom, Studio, Jarvis, Orbit and
 release requires actual installed browser/API/database acceptance and cleanup receipts. Keep the
 existing extended-UX backlog open until that evidence exists; preserve preview/gallery styling
 while running pages use compact operational headings and useful source-backed status.
+
+E2b implementation now registers the `experience` compatibility floor, resolves named member
+surfaces at activation and synthesizes existing focused profiles, with member visibility retained.
+The installed experience list and open route use current authorization, require a named
+`app.open` entry binding and refuse policy outages or a changed installation. Portal and cockpit
+choices consume discovery; package palettes use the existing theme hooks. Local tests cover two
+packages, distinct callers, denied entry and private installation scope; the full-swarm browser
+suite passes 36 cases. Deployed acceptance, composite assignments and the seven package releases
+remain separate open gates in the integration contract.

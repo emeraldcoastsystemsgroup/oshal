@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * SEQ | AUTHOR | DESCRIPTION
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Experience declarations refuse unsafe entries, unsupported shapes and undeclared members; actual loader never admits an unimplemented hosting floor.
  */
@@ -8,14 +9,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { dump } from 'js-yaml';
-import { validateExperienceDeclaration } from '@/shared/experience-contract';
+import { resolveExperienceSurfaces, validateExperienceDeclaration } from '@/shared/experience-contract';
 import { readManifest } from '@/features/swarm-apps/services/swarm-app-loader';
 
 const base = () => ({
   name: 'synthetic-experience', displayName: 'Synthetic experience',
   uses: ['application-authorization', 'experience', 'app-dependencies'],
   authorization: { version: 1, catalog: 'authorization.yaml' },
-  routes: [{ mountPath: '/api/synthetic-experience', auth: 'oidc' }],
+  routes: [{ mountPath: '/api/synthetic-experience', auth: 'oidc', module: './routes', factory: 'createRoutes' }],
   dependencies: { required: { apps: ['synthetic-calendar'] }, optional: { apps: ['synthetic-finance'] } },
   experience: { version: 1, entry: '/api/synthetic-experience/app.html', shell: 'page', skin: 'family', label: 'Home',
     surfaces: [{ app: 'synthetic-calendar', surface: 'calendar-home', audience: 'family' }] },
@@ -88,9 +89,35 @@ describe('experience package declaration', () => {
     const file = join(dir, 'oshal-app.yaml'); writeFileSync(file, dump(m));
     expect(() => readManifest(file)).toThrow(/experience requires uses/);
   });
-  it('the real loader refuses the still-unimplemented hosting floor even for a structurally valid package', () => {
+  it('the real loader accepts the implemented hosting floor for a valid package', () => {
     const dir = mkdtempSync(join(tmpdir(), 'oshal-experience-contract-')); dirs.push(dir);
     const file = join(dir, 'oshal-app.yaml'); writeFileSync(file, dump(base()));
-    expect(() => readManifest(file)).toThrow(/unknown kernel skill.*experience/);
+    writeFileSync(join(dir, 'authorization.yaml'), dump({ version: 1, resources: { application: { scopes: ['own'] } }, permissions: { 'app.open': { resource: 'application', effect: 'read', minimumTier: 'viewer' } }, roles: { viewer: { tier: 'viewer', grants: [{ permission: 'app.open', scope: 'own' }] } }, bindings: { http: [{ id: 'entry', method: 'GET', path: '/app.html', allOf: ['app.open'] }] } }));
+    expect(readManifest(file).experience).toEqual(base().experience);
+    const unbound = { version: 1, resources: { application: { scopes: ['own'] } }, permissions: { 'app.open': { resource: 'application', effect: 'read', minimumTier: 'viewer' } }, roles: {}, bindings: {} };
+    writeFileSync(join(dir, 'authorization.yaml'), dump(unbound));
+    expect(() => readManifest(file)).toThrow(/entry must bind.*app.open/);
+  });
+});
+
+describe('supported experience member surfaces', () => {
+  it('resolves the current member URL, preserves its query and fragment, and does not mutate its declaration', () => {
+    const surface = { toolName: 'calendar-home', iframeUrl: '/api/synthetic-calendar/current.html?view=week#today', title: 'Calendar' };
+    const resolved = resolveExperienceSurfaces(base(), new Map([['synthetic-calendar', { ui: { static: [surface] } }]]));
+    expect(resolved.surfaces).toEqual([{ ...surface, toolName: 'synthetic-calendar--calendar-home', visibilityToolName: 'calendar-home', iframeUrl: '/api/synthetic-calendar/current.html?view=week&audience=family#today' }]);
+    expect(surface.iframeUrl).not.toContain('audience');
+  });
+  it('fails activation for a missing required surface and omits unavailable optional offers', () => {
+    expect(() => resolveExperienceSurfaces(base(), new Map())).toThrow(/required surface unavailable/);
+    const m = base(); m.experience.surfaces = [{ app: 'synthetic-finance', surface: 'finance-home', audience: 'family' }];
+    expect(resolveExperienceSurfaces(m, new Map())).toEqual({ surfaces: [], unavailable: [{ ...m.experience.surfaces[0], reason: 'application-unavailable' }] });
+    expect(resolveExperienceSurfaces(m, new Map([['synthetic-finance', { ui: { static: [] } }]])).unavailable[0].reason).toBe('surface-unavailable');
+  });
+  it.each(['https://outside.invalid/app', '//outside.invalid/app', '/\\outside.invalid/app', 'relative.html'])('refuses member surface %s', iframeUrl => {
+    expect(() => resolveExperienceSurfaces(base(), new Map([['synthetic-calendar', { ui: { static: [{ toolName: 'calendar-home', iframeUrl }] } }]]))).toThrow(/same-origin/);
+  });
+  it('preserves a member-owned audience instead of overriding its domain contract', () => {
+    const resolved = resolveExperienceSurfaces(base(), new Map([['synthetic-calendar', { ui: { static: [{ toolName: 'calendar-home', iframeUrl: '/calendar?audience=classroom' }] } }]]));
+    expect(resolved.surfaces[0].iframeUrl).toBe('/calendar?audience=classroom');
   });
 });

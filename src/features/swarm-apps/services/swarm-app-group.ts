@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -81,25 +82,30 @@ export function isGroupManifest(manifest: Pick<SwarmAppManifest, 'kind'>): boole
 }
 
 /**
- * @description Boot order for auto-load: every app first, every group last, so a group's members
- * are already active when it activates. Peeks `kind:` from the YAML text without validating —
+ * @description Boot order for auto-load: ordinary apps, groups, then experiences, so composition
+ * members are active before their host. Peeks declaration keys without validating —
  * unreadable or unparsable files keep their place (the loader reports them properly later).
  * @param manifestFiles - Manifest paths in directory order.
- * @returns The same paths, groups moved to the end (relative order otherwise preserved).
+ * @returns The same paths, compositions after members (relative order within each tier preserved).
  */
 export function orderGroupsLast(manifestFiles: string[]): string[] {
-  const isGroupFile = (file: string): boolean => {
+  const compositionKind = (file: string): 'group' | 'experience' | 'app' => {
     try {
-      const parsed = yaml.load(fs.readFileSync(file, 'utf-8')) as { kind?: unknown } | null;
-      return !!parsed && typeof parsed === 'object' && parsed.kind === 'group';
+      const parsed = yaml.load(fs.readFileSync(file, 'utf-8')) as { kind?: unknown; experience?: unknown } | null;
+      if (parsed?.experience) return 'experience';
+      return parsed?.kind === 'group' ? 'group' : 'app';
     } catch {
-      return false;
+      return 'app';
     }
   };
   const groups: string[] = [];
+  const experiences: string[] = [];
   const apps: string[] = [];
-  for (const file of manifestFiles) (isGroupFile(file) ? groups : apps).push(file);
-  return [...apps, ...groups];
+  for (const file of manifestFiles) {
+    const kind = compositionKind(file);
+    (kind === 'experience' ? experiences : kind === 'group' ? groups : apps).push(file);
+  }
+  return [...apps, ...groups, ...experiences];
 }
 
 /**
@@ -126,7 +132,7 @@ export function groupDashboardTile(groupName: string): SwarmAppStaticUi {
  */
 export function staticRibbonItems(surfaces: SwarmAppStaticUi[]): Array<{
   id: string; icon: string; label: string; section: 'top' | 'bottom'; group?: string;
-  toolUi: { iframeUrl: string; sidebarLabel: string };
+  toolUi: { iframeUrl: string; sidebarLabel: string; visibilityToolName?: string };
 }> {
   return surfaces.map((s) => ({
     id: `tool-${s.toolName}`,
@@ -134,7 +140,7 @@ export function staticRibbonItems(surfaces: SwarmAppStaticUi[]): Array<{
     label: s.label,
     section: (s.section === 'bottom' ? 'bottom' : 'top') as 'top' | 'bottom',
     group: s.group,
-    toolUi: { iframeUrl: s.iframeUrl, sidebarLabel: s.label },
+    toolUi: { iframeUrl: s.iframeUrl, sidebarLabel: s.label, ...(s.visibilityToolName ? { visibilityToolName: s.visibilityToolName } : {}) },
   }));
 }
 

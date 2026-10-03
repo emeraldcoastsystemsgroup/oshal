@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -38,6 +39,29 @@
   ];
   const FLAT_SKINS = ALL_SKINS.flatMap(g => g.items);
   const find = id => FLAT_SKINS.find(s => s.id === id || s.alias === id) || null;
+  const PALETTES = [...FLAT_SKINS];
+  // Package discovery owns the offered choices; the palette definitions also support preview styling.
+  ALL_SKINS[0].items.splice(0, ALL_SKINS[0].items.length, ...PALETTES.filter(s => s.id === 'nexus'));
+
+  window.addEventListener('oshal-experiences-ready', event => {
+    const registered = new Map();
+    for (const experience of event.detail || []) {
+      const known = PALETTES.find(s => s.id === experience.skin);
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(experience.skin)) continue;
+      if (registered.has(experience.skin)) continue;
+      registered.set(experience.skin, { ...(known || { mode: 'light', color: '#64748b' }),
+        id: experience.skin, name: experience.label, cssUrl: experience.skinCssUrl || '' });
+    }
+    // Nexus remains a core assistant outside the seven-package migration.
+    const nexus = find('nexus'); if (nexus) registered.set('nexus', nexus);
+    ALL_SKINS[0].items.splice(0, ALL_SKINS[0].items.length, ...registered.values());
+    FLAT_SKINS.splice(0, FLAT_SKINS.length, ...ALL_SKINS.flatMap(group => group.items));
+    document.querySelectorAll('#universal-skin-picker').forEach(picker => {
+      const container = document.createElement('span'); container.innerHTML = buildSelectMarkup(currentSkin());
+      picker.replaceWith(container.querySelector('select'));
+    });
+    init();
+  });
 
   /** @description The layout this page belongs to, which scopes the remembered skin. */
   function scope() {
@@ -61,6 +85,11 @@
   /** @description Paint one skin on this page and remember it for this layout on this device. */
   function applySkin(skinId, save = true) {
     const def = find(skinId); if (!def) return;
+    let css = document.getElementById('app-package-theme-css');
+    if (def.cssUrl) {
+      if (!css) { css = document.createElement('link'); css.id = 'app-package-theme-css'; css.rel = 'stylesheet'; document.head.append(css); }
+      css.href = def.cssUrl;
+    } else if (css) css.remove();
     document.body.dataset.skin = def.id;
     document.body.dataset.theme = def.id;
     document.documentElement.dataset.theme = def.id;
@@ -82,14 +111,18 @@
 
   function buildSelectMarkup(current) {
     const selected = current || currentSkin();
-    return `<label class="screenreader" for="universal-skin-picker">Visual style</label><select id="universal-skin-picker" class="layout-picker" title="Skin for this layout, remembered on this device">${ALL_SKINS.map(group => `<optgroup label="${group.group}">${group.items.map(s => `<option value="${s.id}"${selected === s.id ? ' selected' : ''}>${s.name}</option>`).join('')}</optgroup>`).join('')}</select>`;
+    const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    return `<label class="screenreader" for="universal-skin-picker">Visual style</label><select id="universal-skin-picker" class="layout-picker" title="Skin for this layout, remembered on this device">${ALL_SKINS.map(group => `<optgroup label="${escape(group.group)}">${group.items.map(s => `<option value="${s.id}"${selected === s.id ? ' selected' : ''}>${escape(s.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
   }
 
   function init() {
     const stored = getStoredSkin();
     if (stored) applySkin(stored, false);
     else if (defaultSkin() && find(defaultSkin())) applySkin(defaultSkin(), false);
-    document.querySelectorAll('#universal-skin-picker').forEach(p => p.addEventListener('change', e => applySkin(e.target.value)));
+    document.querySelectorAll('#universal-skin-picker').forEach(p => {
+      if (p.dataset.skinBound) return;
+      p.dataset.skinBound = 'true'; p.addEventListener('change', e => applySkin(e.target.value));
+    });
     document.querySelectorAll('[data-swatch-skin]').forEach(btn => btn.addEventListener('click', () => applySkin(btn.dataset.swatchSkin)));
   }
 
