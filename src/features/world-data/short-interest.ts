@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FINRA daily short-volume signal (RegSHO) per universe ticker into world_metrics. Crowding / short-pressure feature for the squeeze case.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export FINRA_SHORT_VOLUME_URL (the daily Reg SHO file, `{date}` = YYYYMMDD) so the World sources screen names where this collector reads.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Report the FINRA file's feed outcome (feed: ok when a file was read, failed when none of the six days answered) so the sources screen can tell a dead feed from a clean run.
  */
 
 /**
@@ -19,6 +20,7 @@
 import { createWorldIntelligenceService } from './world-intelligence-service';
 import { DEFAULT_UNIVERSE } from '@/features/trading';
 import { createChildLogger } from '@/shared/logger';
+import type { CollectorFeedOutcome } from './world-source-control';
 
 const logger = createChildLogger({ module: 'short-interest' });
 
@@ -27,7 +29,8 @@ export const FINRA_SHORT_VOLUME_URL = 'https://cdn.finra.org/equity/regsho/daily
 const FINRA_UA = process.env.WORLD_SHORT_UA
   || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
-export interface ShortInterestResult { day: string | null; tickers: number; }
+/** `feed` is whether a FINRA file was read (absent when world intelligence is off). */
+export interface ShortInterestResult { day: string | null; tickers: number; feed?: CollectorFeedOutcome; }
 
 const ymd = (d: Date): string => d.toISOString().slice(0, 10).replace(/-/g, '');
 
@@ -57,7 +60,7 @@ export async function collectShortInterest(svcInput?: ReturnType<typeof createWo
   const svc = svcInput ?? createWorldIntelligenceService();
   if (!svc) return { day: null, tickers: 0 };
   const file = await fetchLatestRegSho(new Date());
-  if (!file) { logger.warn('no RegSHO file available'); return { day: null, tickers: 0 }; }
+  if (!file) { logger.warn('no RegSHO file available'); return { day: null, tickers: 0, feed: 'failed' }; }
 
   const universe = new Set(DEFAULT_UNIVERSE.map((s) => s.toUpperCase()));
   let tickers = 0;
@@ -79,5 +82,5 @@ export async function collectShortInterest(svcInput?: ReturnType<typeof createWo
   }
 
   logger.info({ day: file.day, tickers }, 'short interest collected');
-  return { day: file.day, tickers };
+  return { day: file.day, tickers, feed: 'ok' };
 }

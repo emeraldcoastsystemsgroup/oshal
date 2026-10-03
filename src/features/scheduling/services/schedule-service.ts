@@ -325,7 +325,8 @@ export class ScheduleService {
     try {
       CronExpressionParser.parse(cron.trim(), { currentDate: new Date() }).next();
       return true;
-    } catch {
+    } catch (error) {
+      logger.error({ err: error, cron }, 'Cron expression does not parse');
       return false;
     }
   }

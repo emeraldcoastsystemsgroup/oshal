@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — FORWARD market-events calendar (vs the reactive event_* news tags): scheduled earnings (Nasdaq), FOMC meetings, jobs report. So the trading gate knows what's COMING (don't hold into earnings; expect FOMC/jobs volatility), not just what already broke.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export NASDAQ_EARNINGS_URL (the earnings calendar endpoint) so the World sources screen names where this collector reads.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Report the Nasdaq calendar's feed outcome (feed: ok / partial / failed over the days asked) so a dead calendar no longer reads as a clean run on the sources screen; a failed day is logged at WARN instead of being swallowed. The UA comment is back above its constant.
  */
 
 /**
@@ -25,12 +26,13 @@
 import { createWorldIntelligenceService } from './world-intelligence-service';
 import { DEFAULT_UNIVERSE } from '@/features/trading';
 import { createChildLogger } from '@/shared/logger';
+import { collectorFeedOutcome, type CollectorFeedOutcome } from './world-source-control';
 
 const logger = createChildLogger({ module: 'market-events' });
 
-/** Nasdaq blocks the feeds UA; it serves the calendar JSON to a browser UA. Overridable. */
 /** The Nasdaq earnings calendar endpoint this collector reads (one request per day ahead, `?date=`). */
 export const NASDAQ_EARNINGS_URL = 'https://api.nasdaq.com/api/calendar/earnings';
+/** Nasdaq blocks the feeds UA; it serves the calendar JSON to a browser UA. Overridable. */
 const NASDAQ_UA = process.env.WORLD_EARNINGS_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
 /** How many days ahead to scan the earnings calendar (default 14). */
 const EARNINGS_LOOKAHEAD = Math.max(1, Number(process.env.WORLD_EARNINGS_DAYS) || 14);
@@ -75,26 +77,29 @@ function nextFirstFridays(count: number, now: Date): string[] {
 }
 
 /** Fetch the set of symbols reporting earnings on `date` from the Nasdaq calendar API (browser UA). */
-async function fetchNasdaqEarnings(date: string): Promise<Set<string>> {
+/** The day's earnings symbols; an empty set for a day with none; null when the request failed. */
+async function fetchNasdaqEarnings(date: string): Promise<Set<string> | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12_000);
   try {
     const res = await fetch(`${NASDAQ_EARNINGS_URL}?date=${date}`, {
       headers: { 'User-Agent': NASDAQ_UA, Accept: 'application/json' }, signal: ctrl.signal,
     });
-    if (!res.ok) return new Set();
+    if (!res.ok) { logger.warn({ date, status: res.status }, 'earnings calendar day refused'); return null; }
     const j = await res.json() as { data?: { rows?: Array<{ symbol?: string }> | null } };
     const rows = j?.data?.rows;
     if (!Array.isArray(rows)) return new Set();
     return new Set(rows.map((r) => String(r.symbol || '').toUpperCase().trim()).filter(Boolean));
-  } catch {
-    return new Set();
+  } catch (err) {
+    logger.warn({ err, date }, 'earnings calendar day failed');
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-export interface MarketEventsResult { earnings: number; fomc: number; jobs: number; }
+/** `feed` is the Nasdaq calendar's outcome over the days asked (absent when world intelligence is off). */
+export interface MarketEventsResult { earnings: number; fomc: number; jobs: number; feed?: CollectorFeedOutcome; }
 
 /**
  * Collect the forward calendar into world_events + days_to_* metrics. Earnings scanned per weekday over the
@@ -112,10 +117,15 @@ export async function collectMarketEvents(svcInput?: ReturnType<typeof createWor
   try {
     const universe = new Set(DEFAULT_UNIVERSE.map((s) => s.toUpperCase()));
     const earliest = new Map<string, string>();
-    for (const date of nextWeekdays(EARNINGS_LOOKAHEAD, now)) {
+    const days = nextWeekdays(EARNINGS_LOOKAHEAD, now);
+    let answered = 0;
+    for (const date of days) {
       const syms = await fetchNasdaqEarnings(date);
+      if (!syms) continue;
+      answered += 1;
       for (const sym of syms) if (universe.has(sym) && !earliest.has(sym)) earliest.set(sym, date);
     }
+    out.feed = collectorFeedOutcome(answered, days.length);
     for (const [sym, date] of earliest) {
       const entity = `world:ticker:${sym.toLowerCase()}`;
       await svc.upsertEvent({ entityId: entity, eventType: 'earnings', scheduledAt: `${date}T12:00:00Z`, title: `${sym} earnings`, source: 'nasdaq-calendar' });

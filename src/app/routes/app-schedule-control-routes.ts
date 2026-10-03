@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | GET /:name/schedules and PATCH /:name/schedules/:id (operator ask 2026-10-02: the World screen shows its cron jobs and turns them on/off or more/less frequent). A cron tighter than APP_SCHEDULE_MIN_INTERVAL_MINUTES (default 5) between any two of its next twelve fires is refused, because a fire that outruns its interval stacks on the next one.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Review fixes: changes to one schedule are serialized in the process, so two at once cannot lose one (both read the old override before); a cron-only change keeps the record's on/off as it is (only enabled:true or a stored enabled:false moves it); clearManifestOverridesFor() lets the uninstall route remove an app's overrides, so a reinstall starts from the manifest.
  *
  * @module app-schedule-control-routes
  */
@@ -196,12 +197,74 @@ async function applyOverride(
   key: string,
   s: SwarmAppScheduleDeclaration,
   override: ManifestScheduleOverride | null,
+  control: ControlBody,
 ): Promise<void> {
   if (override) await svc.saveManifestOverride(key, override);
   else await svc.clearManifestOverride(key);
   const record = await svc.getScheduleForTaskType(taskTypeFor(key, s));
   if (!record) return;
-  await svc.applyControl(record.id, { cron: override?.cron ?? s.cron, status: override?.enabled === false ? 'paused' : 'active' });
+  // Only an explicit on, or a stored off, moves the record; a cadence change keeps it as it is.
+  const status = override?.enabled === false ? 'paused' : control.enabled === true ? 'active' : record.status;
+  await svc.applyControl(record.id, { cron: override?.cron ?? s.cron, status });
+}
+
+/** One chain per schedule key: a change waits for the one before it, so neither reads a stale override. */
+const pendingChanges = new Map<string, Promise<unknown>>();
+
+/**
+ * @description Run one change to a schedule after any change to the same schedule still in flight.
+ * The api is one process, so this is what makes read-merge-write of the override safe.
+ * @param key - `<app>-<scheduleId>`.
+ * @param change - The change to run.
+ * @returns The change's result.
+ */
+async function serialized<T>(key: string, change: () => Promise<T>): Promise<T> {
+  const before = pendingChanges.get(key) ?? Promise.resolve();
+  const run = before.catch(() => undefined).then(change);
+  pendingChanges.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (pendingChanges.get(key) === run) pendingChanges.delete(key);
+  }
+}
+
+/**
+ * @description The manifest of an installed application, read just before it is uninstalled so its
+ * overrides can be removed after. A failed read is logged and returns null: the uninstall goes ahead and
+ * only the cleanup is skipped.
+ * @param apps - The application service.
+ * @param name - Application name.
+ * @returns The manifest, or null when it cannot be read.
+ */
+export async function manifestBeforeUninstall(
+  apps: { getApp(name: string): Promise<{ manifest?: SwarmAppManifest } | null> },
+  name: string,
+): Promise<SwarmAppManifest | null> {
+  try {
+    return (await apps.getApp(name))?.manifest ?? null;
+  } catch (err) {
+    logger.error({ err, name }, 'Reading the app before uninstall failed; its schedule overrides stay');
+    return null;
+  }
+}
+
+/**
+ * @description Remove every operator override an application's manifest schedules carry, so a later
+ * install starts from the manifest. Called by the uninstall route after the app is removed; an app
+ * toggle keeps its overrides on purpose.
+ * @param svc - The running schedule service, or null when this process runs none.
+ * @param manifest - The removed application's manifest (its schedule ids name the overrides).
+ * @returns How many overrides existed and were removed.
+ */
+export async function clearManifestOverridesFor(svc: ScheduleService | null, manifest: SwarmAppManifest | null | undefined): Promise<number> {
+  if (!svc || !manifest) return 0;
+  let removed = 0;
+  for (const s of manifest.schedules ?? []) {
+    if (await svc.clearManifestOverride(`${manifest.name}-${s.id}`)) removed += 1;
+  }
+  if (removed) logger.info({ app: manifest.name, removed }, 'Schedule overrides removed with the application');
+  return removed;
 }
 
 /**
@@ -255,8 +318,12 @@ function controlHandler(apps: ScheduleControlApps, deps: ScheduleControlDeps) {
       if (problem) { res.status(400).json({ error: problem }); return; }
       const key = `${name}-${id}`;
       const actor = getCaller(req).sub;
-      const override = nextOverride(await svc.getManifestOverride(key), control, found.schedule.cron, actor);
-      await applyOverride(svc, key, found.schedule, override);
+      const schedule = found.schedule;
+      const override = await serialized(key, async () => {
+        const next = nextOverride(await svc.getManifestOverride(key), control, schedule.cron, actor);
+        await applyOverride(svc, key, schedule, next, control);
+        return next;
+      });
       logger.info({ app: name, schedule: id, enabled: override?.enabled ?? true, cron: override?.cron ?? found.schedule.cron, actor }, 'Application schedule control changed');
       res.json({ schedule: await describeSchedule(svc, name, found.schedule) });
     } catch (err) {

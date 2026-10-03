@@ -138,7 +138,7 @@ export async function worldSourcesStep(reader: Pick<WorldIntelligenceService, 's
     const notPulling = sources.filter((src) => !src.pulling).map((src) => src.id);
     const runs = sources.filter((src) => src.kind === 'collector').map((src) => ({ id: src.id, outcome: src.lastRun?.outcome ?? null, ranAt: src.lastRun?.ranAt ?? null }));
     const ran = runs.map((r) => `${r.id} ${r.outcome ?? 'no run yet'}`).join(', ');
-    return out('pass', `Live: ${count('feed')} feeds, ${count('firehose')} firehose entries, ${count('collector')} collectors; not pulling: ${notPulling.length ? notPulling.join(', ') : 'none'}; collectors: ${ran}. Read-only; no feed call was made.`,
+    return out('pass', `Live: ${count('feed')} feeds, ${count('firehose')} firehose entries, ${count('collector')} collectors; not pulling: ${notPulling.length ? notPulling.join(', ') : 'none'}; collectors: ${ran}. No data changed and no feed was called (the first read creates the two empty switch tables if they are missing).`,
       { feeds: count('feed'), firehose: count('firehose'), collectors: runs, notPulling });
   } catch (err) {
     logger.error({ err }, 'Test Lab World sources readback failed');
@@ -165,10 +165,11 @@ export const WORLD_SIGNAL_SCENARIOS: Scenario[] = [{
   id: 'world-sources-schedules',
   title: 'World sources and schedules (operator page)',
   group: 'tool',
-  description: 'Reads, without changing anything, what the World Sources & schedules page shows: the two World schedule records with on/off, cron and any operator override, and every place World pulls from with its switch, .env gates and each depth collector\'s last run. The attached suites prove the controls across a real Redis and a real TimescaleDB.',
+  description: 'Reads, without changing any data, what the World Sources & schedules page shows: the two World schedule records with on/off, cron and any operator override, and every place World pulls from with its switch, .env gates and each depth collector\'s last run. The attached suites prove the controls across a real Redis and a real TimescaleDB.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/app-schedule-control.spec.ts' },
     { level: 'integration', path: 'tests/unit/world-depth-collectors-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/world-collector-feed-outcome.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-signal-test-lab.spec.ts' },
   ],
   steps: [

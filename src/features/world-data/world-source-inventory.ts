@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The World sources inventory (operator ask 2026-10-02: a screen that shows where World pulls from, with on/off). Built from the same registries the fetch code reads — FEED_SOURCES and the scheduled feed sets, the firehose list, and each depth collector's endpoint — so it cannot drift from them. Each source carries the schedules that use it, the .env flags that also govern it, and on the screen its switch, its last-24-hour pulls and (collectors) its last run. A URL that came from an operator override is shown as origin + path only, since an override may carry a credential in its query.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a firehose feed reads not pulling, with blockedBy naming the pass, while the whole firehose pass is switched off (its own switch can still be on); an override URL that does not parse is logged at ERROR (without the URL, which may carry a credential).
  */
 
 import { FEED_SOURCES, DEFAULT_FEED_IDS, FINANCE_FEED_IDS, PULSE_FEED_IDS } from './feed-sources';
@@ -13,6 +14,7 @@ import { congressFeedTarget } from './political-trades';
 import { INSIDER_URLS } from './insider-trades';
 import { FINRA_SHORT_VOLUME_URL } from './short-interest';
 import { USA_URL } from './gov-contracts';
+import { createChildLogger } from '@/shared/logger';
 import {
   worldSourceSwitchTtlMs,
   type WorldCollectorRun,
@@ -20,6 +22,8 @@ import {
   type WorldSourceControl,
   type WorldSourceSwitch,
 } from './world-source-control';
+
+const logger = createChildLogger({ module: 'world-source-inventory' });
 
 /** The id of the switch that turns the whole publisher firehose pass off. */
 export const FIREHOSE_SWITCH_ID = 'firehose';
@@ -53,6 +57,8 @@ export interface WorldSourceRow extends WorldSourceEntry {
   switchedOn: boolean;
   configuredOn: boolean;
   pulling: boolean;
+  /** Why a source whose own switch and flags are on still does not pull (a firehose feed while the pass is off). */
+  blockedBy: string | null;
   switch: WorldSourceSwitch | null;
   last24h: Omit<WorldFeedPullStats, 'feedId'> | null;
   lastRun: WorldCollectorRun | null;
@@ -66,7 +72,8 @@ function originAndPath(url: string): string {
   try {
     const u = new URL(url);
     return `${u.origin}${u.pathname}`;
-  } catch {
+  } catch (err) {
+    logger.error({ err }, 'An override URL does not parse; the sources screen shows it as not a valid URL');
     return '(not a valid URL)';
   }
 }
@@ -168,13 +175,15 @@ export async function describeWorldSources(
   const switchById = new Map(switches.map((s) => [s.sourceId, s]));
   const statsById = new Map(stats.map((s) => [s.feedId, s]));
   const runById = new Map(runs.map((r) => [r.collector, r]));
+  const passOff = switchById.get(FIREHOSE_SWITCH_ID)?.enabled === false;
   const sources = worldSourceInventory(env).map((entry): WorldSourceRow => {
     const sw = switchById.get(entry.id) ?? null;
     const switchedOn = sw ? sw.enabled : true;
     const configuredOn = entry.gates.every((g) => g.on);
+    const blockedBy = entry.kind === 'firehose' && entry.id !== FIREHOSE_SWITCH_ID && passOff ? 'the firehose pass is switched off' : null;
     const stat = statsById.get(entry.id);
     return {
-      ...entry, switchedOn, configuredOn, pulling: switchedOn && configuredOn, switch: sw,
+      ...entry, switchedOn, configuredOn, pulling: switchedOn && configuredOn && !blockedBy, blockedBy, switch: sw,
       last24h: stat ? { pulls: stat.pulls, fetched: stat.fetched, newItems: stat.newItems, lastPull: stat.lastPull } : null,
       lastRun: runById.get(entry.id) ?? null,
     };

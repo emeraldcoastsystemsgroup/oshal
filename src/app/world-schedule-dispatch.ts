@@ -31,6 +31,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Each fire makes sure the platform's classify backend is registered (ensureWorldClassifyRail(ctx), once per process; boot registers it first): the accountable bot rail on the swarm's configured provider under an accountable owner, so classification inside ingestFeeds / the firehose deep dive stops depending on a controller-local CLI provider SEC-05 refuses. The context parameter is used for the first time; the header and the dispatch JSDoc now describe the as-built rail instead of "the swarm's Claude creds in-process".
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Each fire begins its own slice of the classify budget (beginClassifyPulse, WORLD_CLASSIFY_BUDGET_PER_PULSE): the hour's bot-rail calls spread across the pulses instead of landing in the first one, which overran the 240 s dispatch budget three times on 2026-10-02 and stacked fires.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Honour the operator's source switches (World sources screen): a fire reads the switched-off set once; a switched-off depth collector is skipped with a WARN naming its source id, the firehose pass (switch `firehose`) or any one firehose feed is left out, and the completion record lists what was switched off. Every depth collector's run is recorded (ok / failed / skipped with the reason, a refused or failed congress feed counting as failed) so the screen can show when each last ran and how it ended.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a collector's run outcome follows the feed outcome it reports (ok, partial, failed; a refused congress feed counts as failed), and the firehose pass moved into runFirehose() so dispatchWorldSchedule stops growing.
  *
  * @module world-schedule-dispatch
  */
@@ -51,7 +52,7 @@ import {
   seriesReadStats, seriesReadConcurrency, type SeriesReadStats,
   DEFAULT_WORLD_TOPICS, tickerSubject, type WorldSubject,
   MARKET_SUBJECTS,
-  FIREHOSE_SWITCH_ID, type WorldCollectorId,
+  FIREHOSE_SWITCH_ID, type WorldCollectorId, type WorldCollectorOutcome,
 } from '@/features/world-data';
 import { DEFAULT_UNIVERSE } from '@/features/trading';
 import { createChildLogger } from '@/shared/logger';
@@ -276,6 +277,44 @@ async function recordFlagSkip(svc: WorldService, ids: WorldCollectorId[], flag: 
 }
 
 /**
+ * @description The run outcome a collector's reported feed outcome stands for. A collector that reports
+ * none counts as ok; `world-disabled` (no service) as skipped; `refused` or `failed` as failed.
+ * @param feed - The `feed` field of the collector's result.
+ * @returns The outcome recorded for the sources screen.
+ */
+function runOutcome(feed: unknown): WorldCollectorOutcome {
+  if (feed === undefined || feed === 'ok') return 'ok';
+  if (feed === 'partial') return 'partial';
+  if (feed === 'world-disabled') return 'skipped';
+  return 'failed';
+}
+
+/**
+ * @description The ticker pulse's publisher firehose, every Nth pulse: the speed read (lexicon, no LLM)
+ * and the metered deep dive, over the feeds the operator has not switched off. Skipped entirely when
+ * WORLD_FIREHOSE_ENABLED is off or the operator switched the pass (`firehose`) off.
+ * @param svc - The world service.
+ * @param scheduleId - The firing schedule (log correlation).
+ * @param switchedOff - The source ids switched off when the fire started.
+ * @returns Nothing; each half logs its own outcome.
+ */
+async function runFirehose(svc: WorldService, scheduleId: string, switchedOff: ReadonlySet<string>): Promise<void> {
+  if (!firehoseEnabled() || switchedOff.has(FIREHOSE_SWITCH_ID)) return;
+  const tick = Math.floor(Date.now() / (5 * 60 * 1000));
+  if (tick % firehoseEveryNPulses() !== 0) return;
+  const feeds = firehoseFeeds().filter((f) => !switchedOff.has(f.id));
+  try {
+    const sr = await speedReadFirehose(svc, feeds, { limit: firehoseLimit(), feedBudgetMs: feedBudgetMs() });
+    logger.info({ scheduleId, feeds: sr.perFeed.length, fresh: sr.perFeed.reduce((n, f) => n + f.fresh, 0), attached: sr.perFeed.reduce((n, f) => n + f.attached, 0) }, 'world firehose speed-read');
+  } catch (e) { logger.warn({ err: e, scheduleId }, 'world firehose speed-read failed'); }
+  if (!deepDiveEnabled()) return;
+  try {
+    const dd = await deepDiveFirehose(svc, feeds, { budget: deepDiveBudget(), metered: deepDiveMetered() });
+    logger.info({ scheduleId, deepened: dd.deepened }, 'world firehose deep-dive');
+  } catch (e) { logger.warn({ err: e, scheduleId }, 'world firehose deep-dive failed'); }
+}
+
+/**
  * @description Run one depth-cycle collector, isolated: its failure is logged and never stops the
  * collectors after it or the subject sweep. A collector the operator switched off is skipped with a
  * WARN, like one a flag turned off. Every outcome is recorded for the sources screen; a collector that
@@ -301,8 +340,7 @@ async function runDepthCollector(
   try {
     const result = await collect() as Record<string, unknown>;
     logger.info({ scheduleId, ...result }, `${name} collected`);
-    const feedFailed = typeof result.feed === 'string' && result.feed !== 'ok';
-    await control.recordCollectorRun(id, feedFailed ? 'failed' : 'ok', result);
+    await control.recordCollectorRun(id, runOutcome(result.feed), result);
   } catch (e) {
     logger.warn({ err: e, scheduleId }, `${name} failed`);
     await control.recordCollectorRun(id, 'failed', { error: (e as Error).message });
@@ -424,22 +462,7 @@ export async function dispatchWorldSchedule(ctx: AppContext, schedule: ScheduleR
     //    attention + breaking news, fast. Always (every Nth pulse).
     //  - DEEP DIVE: spend the metered LLM budget on the freshest un-deepened items, allocated across feeds
     //    by the learned novelty meter. Both run before the rollup so their items fold into the features.
-    if (pulse && firehoseEnabled() && !switchedOff.has(FIREHOSE_SWITCH_ID)) {
-      const tick = Math.floor(Date.now() / (5 * 60 * 1000));
-      if (tick % firehoseEveryNPulses() === 0) {
-        const feeds = firehoseFeeds().filter((f) => !switchedOff.has(f.id));
-        try {
-          const sr = await speedReadFirehose(svc, feeds, { limit: firehoseLimit(), feedBudgetMs: feedBudgetMs() });
-          logger.info({ scheduleId: schedule.id, feeds: sr.perFeed.length, fresh: sr.perFeed.reduce((n, f) => n + f.fresh, 0), attached: sr.perFeed.reduce((n, f) => n + f.attached, 0) }, 'world firehose speed-read');
-        } catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'world firehose speed-read failed'); }
-        if (deepDiveEnabled()) {
-          try {
-            const dd = await deepDiveFirehose(svc, feeds, { budget: deepDiveBudget(), metered: deepDiveMetered() });
-            logger.info({ scheduleId: schedule.id, deepened: dd.deepened }, 'world firehose deep-dive');
-          } catch (e) { logger.warn({ err: e, scheduleId: schedule.id }, 'world firehose deep-dive failed'); }
-        }
-      }
-    }
+    if (pulse) await runFirehose(svc, schedule.id, switchedOff);
 
     // Feature rollup (trading signal dataset §1): turn the raw archive we just refreshed into the queryable
     // signal-vector metrics in world_metrics. No feeds and no LLM — but four indexed aggregates per entity

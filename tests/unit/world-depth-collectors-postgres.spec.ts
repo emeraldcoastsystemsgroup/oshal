@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for "the congress collector never runs in the world depth cycle". The depth fire (`app:world-world-refresh`, the store world manifest's `world-refresh` schedule) is dispatched through the real dispatchWorldSchedule, which calls the real collectPoliticalTrades, which reads a real local HTTP feed and writes a private TimescaleDB through the real world service. The subject sweep is held open (it never finishes until the spec releases it) — the shape of a sweep that an api restart ends: the collector must already have written observed congress_* rows by the time the first subject starts. Also proves the pulse never calls the flow collectors, a flag-disabled collector is logged at WARN on every depth fire, and one collector failing does not stop the congress collector or the sweep.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The feed credential across the same boundary. On 2026-09-28 the default congress feed answered HTTP 401 {"detail":"Authentication credentials were not provided."} to the collector's request, so a depth fire that reaches the collector can still write nothing. The local feed now answers exactly that when the configured credential is absent: the fire must log the refusal at ERROR naming WORLD_POLITICAL_TOKEN, report `feed: 'refused'` on the depth line, write no row and still run the sweep; with WORLD_POLITICAL_TOKEN set, the same fire sends it as a Bearer credential and writes.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The operator source switches (World sources screen) across the same real series store: a switched-off collector is skipped with a WARN naming it and recorded as skipped, then runs again once switched on; a .env-flag skip is recorded with the flag as reason; a pulse leaves out one switched-off firehose feed and the whole pass when the firehose is switched off (the firehose speed read and deep dive are recorders here, like the sweep); the real ingest step never fetches a switched-off feed and reports it skipped; and the inventory carries switch, last-24-hour pulls and last run, never an override's query string.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a firehose feed reads not pulling (blocked by the pass) while the whole firehose pass is switched off; a collector that reports a failed or partial feed is recorded failed or partial, not ok (the sibling recorders can return a per-test result).
  */
 
 /**
@@ -40,6 +41,8 @@ const h = vi.hoisted(() => ({
   /** The Authorization header of every feed request. */
   auth: [] as Array<string | undefined>,
   logs: [] as Array<{ level: 'info' | 'warn' | 'error'; msg: string; obj: Record<string, unknown> }>,
+  /** Per-collector result overrides for the sibling recorders (keyed by the log name). */
+  results: {} as Record<string, object>,
 }));
 
 vi.mock('@/shared/logger', async (importOriginal) => {
@@ -57,7 +60,7 @@ vi.mock('@/features/world-data', async (importOriginal) => {
   const sibling = (name: string, result: object) => async () => {
     h.events.push(name);
     if (name === 'market events' && h.failMarketEvents) throw new Error('nasdaq calendar unreachable');
-    return result;
+    return h.results[name] ?? result;
   };
   return {
     ...actual,
@@ -353,4 +356,34 @@ describe('operator source switches across the real series store', () => {
       process.env.WORLD_POLITICAL_URL = saved;
     }
   }, 60_000);
+});
+
+describe('review fixes: the firehose pass on each feed, and the feed outcome a collector reports', () => {
+  const control = () => (h.svc as WorldIntelligenceService).sourceControl();
+  afterEach(async () => {
+    await control().setSwitch('firehose', true, 'fixture-operator-sub');
+    h.results = {};
+  });
+
+  it('a firehose feed reads not pulling, blocked by the pass, while the whole firehose pass is switched off', async () => {
+    process.env.WORLD_FIREHOSE_ENABLED = 'true';
+    try {
+      await control().setSwitch('firehose', false, 'fixture-operator-sub');
+      const byId = new Map((await describeWorldSources(control())).sources.map((s) => [s.id, s]));
+      expect(byId.get('fh-cnbc-top')).toMatchObject({ switchedOn: true, configuredOn: true, pulling: false, blockedBy: 'the firehose pass is switched off' });
+      expect(byId.get('firehose')).toMatchObject({ switchedOn: false, pulling: false, blockedBy: null });
+      expect(byId.get('google-news')).toMatchObject({ pulling: true, blockedBy: null });
+    } finally {
+      process.env.WORLD_FIREHOSE_ENABLED = 'false';
+    }
+  }, 60_000);
+
+  it('a collector that reports a failed or partial feed is recorded that way, not as ok', async () => {
+    h.results = { 'insider trades': { tickers: 0, trades: 0, feed: 'failed' }, 'gov contracts': { tickers: 3, totalNotional: 10, feed: 'partial' } };
+    await expect(dispatchWorldSchedule(ctx, schedule(DEPTH_TASK))).resolves.toMatchObject({ success: true });
+    const runs = new Map((await control().collectorRuns()).map((r) => [r.collector, r]));
+    expect(runs.get('insider-trades')).toMatchObject({ outcome: 'failed', detail: { feed: 'failed' } });
+    expect(runs.get('gov-contracts')).toMatchObject({ outcome: 'partial', detail: { feed: 'partial' } });
+    expect(runs.get('short-interest')).toMatchObject({ outcome: 'ok' });
+  }, 120_000);
 });

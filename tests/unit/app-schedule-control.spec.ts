@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Operator control of application-manifest schedules, across the real Redis store: the routes refuse non-operators; on/off and cadence are applied to the live record, stored as an override, and survive a re-registration (restart) and a deregistration + registration (app toggle); a cron tighter than the floor or unreadable is refused; a stored cron that no longer parses registers the manifest cron; and a pause made while a fire is in flight is not undone when that fire finishes, nor is a schedule deleted mid-run written back.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: switching back on resumes and clears the override; a cadence-only change keeps a record paused some other way; two changes sent at once both land; a stored override applies to a service-route schedule at registration; uninstall removes only that app's overrides and a reinstall starts from the manifest.
  */
 
 import express from 'express';
@@ -18,7 +19,8 @@ import type { SwarmAppManifest } from '../../src/features/swarm-apps';
 const h = vi.hoisted(() => ({ svc: null as unknown }));
 vi.mock('../../src/app/home-schedule-dispatch', () => ({ getHomeScheduleService: () => h.svc }));
 
-import { registerAppScheduleControlRoutes } from '../../src/app/routes/app-schedule-control-routes';
+import { clearManifestOverridesFor, registerAppScheduleControlRoutes } from '../../src/app/routes/app-schedule-control-routes';
+import { manifestServiceRouteTaskType } from '../../src/app/manifest-service-route-schedule';
 import { createManifestScheduleRegistrar } from '../../src/app/swarm-app-schedule-wiring';
 
 const OPERATOR = 'fixture-operator-sub';
@@ -196,5 +198,53 @@ describe('a change made while a fire is in flight', () => {
     release();
     await fire;
     expect(await store.getSchedule(PULSE_RECORD)).toBeNull();
+  });
+});
+
+describe('review fixes: on after off, cadence keeps a foreign pause, simultaneous changes, service routes, uninstall', () => {
+  it('switching a schedule back on resumes it and leaves no override', async () => {
+    await call('PATCH', '/fixture-world/schedules/ticker-pulse', OPERATOR, { enabled: false });
+    const on = await call('PATCH', '/fixture-world/schedules/ticker-pulse', OPERATOR, { enabled: true });
+    expect(on.json.schedule).toMatchObject({ enabled: true, status: 'active', override: null });
+    expect((await store.getSchedule(PULSE_RECORD))?.nextRunAt).not.toBeNull();
+  });
+
+  it('a cadence-only change keeps a record that was paused some other way paused', async () => {
+    await svc.pauseSchedule(PULSE_RECORD);
+    const res = await call('PATCH', '/fixture-world/schedules/ticker-pulse', OPERATOR, { cron: '*/15 8-23 * * 1-5' });
+    expect(res.status).toBe(200);
+    expect(await store.getSchedule(PULSE_RECORD)).toMatchObject({ status: 'paused', cron: '*/15 8-23 * * 1-5', nextRunAt: null });
+  });
+
+  it('two changes sent at once both land', async () => {
+    const [a, b] = await Promise.all([
+      call('PATCH', '/fixture-world/schedules/ticker-pulse', OPERATOR, { enabled: false }),
+      call('PATCH', '/fixture-world/schedules/ticker-pulse', OPERATOR, { cron: '*/20 8-23 * * 1-5' }),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const stored = JSON.parse(await raw.hget('oshal:scheduler:manifest-overrides', 'fixture-world-ticker-pulse') as string);
+    expect(stored).toMatchObject({ enabled: false, cron: '*/20 8-23 * * 1-5' });
+    expect(await store.getSchedule(PULSE_RECORD)).toMatchObject({ status: 'paused', cron: '*/20 8-23 * * 1-5' });
+  });
+
+  it('a stored override applies to a deterministic service-route schedule at registration', async () => {
+    await svc.saveManifestOverride('fixture-world-svc-tick', { enabled: false, cron: '0 */2 * * *', updatedBy: OPERATOR, updatedAt: new Date().toISOString() });
+    await registrar({
+      scheduleId: 'fixture-world-svc-tick', cron: '0 * * * *', queue: 'fixture-world',
+      target: { kind: 'service-route', appName: 'fixture-world', packageDir: '.', module: 'routes/tick.js', handler: 'tick', path: '/api/fixture-world/tick', body: {} },
+    } as never);
+    const record = await svc.getScheduleForTaskType(manifestServiceRouteTaskType('fixture-world-svc-tick'));
+    expect(record).toMatchObject({ status: 'paused', cron: '0 */2 * * *' });
+  });
+
+  it('uninstall removes the app\'s overrides and leaves another app\'s alone', async () => {
+    await call('PATCH', '/fixture-world/schedules/ticker-pulse', OPERATOR, { enabled: false });
+    await svc.saveManifestOverride('other-app-poll', { enabled: false, updatedBy: OPERATOR, updatedAt: new Date().toISOString() });
+    expect(await clearManifestOverridesFor(svc, manifest)).toBe(1);
+    expect(await raw.hget('oshal:scheduler:manifest-overrides', 'fixture-world-ticker-pulse')).toBeNull();
+    expect(await raw.hget('oshal:scheduler:manifest-overrides', 'other-app-poll')).not.toBeNull();
+    await store.deleteSchedule(PULSE_RECORD);
+    await registerAll(); // a reinstall
+    expect((await store.getSchedule(PULSE_RECORD))?.status).toBe('active');
   });
 });

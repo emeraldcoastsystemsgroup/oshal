@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Operator source switches and the collector run record behind the World sources screen (operator ask 2026-10-02: see the pull locations and turn them on or off). Two small tables on the series store: `world_source_switches` (one row per source the operator switched off; switching back on deletes it) and `world_collector_runs` (the last run of each depth collector: when, ok / failed / skipped, its counts). The switch set is cached for WORLD_SOURCE_SWITCH_TTL_MS (default 30 s) so the per-subject ingest reads it from memory; a change made here clears the cache at once. A switch can only turn a source OFF beyond what .env allows — the .env flags stay the ceiling.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes: a collector run can end 'partial' (some of its feed requests answered), collectorFeedOutcome() turns answered/asked into that outcome for the collectors, and an unreadable pull aggregate logs at ERROR.
  */
 
 import type { Pool, QueryConfig } from 'pg';
@@ -19,8 +20,22 @@ const STATS_QUERY_TIMEOUT_MS = 3_000;
 /** One source an operator switched off (switching it back on removes the row). */
 export interface WorldSourceSwitch { sourceId: string; enabled: boolean; updatedBy: string | null; updatedAt: string }
 
-/** How one depth collector's last run ended. */
-export type WorldCollectorOutcome = 'ok' | 'failed' | 'skipped';
+/** How one depth collector's last run ended: `partial` = some of its feed requests failed. */
+export type WorldCollectorOutcome = 'ok' | 'partial' | 'failed' | 'skipped';
+
+/** How a collector's own feed requests went, as the collector reports it in its result. */
+export type CollectorFeedOutcome = 'ok' | 'partial' | 'failed';
+
+/**
+ * @description A collector's feed outcome from how many of its requests answered.
+ * @param answered - Requests that returned a readable answer (an empty list counts).
+ * @param asked - Requests made.
+ * @returns ok when all answered, failed when none did, partial in between.
+ */
+export function collectorFeedOutcome(answered: number, asked: number): CollectorFeedOutcome {
+  if (answered >= asked) return 'ok';
+  return answered <= 0 ? 'failed' : 'partial';
+}
 
 /** The last run of one depth collector. */
 export interface WorldCollectorRun { collector: string; ranAt: string; outcome: WorldCollectorOutcome; detail: Record<string, unknown> }
@@ -174,7 +189,7 @@ export class WorldSourceControl {
         newItems: Number(row.new_items), lastPull: row.last_pull ? new Date(row.last_pull as string).toISOString() : null,
       }));
     } catch (err) {
-      logger.warn({ err }, 'World feed pull stats unavailable');
+      logger.error({ err }, 'World feed pull stats unavailable');
       return [];
     }
   }
