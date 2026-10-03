@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export botNodeCanRunProvider so the settings surface can ask whether a provider id has a bot-node runtime behind it before offering it, without a deep import and without keeping a second copy of the answer.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export anyBotImageTurnToolFor, the per-harness image tool an image turn's authority names (ADR-130 amendment 2026-10-02), so the bot-node handler reads it without a deep import.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER: the bot-node handler and the api's antigravity render provider share the marker between an image-turn refusal's own words and its untrusted diagnostic (clearer Guard A refusals, 2026-10-03).
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export ANY_BOT_IMAGE_TURN_ERROR_REFUSAL and ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY: Guard A's fixed ERROR words and its [backoff] category, which the api's antigravity render provider matches to retry a render as a fresh turn (operator decision 2026-10-03).
  */
 
 /**
@@ -19,7 +20,9 @@
 export {
   ANY_BOT_COMPLETION_SCOPE,
   ANY_BOT_COMPLETION_TOOL,
+  ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY,
   ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER,
+  ANY_BOT_IMAGE_TURN_ERROR_REFUSAL,
   anyBotImageTurnToolFor,
   anyBotRuntimeToolFor,
   anyBotRuntimeToolScope,

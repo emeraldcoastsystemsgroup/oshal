@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Entry 5's "bounded TWICE" was false, and adversarial verification measured it: only the /history poll carried a signal, so a black-holed /prompt rejected after 304753 ms on the OS socket timeout (203x the configured window, knob never consulted) and a black-holed /view or /upload/image was still pending at 20 s. Now ONE deadline is taken at the top of generate() and EVERY call — upload, submit, each poll, fetch — goes through comfyFetch with a signal cut from what is left of it, so the window bounds the whole frame and a hung hop is reported by route name instead of as undici's bare "fetch failed". Also from the same verification: the anchor upload sends a per-call unique filename and no `overwrite`, because LoadImage reads its file at node-EXECUTION time and a fixed shared name let caller B's anchor render into caller A's queued frame on the one rail that serves more than the operator; status() now performs the same workflow load generate() does (parse + require the %PROMPT% slot), so a corrupt or slotless workflow no longer reads as a green "ready" on the Test Lab card; a /history body that is not an object and a `messages` that is not an array are both handled instead of crashing the reporting path; and a non-2xx /history answer is warned about once per distinct status and named in the final timeout message (as HTTP_5xx, kept out of the caller's transient classifier on purpose).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (operator: the swarm default is the default, and the bot's own setting wins). A sixth sibling, antigravity-cli (storyboard-antigravity-image-provider.ts), renders through the same bot-node executor and demo carve as codex-cli. The demo default no longer names codex-cli: selection moved to selectStoryboardImageProvider (storyboard-image-default.ts, now awaited), which maps the RENDER BOT's own effective harness to its image rail and fails closed, naming the bot and harness, for a harness that cannot make images; the explicit env still wins and the non-demo default is still codex. The codex-cli render request names its rail ('codex-cli'), never a harness to switch the bot onto. StoryboardImageResult gains optional sourceMimeType (the format a rail produced before PNG normalization) and cliRender (a CLI render's task id, the bot's generate_image receipt, the provider the bot ran on and what its ADR-034 reconcile did).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the codex-cli render prompt no longer embeds the brief between markers. buildCliRenderPrompt takes only the anchor flag and tells the model that the brief is the "content" value of the UNTRUSTED_CONTENT record below (source ticket-or-user-body), to be followed as data; the brief rides to the executor as the separate `brief` field, which the wiring sends as the bot's untrusted text, while the instruction is sent as renderInstruction and filed under TRUSTED CONFIGURATION. The codex rail's rebind keeps the completion floor alone: the codex CLI's native image tool name was never recorded (ADR-130, 2026-08-22 proof).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for antigravity-cli renders (operator decision 2026-10-03). resolveStoryboardImageProvider takes the caller's optional `deadlineMs` for one render and hands it to the antigravity-cli rail, which keeps its fresh-turn retries and its wait for the render bot inside it (90 s when omitted: the callers' own 120 s less one attempt); every other rail ignores it. cliRender gains `attempt`, the attempt that rendered the frame (1 to 3).
  */
 /**
  * @description Storyboard image providers — siblings behind one interface.
@@ -66,6 +67,8 @@ export interface StoryboardImageResult {
   /** A CLI render's task workspace and the bot's collection receipt (antigravity-cli). */
   cliRender?: {
     taskId: string; tool: string; toolState: string; locator: string; sha256: string;
+    /** The attempt that rendered the frame (1 to 3; antigravity-cli retries a generate_image ERROR as a fresh turn). */
+    attempt?: number;
     /** The provider the bot reports the turn ran on, and what its ADR-034 reconcile did ('match' = untouched). */
     ranOn?: string | null; providerConfigAction?: string | null;
   };
@@ -743,11 +746,13 @@ export function createCodexCliImageProvider(userSub?: string): StoryboardImagePr
  * selectStoryboardImageProvider). If the selection is refused or not configured we throw and say
  * what to do — we never silently fall through to a provider that bills per image.
  *
- * @param {{vertexToken?: string, userSub?: string}} opts credentials/identity the selected provider may need
+ * @param {{vertexToken?: string, userSub?: string, deadlineMs?: number}} opts credentials/identity the
+ *   selected provider may need, and the caller's own deadline for one render in ms (the antigravity-cli
+ *   rail keeps its retries and its wait for the render bot inside it, 90 s when omitted; the others ignore it)
  * @returns {Promise<StoryboardImageProvider>} the chosen, verified-available provider
  */
 export async function resolveStoryboardImageProvider(
-  opts: { vertexToken?: string; userSub?: string } = {},
+  opts: { vertexToken?: string; userSub?: string; deadlineMs?: number } = {},
 ): Promise<StoryboardImageProvider> {
   const selection = await selectStoryboardImageProvider();
   if (!selection.ok) {
@@ -760,7 +765,7 @@ export async function resolveStoryboardImageProvider(
     vertex: createVertexImageProvider(opts.vertexToken ?? ''),
     openrouter: createOpenRouterImageProvider(),
     'codex-cli': createCodexCliImageProvider(opts.userSub),
-    'antigravity-cli': createAntigravityCliImageProvider(opts.userSub),
+    'antigravity-cli': createAntigravityCliImageProvider(opts.userSub, { deadlineMs: opts.deadlineMs }),
   };
   const chosen = byId[want];
   if (!chosen) throw new Error(`STORYBOARD_IMAGE_PROVIDER='${want}' is not a provider (codex | comfyui | vertex | openrouter | codex-cli | antigravity-cli)`);

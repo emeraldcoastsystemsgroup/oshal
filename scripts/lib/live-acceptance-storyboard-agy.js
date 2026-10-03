@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Live acceptance for the storyboard image rail chosen by the render bot's own harness (ADR-130 amendment 2026-10-02, the bot-level rule). Runs the explicit-only Lab card storyboard-antigravity-render as the operator: the resolved rail must be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), one frame must render through it on the bot node, and the answer must be a real PNG of at least 64 x 64 with the bot's receipt that generate_image reached DONE, the bot's report that the turn ran on antigravity-cli, and its ADR-034 reconcile reported as 'match' (the dispatch carried the bot's own setting and switched nothing). The card's tagged task workspace must be removed. The render bot's task record and its chat_tasks usage row are kept as the audit trail. One model turn on the operator's subscription.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The one blocking POST /api/test-lab/run now carries its own call budget: the render dispatch budget (STORYBOARD_CLI_IMAGE_TIMEOUT_MS, 420 s when unset, as storyboard-cli-image-wiring.ts reads it) plus a 60 s margin for the api's own work around the dispatch, through the runner's per-call `timeoutMs`. Under the runner's 30 s default the case crashed before the render answered (2026-10-02 19:00: the agy turn alone took 29.77 s, the whole render 61.8 s).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a render never moves the bot off its own setting, and a bot found on a stale default is first corrected onto it (ADR-034). The 00:24 run on the box rendered its frame and was failed for a 'corrected' reconcile (the bot had booted on its env fallback). The case now accepts 'match' or 'corrected' when the turn ran on the render bot's own harness (the card's botHarness; antigravity-cli when the selection named no bot, the only harness the wiring dispatches this rail to) and still fails any other reconcile or a turn run elsewhere. Title follows.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for image renders (operator decision 2026-10-03): the antigravity-cli rail retries a generate_image ERROR as up to two fresh turns inside the render budget, and the card reports the attempt that rendered the frame (cliRender.attempt). The PASS line names it ("rendered on attempt N of 3"), so a measured run shows how many frames a retry rescued. The retry and queue suites join the regression tests. The card's cleanup still reports its tagged task id; it now also removes the retry attempts' -a2/-a3 workspaces before it reports removed.
  */
 
 'use strict';
@@ -20,8 +21,11 @@ const CARD_ID = 'storyboard-antigravity-render';
 /** The card's own tagged render workspaces; nothing else is counted as this run's. */
 const RENDER_TASK = /^sbimg-testlab-live-storyboard-[0-9a-f]{8}$/;
 /** The suites that guard the seams this case crosses live. */
-const REGRESSION_TESTS = Object.freeze(['storyboard-image-default', 'storyboard-antigravity-image-turn', 'storyboard-cli-image-wiring', 'storyboard-test-lab-render', 'image-turn-prompt-framing']
+const REGRESSION_TESTS = Object.freeze(['storyboard-image-default', 'storyboard-antigravity-image-turn', 'storyboard-antigravity-render-retry', 'storyboard-image-turn-queue',
+  'storyboard-cli-image-wiring', 'storyboard-test-lab-render', 'image-turn-prompt-framing']
   .map((name) => Object.freeze({ level: 'unit', path: `tests/unit/${name}.spec.ts` })));
+/** The most attempts the antigravity-cli rail makes for one render (storyboard-antigravity-image-provider.ts). */
+const RENDER_MAX_ATTEMPTS = 3;
 /** The render dispatch budget the api holds the bot to (storyboard-cli-image-wiring.ts reads the same knob and default). */
 const DEFAULT_RENDER_BUDGET_MS = 420_000;
 /** What the api spends around the dispatch (selection, staging, receipt check, cleanup) before the call answers. */
@@ -82,7 +86,8 @@ function judgeCard(res) {
     ...reconcileProblems(receipt, output),
   ];
   if (problems.length) return { state: 'fail', detail: `card ${CARD_ID} passed but ${problems.join('; ')}`, output };
-  return { state: 'pass', detail: `card ${CARD_ID}: ${output.width} x ${output.height} PNG from ${output.sourceMimeType}, model ${output.model}, generate_image DONE (${receipt.locator}), ran on the bot's own antigravity-cli (reconcile ${receipt.providerConfigAction})`, output };
+  const attempt = Number.isInteger(receipt.attempt) ? `, rendered on attempt ${receipt.attempt} of ${RENDER_MAX_ATTEMPTS}` : '';
+  return { state: 'pass', detail: `card ${CARD_ID}: ${output.width} x ${output.height} PNG from ${output.sourceMimeType}, model ${output.model}, generate_image DONE (${receipt.locator}), ran on the bot's own antigravity-cli (reconcile ${receipt.providerConfigAction})${attempt}`, output };
 }
 
 /**

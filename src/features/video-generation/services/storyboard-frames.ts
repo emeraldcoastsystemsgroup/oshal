@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Storyboard frames: turn a screenwriter's per-scene camera line into the still image the renderer animates. Cast consistency via an anchor frame; white-page margins cropped; near-duplicate scenes rejected before any video credit is spent.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Carry the owning user's sub on the context and into the provider resolve. The ADR-130 codex-cli rail authorizes per caller (the SEC-05 demo carve at the bot node), so a resolve with no identity reads unavailable and the whole stage failed closed with the carve hint under the demo default. The vendor-API siblings ignore the field.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The resolve names the stage's own deadline for one frame, the CLI render budget (cliStoryboardRenderBudgetMs: STORYBOARD_CLI_IMAGE_TIMEOUT_MS, 420 s when unset), so the antigravity-cli rail's fresh-turn retries and its wait for the render bot stay inside the 420 s one dispatch was already allowed (operator decision 2026-10-03: retry, max 3, fresh turns; throttle image renders). The vendor-API siblings ignore it; the stage's own transient retry is unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The words the stage retries as transient are exported as STORYBOARD_FRAME_TRANSIENT_ERROR (the same pattern, now a named constant the stage itself uses), so the antigravity-cli rail's guard can prove against the real pattern that no stop message it throws after its own fresh-turn retries reads as transient here (verifier finding on core PR #1033: a retry's own 500 text made one frame run 10 image turns). What the stage retries is unchanged.
  */
 /**
  * @description Storyboard frames — the missing stage between WRITE and RENDER.
@@ -37,6 +39,7 @@
 import * as zlib from 'zlib';
 import { createChildLogger } from '@/shared/logger';
 import { resolveStoryboardImageProvider, type StoryboardImageProvider } from './storyboard-image-providers';
+import { cliStoryboardRenderBudgetMs } from './storyboard-cli-image-executor';
 
 const logger = createChildLogger({ module: 'storyboard-frames' });
 
@@ -46,6 +49,12 @@ const MIN_DIFF_BITS = 28;
 const WHITE = 244;
 /** Retry ceiling for a rate-limited or empty generation. */
 const MAX_ATTEMPTS = 5;
+/**
+ * The words in a provider's error message that this stage retries (up to MAX_ATTEMPTS): a rate limit, an
+ * empty response, or an HTTP 429 or 5xx status. A provider that retries on its own must never end with a
+ * message that matches, or the two retries multiply.
+ */
+export const STORYBOARD_FRAME_TRANSIENT_ERROR = /RATE_LIMITED|EMPTY_RESPONSE|\b(429|500|502|503|504)\b/;
 
 /** @description One scene's storyboard request. */
 export interface SceneFramePlan {
@@ -290,7 +299,7 @@ export async function generateStoryboardFrame(
   ctx: StoryboardContext,
   anchor: Buffer | null,
 ): Promise<StoryboardFrame> {
-  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub });
+  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub, deadlineMs: cliStoryboardRenderBudgetMs() });
 
   const castLock = ctx.cast.map((c) => `${c.name} = ${c.description}`).join(' | ');
   const prompt = anchor
@@ -309,7 +318,7 @@ export async function generateStoryboardFrame(
       const msg = (err as Error).message;
       // Only transient conditions are retried. A misconfiguration must surface immediately rather
       // than burn five attempts against a provider that will never answer.
-      const transient = /RATE_LIMITED|EMPTY_RESPONSE|\b(429|500|502|503|504)\b/.test(msg);
+      const transient = STORYBOARD_FRAME_TRANSIENT_ERROR.test(msg);
       if (!transient || attempt === MAX_ATTEMPTS) throw new Error(`storyboard frame ${scene.n} (${provider.id}): ${msg}`);
       const backoff = /RATE_LIMITED|429/.test(msg) ? 25_000 : 8_000;
       logger.warn({ scene: scene.n, provider: provider.id, attempt, msg }, 'storyboard frame transient failure — backing off');
@@ -334,7 +343,7 @@ export async function generateEpisodeStoryboard(
 ): Promise<{ frames: StoryboardFrame[]; distinct: { ok: boolean; duplicates: string[] } }> {
   if (!scenes.length) throw new Error('no scenes to storyboard');
   // Resolve once: a misconfigured provider should fail before the first image, not on scene three.
-  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub });
+  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub, deadlineMs: cliStoryboardRenderBudgetMs() });
   const withProvider: StoryboardContext = { ...ctx, provider };
 
   const frames: StoryboardFrame[] = [];

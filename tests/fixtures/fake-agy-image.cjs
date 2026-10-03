@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Stand-in agy executable for the Antigravity image-turn guards (tests/unit/storyboard-antigravity-image-turn.spec.ts). It runs as a REAL child process under the wrapper's real argv, cwd and env (private HOME included), records what it was handed to FAKE_AGY_OBSERVE_FILE, and replays the stream-json shape of the 2026-10-02 headless proof (agy 1.2.8): a generate_image tool step ACTIVE then DONE, the image written as <HOME>/.gemini/antigravity-cli/brain/<conversation>/storyboard_frame_<epoch-ms>.jpg, the step output "Generated image is saved at <path>" under .system_generated/steps/<n>/output.txt, and a SUCCESS result. FAKE_AGY_IMAGE_MODE picks the variant: jpeg (default), png, scan (no step output, so only the brain scan finds it), no-step (an image in the brain but no generate_image step), run-command (only a run_command step, with an image drawn into the workspace and the brain), error-step (generate_image ends in ERROR), stale (the only image predates the turn) and outside (the step output names a file outside the brain). It never contacts a model.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The ERROR step now carries the shape agy 1.2.8 emitted in the 2026-10-03 storyboard replays (tool_info.error = { type: 'TOOL_ERROR', message: 'no image generated in response' }) and the model's reply after it (NO_IMAGE_CAPABILITY). New modes: error-step-image (generate_image ends in ERROR although an image and its step output sit in the brain, so only the DONE check can refuse it) and active-only (generate_image starts and never finishes). FAKE_AGY_REPLY_JSON and FAKE_AGY_TOOL_ERROR_JSON (JSON, so control characters survive the environment) replace the final reply and the ERROR step's error object.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | FAKE_AGY_ACTIVE_STATE names the state of the active-only mode's one generate_image step (ACTIVE by default), so a guard can hand Guard A a state word the node's provider failover would classify.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | FAKE_AGY_IMAGE_MODE_SEQUENCE (comma-separated modes) picks each turn's mode in order, counted from the turns already recorded in FAKE_AGY_OBSERVE_FILE (the last one repeats), so a guard can let a render's first fresh turn end in ERROR and its retry render (operator decision 2026-10-03: retry, max 3, fresh turns). Unset, FAKE_AGY_IMAGE_MODE decides as before.
  */
 'use strict';
 
@@ -127,11 +128,21 @@ const MODES = {
   },
 };
 
+/** This turn's mode: the sequence's entry for this turn (counted from the turns already observed), else FAKE_AGY_IMAGE_MODE. */
+function turnMode() {
+  const sequence = String(process.env.FAKE_AGY_IMAGE_MODE_SEQUENCE || '').split(',').map((mode) => mode.trim()).filter(Boolean);
+  if (!sequence.length) return process.env.FAKE_AGY_IMAGE_MODE || 'jpeg';
+  const out = process.env.FAKE_AGY_OBSERVE_FILE;
+  const seen = out && fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).length : 0;
+  return sequence[Math.min(seen, sequence.length - 1)];
+}
+
 let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   const first = JSON.parse(input.split('\n')[0]);
+  const mode = turnMode();
   observe(String(first.message && first.message.content || ''));
   emit({ event: 'init', init: { model: 'fake-agy', cwd: process.cwd() } });
-  (MODES[process.env.FAKE_AGY_IMAGE_MODE || 'jpeg'] || MODES.jpeg)();
+  (MODES[mode] || MODES.jpeg)();
 });
