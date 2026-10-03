@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b real-boundary guard for the provider offers and TTS/STT spend, on the boot sequence end to end: a disposable PostgreSQL with the WHOLE migration tree (183 and 184 included), apply-rls.mjs enforcing, and the real provisioner's final phase minting oshal_app — then everything as that enforcing role behind the real GUC pool wrapper. Proves: a non-operator's offer write is refused by the table (42501) while every identity reads the offers; the CHECKs refuse a negative price and an unknown audience; the snapshot reads the price; a TTS call and an STT call through the REAL VoiceService and the REAL spend recorder each land ONE oshal_cost_events row and a chat_tasks rollup owned by the caller and carrying the accountable bot, at units times the offer price (characters; seconds measured from a WAV); a free provider writes nothing; another person cannot see those rows; and a system call is the swarm's own row with no owner. Doubles: only the speech providers' credential probes and vendor calls.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (round 2): with NO offer row (the box's state right after deploy), a paid TTS call and a paid STT call each land one ledger row of cost_usd 0.000000, owned by the caller and carrying the bot, through the real snapshot, VoiceService, recorder and CostTrackingService.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -27,6 +28,7 @@ const BOT = 'a0000000-0000-0000-0000-000000000050';
 const OPERATOR = { sub: 'spend-operator-sub', isOperator: true };
 const PERSON = { sub: 'spend-person-a', isOperator: false };
 const OTHER = { sub: 'spend-person-b', isOperator: false };
+const UNPRICED = { sub: 'spend-person-c', isOperator: false };
 const appPassword = randomBytes(24).toString('hex');
 const botPassword = randomBytes(24).toString('hex');
 const db = new DisposablePostgres({ purpose: 'capability-offers-spend', image: 'pgvector/pgvector:pg16', database: 'oshal', memory: '512m', max: 4, statementTimeoutMs: 120_000 });
@@ -166,5 +168,18 @@ describe('TTS and STT spend lands as the caller\'s own rows, with the bot (ADR-1
       caller: { principal: systemCapabilityPrincipal('scheduled transcription'), appId: null, agentId: BOT },
     }));
     expect((await ledgerFor(null)).rows).toEqual([{ provider_id: 'stt:gemini-stt', owner_sub: null, agent_id: BOT, cost_usd: '0.000400' }]);
+  }, 30_000);
+
+  it('with NO offer row, a paid TTS call and a paid STT call land zero-amount ledger rows with the bot and the caller', async () => {
+    await runWithRequestIdentity(OPERATOR, () => offerStore().remove('tts', 'google-cloud-tts'));
+    await runWithRequestIdentity(OPERATOR, () => offerStore().remove('stt', 'gemini-stt'));
+    await snapshot.refresh();
+    expect(snapshot.status()).toMatchObject({ loaded: true, offerCount: 0 });
+    await runWithRequestIdentity(UNPRICED, () => voice().synthesizeSpeech('hello world', undefined, undefined, { caller: caller(UNPRICED.sub) }));
+    await runWithRequestIdentity(UNPRICED, () => voice().transcribeAudio(oneSecondWav(), 'audio/wav', { caller: caller(UNPRICED.sub) }));
+    expect((await ledgerFor(UNPRICED.sub)).rows).toEqual([
+      { provider_id: 'tts:google-cloud-tts', owner_sub: UNPRICED.sub, agent_id: BOT, cost_usd: '0.000000' },
+      { provider_id: 'stt:gemini-stt', owner_sub: UNPRICED.sub, agent_id: BOT, cost_usd: '0.000000' },
+    ]);
   }, 30_000);
 });

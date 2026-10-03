@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4) guard for TTS and STT spend at the voice-service boundary and in the recorder's rule: a swarm-paid TTS call and a swarm-paid STT call each hand the recorder ONE event carrying the accountable bot, the caller, the units (characters; audio seconds measured from the WAV) and the offer row's unit price; a free provider (local-stt, the browser) and a failed call record nothing; the amount is units times price, an unpriced call is zero and says why; the recorder writes the caller's own row under the request identity, the swarm's own row (no owner) for the system or an unattributed caller, never names a free call, and hashes the subject out of the rollup id. The database boundary (chat_tasks, oshal_cost_events, row-level security) is capability-offers-spend-postgres.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (round 2): the unpriced path through VoiceService. With NO offer row (the box's state right after deploy), a paid TTS call and a paid STT call each hand the recorder unitPriceUsd: null and the rule prices them at zero with the reason; a literal fallback rate in place of the row's price turns this red.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -100,6 +101,19 @@ describe('voice calls hand the recorder one spend event with the bot and the cal
     const failed = new VoiceService({ rows: rows({ stt: 'gemini-stt' }), offers: PRICES, spend });
     expect((await failed.transcribeAudio(oneSecondWav(), 'audio/wav', { caller: CALLER })).fallback).toBe('failed');
     expect(events).toEqual([]);
+  });
+
+  it('with NO offer row, a paid TTS call and a paid STT call hand the recorder unitPriceUsd: null, a zero amount', async () => {
+    const service = new VoiceService({ rows: rows({ tts: 'google-cloud-tts', stt: 'gemini-stt' }), offers: { offerFor: () => null }, spend });
+    await service.synthesizeSpeech('Twelve chars', undefined, undefined, { caller: CALLER });
+    await service.transcribeAudio(oneSecondWav(), 'audio/wav', { caller: CALLER });
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ capability: 'tts', providerId: 'google-cloud-tts', costClass: 'swarm-paid', units: 12, unitPriceUsd: null, agentId: BOT });
+    expect(events[1]).toMatchObject({ capability: 'stt', providerId: 'gemini-stt', costClass: 'swarm-paid', units: 1, unitPriceUsd: null, agentId: BOT });
+    expect(events.map((event) => capabilitySpendAmount(event))).toEqual([
+      expect.objectContaining({ amountUsd: 0, priced: false, unpricedReason: expect.stringContaining('no unit price') }),
+      expect.objectContaining({ amountUsd: 0, priced: false, unpricedReason: expect.stringContaining('no unit price') }),
+    ]);
   });
 
   it('with no recorder installed nothing is recorded and the call still answers', async () => {
