@@ -3,7 +3,7 @@
 Date: 2026-10-03
 Status: **Accepted — 2026-10-03, operator decision.** The operator approved D1 to D12 as written ("Approve all 12 as written"). Nothing in the Decision is built yet; slices S1 to S5 are the build.
 
-The Context records core `main` `3f06817f` (docs-only commits since) and store `main` `25c87a29`, with read-only observations of the operator's box on 2026-10-03. Paths marked `store:` are in the `oshal-applications` repository.
+The Context records core `main` `3f06817f` and store `main` `25c87a29`, with read-only observations of the operator's box on 2026-10-03. Core `main` has since taken a docs-only commit (`f096898f`) and `3642c1f1` (PR #1033), which moves the lines this ADR cites in `storyboard-image-providers.ts`, `storyboard-antigravity-image-provider.ts`, `storyboard-cli-image-wiring.ts` and `storyboard-frames.ts` but not what they are cited for; those line numbers are at `3f06817f`. Paths marked `store:` are in the `oshal-applications` repository.
 
 Related: [ADR-034](034-bidirectional-config-ownership-sync.md) (config ownership tiers),
 [ADR-036](036-bot-owned-application-architecture.md) (the bot owns the domain; cost capture),
