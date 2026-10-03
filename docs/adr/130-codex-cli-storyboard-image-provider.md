@@ -204,6 +204,8 @@ harness with no image rail is refused, and the env override is the only way to n
 Carrying an application's permission (Create's `project.generate`, Portrait's create) through the
 CLI image dispatch is also not built.
 
+*Pointer, 2026-10-03:* [ADR-173](173-capability-providers-resolve-per-user.md) (accepted) carries the first two items: the per-bot image setting is the bot rung of its resolution order (D1, D2, D7), the image APIs become providers selectable per user and per bot, and `STORYBOARD_IMAGE_PROVIDER` is retired in its slice S5. Still not built; the application-permission item stays in BACKLOG.
+
 **Consequences.**
 
 - With the render bot on `antigravity-cli` (its own row, or the fleet default) and `DEMO_MODE` on,
