@@ -11,7 +11,8 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 voice picker rails: listTtsProviders() reports every registered provider with its LIVE getStatus (configured true/false + reason — the UI renders unconfigured ones as honest disabled states) and voices for the configured ones; getAvailableVoices() accepts an optional explicit providerId so the picker can enumerate a non-default provider's voices.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time STT failover: when the DEFAULT-resolved provider fails or is unconfigured mid-call (live 2026-08-11: Gemini free tier quota-walled → every dictation answered "Transcription failed" while the local sherpa sidecar sat idle), walk each remaining server-kind registered provider once and return the first real transcript; nothing answers → the ORIGINAL failure surfaces. An explicitly requested provider is the caller's choice and never switches — same boundary rule as an explicit BYO brain. Guard: tests/unit/voice-stt-failover.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: both directions resolve through the shared capability resolver with the caller's principal (D8): an explicit provider is a required preference (D10), the caller's saved voice choice is rung 3, the swarm default is the operator's row else the seed the config names (D6), and a refusal names the missing piece; every answer reports the rung. Entry 7's registration-order failover is REMOVED (D5): a provider that was available and then fails surfaces its own failure and no other provider is tried, so a free-tier quota wall can no longer become a paid Cloud call. A voice travels only with its own provider and only when that provider lists it (D9). listTtsProviders reports each provider's cost class and availability for the caller from the SAME availability function the resolver asks (D3). A caller that names no principal (store code until S4) resolves as unattributed: the operator-written rungs only, logged.
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4): a successful server TTS or STT call records its spend through the installed recorder — the accountable bot and the caller from the call's CapabilityCaller, the units (characters, counted as code points, for TTS; audio seconds measured from the clip for STT, else the transcript's last segment), and the unit price from the provider's offer row. A free provider and a failed call record nothing; a recorder failure is logged and never fails the call.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): the provider a synthesize request names is a preference again, as before ADR-173: an unregistered or unavailable one falls through to the next rung (the swarm default when the request named a provider), with a warning naming the provider and the reason, instead of refusing the call. Its voice does not travel to the provider that answers (D9).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4): a successful server TTS or STT call records its spend through the installed recorder — the accountable bot and the caller from the call's CapabilityCaller, the units (characters, counted as code points, for TTS; audio seconds measured from the clip for STT, else the transcript's last segment), and the unit price from the provider's offer row. A free provider and a failed call record nothing; a recorder failure is logged and never fails the call.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -287,13 +288,16 @@ export class VoiceService {
 
   /**
    * @description Synthesize text into audio (or a browser directive) with the provider the
-   * capability resolver chooses: an explicit provider (required), else the caller's saved choice,
-   * else the swarm default. The voice sent is always one the chosen provider lists (ADR-173 D9).
+   * capability resolver chooses: the provider the request names when it is available, else the
+   * caller's saved choice, else the swarm default. The voice sent is always one the chosen provider
+   * lists (ADR-173 D9).
    *
    * @param text Text to synthesize.
    * @param voice Optional voice id; with `providerId` it is that provider's voice, without it a hint
    *   used only by a provider that lists it.
-   * @param providerId Optional explicit provider (e.g. "gemini-tts"): used when available, refused otherwise.
+   * @param providerId Optional provider the request names (e.g. "gemini-tts"): a preference (ADR-173 D10's
+   *   default), used when available; when it is not registered or not available the next rung answers and a
+   *   warning names it and the reason.
    * @param options The caller (ADR-173 D8) and the caller's saved choice.
    * @returns Shape consumed by `SynthesizeResponseSchema`, with the rung that answered.
    */
@@ -306,7 +310,9 @@ export class VoiceService {
     const caller = options.caller ?? legacyCaller('VoiceService.synthesizeSpeech');
     const resolution = await resolveCapabilityProvider(this.ttsAdapter, {
       capability: 'tts', ...caller,
-      explicit: providerId ? { providerId, voice: voice ?? null } : null,
+      // The request's provider is a preference (D10's default): when it is not registered or not
+      // available the next rung answers, as this route did before ADR-173, and its voice stays with it (D9).
+      requested: providerId ? { providerId, voice: voice ?? null } : null,
       userDefault: options.userDefault ?? null,
       voiceHint: providerId ? null : voice ?? null,
     }, { rows: this.deps.rows });

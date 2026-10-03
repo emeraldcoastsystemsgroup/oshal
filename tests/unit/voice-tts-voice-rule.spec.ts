@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D9 guard at the VoiceService boundary, over the REAL TTS registry built from a swarm config on disk (OSHAL_GLOBAL_CONFIG_PATH) and the real Gemini and OpenAI provider classes — only their status probes and the OpenAI network call are doubled. Pins: a saved (provider, voice) pair whose provider is unavailable lands on the swarm default with THAT provider's default voice; a voice hint the landing provider does not list (a Gemini voice name sent to OpenAI) is dropped; an explicit provider with an unlisted voice is sent its own default voice; a listed voice of an available saved pair is kept; and across every case no synthesize call ever carries a voice id the landing provider does not list.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): the provider a synthesize request names is a preference, as before ADR-173, so an unavailable one is no longer refused: it falls through to the swarm default, and its voice ('Kore') is not sent to the provider that answers (D9). The fall-through itself, the unregistered case and the warning are pinned in voice-tts-requested-provider.spec.ts.
  */
 
 import fs from 'node:fs';
@@ -116,9 +117,9 @@ describe('D9: a TTS voice travels only with its own provider', () => {
     }
   });
 
-  it('the explicit unavailable provider is refused, never substituted', async () => {
+  it('a requested provider that is unavailable falls through, and its voice is not sent to the provider that answers', async () => {
     const out = await new VoiceService({ rows: NO_ROWS }).synthesizeSpeech('nope', 'Kore', 'gemini-tts', { caller: CALLER });
-    expect(out).toMatchObject({ providerId: 'gemini-tts', fallback: 'unconfigured', rung: 'refused', missing: 'no-credential' });
-    expect(sent).toEqual([]);
+    expect(out).toMatchObject({ providerId: 'openai-tts', rung: 'swarm-default', voiceId: 'marin' });
+    expect(sent).toEqual([{ providerId: 'openai-tts', voiceId: 'marin' }]);
   });
 });

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 guard for the shared capability resolver's rules, over a scripted adapter and row reader (the adapters and the row store have their own real-boundary specs: capability-options-agree.spec.ts and capability-swarm-rows-postgres.spec.ts). Pins: a call without a principal is refused before any rung is read (D8); an explicit provider is a required preference, used or refused and never switched (D10); the caller's own default is rung 3 for a person and ignored for the system; the swarm row beats the seed, installed-but-unread rows refuse, and a seed that names nothing refuses (D6); a skip lands only on a free provider or the same payer as every provider skipped, else refuses (D5); a voice travels only with its own provider and only when the landing provider lists it, else the landing provider's default voice (D9); the options list asks the same availability function the resolver does (D3).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): a provider the request names (`requested`) is a preference: it answers at the app rung when available; unavailable or unregistered, it falls to the caller's own default and then the swarm default; its skip still never lands on a different payer (D5); a provider server code names (`explicit`) still wins and stays required.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -89,6 +90,40 @@ describe('D10: an explicit provider is required — used or refused, never switc
     const out = await resolveCapabilityProvider(value, request({ explicit: { providerId: 'a' } }), { rows: rows() });
     expect(out).toMatchObject({ ok: false, missing: 'no-credential', detail: 'a has no key' });
     expect(availability.mock.calls.map((c) => c[0])).toEqual(['a']);
+  });
+});
+
+describe('D10: a provider the REQUEST names is a preference that falls through', () => {
+  it('an available requested provider answers at the app rung', async () => {
+    const { value } = adapter([{ id: 'a', costClass: 'swarm-paid', available: true, voices: ['a1'] }, { id: 'b', costClass: 'swarm-paid', available: true }], SEED_B);
+    expect(await resolveCapabilityProvider(value, request({ requested: { providerId: 'a', voice: 'a1' } }), { rows: rows() }))
+      .toMatchObject({ ok: true, providerId: 'a', rung: 'app', source: 'request', voice: 'a1' });
+  });
+
+  it('an unavailable requested provider falls to the caller\'s own default, else the swarm default', async () => {
+    const { value } = adapter([{ id: 'a', costClass: 'swarm-paid', available: false }, { id: 'b', costClass: 'swarm-paid', available: true }, { id: 'c', costClass: 'swarm-paid', available: true }], SEED_B);
+    expect(await resolveCapabilityProvider(value, request({ requested: { providerId: 'a' }, userDefault: { providerId: 'c' } }), { rows: rows() }))
+      .toMatchObject({ ok: true, providerId: 'c', rung: 'user-default', skipped: [{ rung: 'app', providerId: 'a', missing: 'no-credential' }] });
+    expect(await resolveCapabilityProvider(value, request({ requested: { providerId: 'a' } }), { rows: rows() }))
+      .toMatchObject({ ok: true, providerId: 'b', rung: 'swarm-default', skipped: [{ rung: 'app', providerId: 'a', missing: 'no-credential' }] });
+  });
+
+  it('an unregistered requested provider falls through to the swarm default', async () => {
+    const { value } = adapter([{ id: 'b', costClass: 'swarm-paid', available: true }], SEED_B);
+    expect(await resolveCapabilityProvider(value, request({ requested: { providerId: 'polly' } }), { rows: rows() }))
+      .toMatchObject({ ok: true, providerId: 'b', rung: 'swarm-default', skipped: [{ rung: 'app', providerId: 'polly', missing: 'not-registered' }] });
+  });
+
+  it('a requested provider\'s skip never lands on a different payer (D5)', async () => {
+    const { value } = adapter([{ id: 'a', costClass: 'free', available: false }, { id: 'b', costClass: 'swarm-paid', available: true }], SEED_B);
+    expect(await resolveCapabilityProvider(value, request({ requested: { providerId: 'a' } }), { rows: rows() }))
+      .toMatchObject({ ok: false, missing: 'payer-changes' });
+  });
+
+  it('a provider server code names (explicit) still wins and stays required', async () => {
+    const { value } = adapter([{ id: 'a', costClass: 'swarm-paid', available: false }, { id: 'b', costClass: 'swarm-paid', available: true }], SEED_B);
+    expect(await resolveCapabilityProvider(value, request({ explicit: { providerId: 'a' }, requested: { providerId: 'b' } }), { rows: rows() }))
+      .toMatchObject({ ok: false, missing: 'no-credential' });
   });
 });
 

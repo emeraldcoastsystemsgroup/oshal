@@ -10,6 +10,7 @@
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012: synthesize now honors the caller's SAVED per-user provider/voice via an injected prefs resolver — explicit body values always win; when the body names no provider, the saved provider (and, only then, its saved voice) applies; no resolver / no prefs → the swarm-default flow exactly as before. getVoices accepts ?providerId= so the picker can enumerate a specific provider's voices.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: an injected VoiceCallerResolver says whose call each request is (principal, application, accountable bot; D8) and both handlers pass it to the service. The saved selection is no longer substituted as an explicit provider: it travels as the user default (rung 3), so an unavailable saved provider falls to the swarm default (D1, D5) and its voice is never sent to another provider (D9). Explicit body values still win.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D10 (round 2): the synthesize comment now says what the service does: a body provider answers when available and, when it is not registered or not available, the swarm default answers, as before ADR-173.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
@@ -86,8 +87,9 @@ export class VoiceController extends BaseController {
 
     // JVV-012 + ADR-173: a caller that names no provider has their SAVED selection (provider +
     // voice) tried as rung 3, the user default; when that provider is unavailable the swarm
-    // default answers (D1, D5), and a voice travels only with its own provider (D9). An explicit
-    // body provider is a required preference and wins.
+    // default answers (D1, D5), and a voice travels only with its own provider (D9). A body
+    // provider is a preference: it answers when available; when it is not registered or not
+    // available the swarm default answers, as before ADR-173 (D10's default).
     let userDefault: CapabilityChoice | null = null;
     if (!providerId && this.prefsResolver) {
       const prefs = await this.prefsResolver(req);

@@ -4,7 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for ADR-173 S1 (capability providers resolve per user). A read-only card over GET /api/capability-providers as the signed-in operator: each of text to speech, speech to text, image and video must name its swarm default and where it came from (the operator's row, or the config or selector seed, or why there is none), and every provider must carry a cost class and an availability answer that names the missing piece whenever it is not offered. It writes nothing; the live move of the swarm STT default is the explicit-only live-acceptance card capability-stt. A non-operator is degraded, not failed.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the card also reports how many paid providers carry a unit price, and lists the spend, offer and card suites.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | JSDoc on CAPABILITY_PROVIDER_SCENARIOS: what the card checks, that it writes nothing, and where the live half is.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the card also reports how many paid providers carry a unit price, and lists the spend, offer and card suites.
  */
 
 import { CAPABILITIES, CAPABILITY_COST_CLASSES } from '@/shared/capability-providers';
@@ -72,6 +73,13 @@ async function listingStep(cookie: string, _prior: Record<string, unknown>, runt
   return result('pass', `${summary}. Every provider names who pays and, when not offered, what is missing; ${priced} of ${paid.length} paid providers carry a unit price. Read-only; nothing was written.`);
 }
 
+/**
+ * @description The AI Test Lab card for ADR-173 S1, contributed to the SCENARIOS registry in
+ * test-lab-scenarios.ts: one read-only step over GET /api/capability-providers as the signed-in
+ * operator, so a run-all can check every capability's swarm default and every provider's cost class
+ * and missing piece without writing anything (the live move of the swarm STT default is the
+ * explicit-only live-acceptance card instead). The regressionTests list the local suites behind it.
+ */
 export const CAPABILITY_PROVIDER_SCENARIOS: Scenario[] = [{
   id: 'capability-providers-swarm-defaults',
   title: 'Capability providers — swarm defaults, who pays, what is offered',
