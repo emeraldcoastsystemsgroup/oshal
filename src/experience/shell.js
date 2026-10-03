@@ -70,7 +70,8 @@
     return experienceFor(preset || document.body.dataset.layout || '');
   }
   function pickerMarkup(currentId, id = 'experience-picker') {
-    const options = EXPERIENCES.map(e => `<option value="${esc(e.id)}"${e.id === currentId ? ' selected' : ''}>${esc(e.label)}</option>`).join('');
+    const selectedId = experienceFor(document.body.dataset.experienceApp || currentId)?.id || '';
+    const options = EXPERIENCES.map(e => `<option value="${esc(e.id)}"${e.id === selectedId ? ' selected' : ''}>${esc(e.label)}</option>`).join('');
     return `<select aria-label="Experience" id="${id}" class="layout-picker" data-role="experience-picker"${EXPERIENCES.length < 2 ? ' hidden' : ''}>${options}</select>`;
   }
   function skinPicker(currentSkin) {

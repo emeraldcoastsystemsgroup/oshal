@@ -38,6 +38,8 @@ describe('current installed experience chooser', () => {
     const selected = shell.currentExperience();
     expect(selected.id).toBe(app); expect(selected.label).toBe(label);
     expect(shell.pickerMarkup(selected.id)).toContain(`value="${app}" selected`);
+    expect(shell.pickerMarkup(layout)).toContain(`value="${app}" selected`);
+    expect(shell.pickerMarkup(layout)).toContain(`value="${app}" selected`);
   });
   it('keeps historical layout and query selection for pages without package identity', async () => {
     expect((await chooser({ layout: 'family' })).currentExperience().id).toBe('home-experience');
