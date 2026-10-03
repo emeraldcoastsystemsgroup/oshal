@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Compose durable policy, current principal resolution, execution guards and registered management tools.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Adopt existing local and verified provider accounts without conflating subjects or granting new operator roles.
@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Forward the AUTH-07 catalog snapshot and migration review reads through the schema-readiness wrapper. Without them the service could never read the catalog an installed package's assignments were granted under, so every catalog change would classify as unrecorded and refuse.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Wire the sole-operator self-approval verifier into both approval hooks. Neither hook had a verifier, so a change touching the approver's own sensitive grants was refused for everyone, including the only administrator of the install.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Forward the actual registered mode to service activation so catalog-less enforce admission cannot be confused with legacy behavior.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 /** Assemble the control plane without granting it authority over business records. */
 import type { Request } from 'express';
@@ -103,6 +104,7 @@ function createPolicyOptions(appAccess: AppAccessService, getApps: () => SwarmAp
 function readyPolicyStore(ctx: AppContext, ready: () => Promise<unknown>): AuthorizationStore {
   const durable = new PostgresAuthorizationStore(ctx.pool);
   return {
+    readCompositePreview: async id => { await ready(); return durable.readCompositePreview(id); },
     readPreview: async id => { await ready(); return durable.readPreview(id); },
     readAudit: async input => { await ready(); return durable.readAudit(input); },
     readCatalogSnapshots: async revisions => { await ready(); return durable.readCatalogSnapshots(revisions); },

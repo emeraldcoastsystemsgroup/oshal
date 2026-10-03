@@ -15,6 +15,8 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | ADR-169 L2: pin location in the exact contracted list, pin its single package-facing specifier (the slice barrel), and prove the manifest validator accepts it under uses:, so a package that names it is refused on a core that predates it.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Pin exact anonymous package reads in the capability inventory and build-anchor guards.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Pin the composite capability to shared and feature authorization barrels.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -96,7 +98,7 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
         'application-authorization',
         'authenticated-artifacts',
         'bound-workflow-results',
-        'experience',
+        'experience', 'experience-roles',
         'futures-forward-receipts',
         'futures-archive-import',
         'package-tools',
@@ -151,6 +153,13 @@ describe('kernel-skill contract (ADR-085 Tier-0b / ADR-090 D8)', () => {
     ]);
   });
 
+  it('pins experience role contracts through the existing shared and feature barrels', () => {
+    expect(KERNEL_SKILLS.find(skill => skill.id === 'experience-roles')?.modules).toEqual([
+      { specifier: '@/shared/application-authorization', distFile: 'dist/shared/application-authorization/index.js' },
+      { specifier: '@/features/application-authorization', distFile: 'dist/features/application-authorization/index.js' },
+    ]);
+  });
+
   it.each(allModules)('skill $skill: $specifier has a source file', ({ specifier }) => {
     expect(resolveSource(specifier)).not.toBeNull();
   });
@@ -189,6 +198,10 @@ describe('manifest `uses:` validation (fail-closed)', () => {
   it('accepts location, the floor a location consumer declares', () => {
     const m = readTempManifest(`${base}uses:\n  - location\n`);
     expect(m.uses).toEqual(['location']);
+  });
+  it('accepts implemented experience hosting and reviewed roles as separate floors', () => {
+    const m = readTempManifest(`${base}uses:\n  - experience\n  - experience-roles\n`);
+    expect(m.uses).toEqual(['experience', 'experience-roles']);
   });
 
   it('accepts a manifest with no uses at all', () => {

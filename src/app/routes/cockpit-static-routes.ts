@@ -3,13 +3,14 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation of dedicated cockpit/static asset route registration to reduce server.ts size before engineering-screen retrofit work
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hardened cockpit sendFile error handling so retrofit validation typechecks cleanly
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added /css and /js static aliases so legacy ui-enhanced engineering pages resolve absolute asset references
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial implementation of dedicated cockpit/static asset route registration to reduce server.ts size before engineering-screen retrofit work
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Hardened cockpit sendFile error handling so retrofit validation typechecks cleanly
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Added /css and /js static aliases so legacy ui-enhanced engineering pages resolve absolute asset references
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Mount a fixed authenticated allowlist for locked local startup dependencies.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-164 experience shells: resolve the experience directory like cockpitDir (src/ or the image copy) so /portal, /studio, /jarvis, /orbit, /commons, /homebase and /nexus serve from the built container; the dist-relative guess, the layout-prefixed cockpit duplicates and the store-checkout Little Monsters mount are gone, and /little-monsters redirects to the classroom preset.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Serve /simple (simple.html, docs/architecture/simple-chat.md) behind requiresAuth like every experience entry page: the opt-in plain text screen over the caller's Jarvis thread.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): with the optional `shellLock` ports, a non-operator on a deployment whose landing names an application is redirected from the plain cockpit document (incl. index.html, decided before the static mount) and every experience entry page to that landing; operators, focused ?app= requests and assets are untouched. A customer's staff opened the product they were sold and found the operator cockpit one click away.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Route legacy experience entries through installed package open authorization while preserving shared assets and focused landing behavior.
  */
 
 import express from 'express';
@@ -47,12 +48,7 @@ export interface CockpitStaticRoutesOptions {
 /** Entry pages served from the experience directory: every path an experience chooser links to. */
 const EXPERIENCE_PAGES: ReadonlyArray<readonly [string[], string]> = [
   [['/experience', '/experience/', '/portal', '/portal/'], 'index.html'],
-  [['/homebase', '/homebase/'], 'homebase.html'],
   [['/nexus', '/nexus/'], 'nexus.html'],
-  [['/studio', '/studio/'], 'studio.html'],
-  [['/jarvis', '/jarvis/'], 'jarvis.html'],
-  [['/orbit', '/orbit/'], 'orbit.html'],
-  [['/commons', '/commons/'], 'commons.html'],
   // Simple chat (docs/architecture/simple-chat.md): the plain text screen over the caller's Jarvis thread.
   [['/simple', '/simple/'], 'simple.html'],
 ];
@@ -141,6 +137,23 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
   // directory is resolved the same way as cockpitDir so ts-node (src/) and the built image
   // (/app/src/experience, copied by Dockerfile.oshal) both serve it; a dist-relative guess 404s.
   const experienceDir = resolveExperienceDir();
+  // These documents belong to installed applications. Even a raw legacy HTML URL
+  // passes through the same independently authorized open operation as the chooser.
+  const legacyEntries: Array<[string[], (req: express.Request) => string]> = [
+    ...['studio', 'jarvis', 'orbit', 'commons'].map((name): [string[], () => string] =>
+      [[`/${name}`, `/${name}/`, `/experience/${name}.html`], () => `${name}-experience`]),
+    [['/homebase', '/homebase/', '/experience/homebase.html'], (req) =>
+      req.query.preset === 'company' ? 'business-experience' : req.query.preset === 'classroom' ? 'classroom-experience' : 'home-experience'],
+    [['/little-monsters', '/little-monsters/'], () => 'classroom-experience'],
+  ];
+  for (const [paths, packageFor] of legacyEntries) {
+    options.app.get(paths, options.requiresAuth, noCache, (req, res) => {
+      const lock = options.shellLock;
+      const landing = lock && shellRedirectFor({ operator: lock.isOperator(req), landingPath: lock.landingPath(req),
+        pathname: '/homebase', requestedApp: req.query.app ?? req.query.profile });
+      res.redirect(302, landing || `/api/ui/experiences/${packageFor(req)}/open`);
+    });
+  }
   options.app.use('/experience', options.requiresAuth, noCache, express.static(experienceDir));
   const sendHtml = (filePath: string): express.RequestHandler => (_req, res) => {
     res.sendFile(filePath, (error) => {
@@ -156,11 +169,6 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
   for (const [paths, file] of EXPERIENCE_PAGES) {
     options.app.get(paths, options.requiresAuth, noCache, sendHtml(path.join(experienceDir, file)));
   }
-  // The classroom experience is the Little Monsters homebase preset; the earlier direct path stays reachable.
-  options.app.get(['/little-monsters', '/little-monsters/'], options.requiresAuth, noCache, (_req, res) => {
-    res.redirect('/homebase?preset=classroom');
-  });
-
   options.app.use('/ui-enhanced', options.requiresAuth, express.static(options.uiEnhancedDir));
 
   // Legacy engineering page asset aliases — absolute /css/* and /js/* paths used by ui-enhanced HTML

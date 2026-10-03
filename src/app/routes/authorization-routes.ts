@@ -1,13 +1,14 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add authenticated Access Administration adapters over the shared policy service and its strict tool schemas.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add authenticated Access Administration adapters over the shared policy service and its strict tool schemas.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Serve the installed source asset from compiled runtimes and redact file delivery failures.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Adapt the read-only package grant plan. Same authenticated, same-origin, JSON-bounded adapter as every other management call; a service that does not implement it refuses rather than answering an empty plan.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: GET /catalog-migrations lists one application's reviewable catalog migrations (management read) and POST /catalog-migrations/apply approves one with the same previewId + idempotencyKey body as /apply, behind the same authentication, same-origin and JSON bounds. A service without the methods refuses rather than answering empty.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 import path from 'node:path';
 import { Router, json, type ErrorRequestHandler, type Request, type RequestHandler, type Response } from 'express';
@@ -78,6 +79,11 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
     if (!service.catalogMigrations) throw new Error('catalog_migrations_unsupported');
     return service.catalogMigrations(actor, input);
   }));
+  router.get('/composites', run(async (req, actor) => {
+    const input = z.object({ app: z.string().regex(/^[a-z0-9][a-z0-9-]{1,63}$/).optional(), tenantId: z.string().min(1).max(512).optional() }).strict().parse(req.query);
+    if (!service.listCompositeRoles) throw new Error('composite_roles_unsupported');
+    return service.listCompositeRoles(actor, input);
+  }));
   router.use(authorizationSameOrigin, json({ limit: '32kb' }));
   router.post('/effective', run(async (req, actor) => service.effective(actor, AuthorizationTargetSchema.parse(req.body))));
   router.post('/explain', run(async (req, actor) => service.explain(actor, AuthorizationExplainSchema.parse(req.body))));
@@ -90,6 +96,15 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
   }));
   router.post('/preview', run(async (req, actor) => service.previewChange(actor, AuthorizationChangeSchema.parse(req.body))));
   router.post('/apply', run(async (req, actor) => service.applyChange(actor, AuthorizationApplySchema.parse(req.body))));
+  // Composite bodies are closed and bounded by the same authoritative service used for ordinary role changes.
+  router.post('/composites/preview', run(async (req, actor) => {
+    if (!service.previewCompositeRole) throw new Error('composite_roles_unsupported');
+    return service.previewCompositeRole(actor, req.body);
+  }));
+  router.post('/composites/apply', run(async (req, actor) => {
+    if (!service.applyCompositeRole) throw new Error('composite_roles_unsupported');
+    return service.applyCompositeRole(actor, req.body);
+  }));
   // Approves a reviewed catalog migration; the next activation of that exact package revision applies it.
   router.post('/catalog-migrations/apply', run(async (req, actor) => {
     const input = AuthorizationApplySchema.parse(req.body);
@@ -120,6 +135,13 @@ export function createAuthorizationRoutes(service: ApplicationAuthorizationManag
 export function createAuthorizationPageRoutes(service: ApplicationAuthorizationManagementService, options: AuthorizationRouteOptions): Router {
   const router = Router();
   router.use(options.requiresAuth);
+  router.get('/composite-roles.js', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      await service.catalog(await options.resolveActor(req));
+      res.sendFile(path.resolve(process.cwd(), 'src/pages/access/composite-roles.js'), error => { if (error && !res.headersSent) fail(res, error); });
+    } catch (error) { fail(res, error); }
+  });
   router.get('/', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     try {

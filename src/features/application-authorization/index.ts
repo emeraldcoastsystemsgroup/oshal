@@ -3,12 +3,14 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose the transaction port for isolated current-management concurrency verification.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Export the package grant plan resolver and its ports so composition can supply the installed-package reader and isolated tests can drive the pure resolution directly.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Export the AUTH-07 catalog diff classifier and catalog migration lifecycle (installer principal, refusal error, review TTL) and their store types.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Export the composite lifecycle through the feature boundary for trusted composition.
  */
 export { ApplicationAuthorizationService, type ApplicationAuthorizationServiceOptions } from './service';
+export { CompositeRoleEngine, compositeGrantSource, type CompositeRolePorts, type CompositeConstituentContext } from './composite-role-engine';
 export { buildPackageGrantPlan, classifyPackageGrantEntry, resolvePackageClosure,
   type PackageClosure, type PackageDependencyFacts, type PackageGrantAppFacts,
   type PackageGrantPlanPorts, type PackageGrantSubjectFacts } from './package-grant-plan';

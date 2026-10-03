@@ -3,8 +3,8 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add bounded, redacted applied authorization history under current application and tenant authority.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, redacted applied authorization history under current application and tenant authority.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Derive durable delegated management roles and revalidate writes without nested pool acquisition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Reserve the global business-membership audit namespace against application registration.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Expose the registered application names for read-only review surfaces. effective() already answers one app at a time, but a joined access review has to ask about every registered app INCLUDING the ones the subject is denied — which is the half of the answer ownCatalog() cannot give, because it returns only what is already permitted.
@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 reviewed catalog migration. validateRegistration classifies a changed catalog against the recorded catalog its assignments were granted under instead of refusing every change: a non-widening revision passes, and registerApp re-stamps the assignments in the same policy transaction that records the new catalog and writes the audit event. A widening or breaking revision still refuses, now with one stored review (previewId) that an application-wide administrator lists and approves through catalogMigrations/applyCatalogMigration; the next activation of exactly that revision applies it. Grants the new catalog does not define are removed, never carried, so they cannot revive.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Record the approval reference a verified apply named: on the audit event of an access change that required approval, and on a catalog-migration approval (which the activation audit event then carries). Before this no approval could be verified at all, so there was nothing to record.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Read effective policy after the asynchronous tier resolver so revocation during that await cannot return stale grants and revision.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -46,6 +47,9 @@ import {
   type CatalogMigrationPlan,
 } from './catalog-migration';
 import type { AuthorizationCatalogSnapshot, StoredCatalogMigration } from './types';
+import { CompositeRoleEngine, type CompositeConstituentContext } from './composite-role-engine';
+import type { CompositeRoleApplyInput, CompositeRoleInput } from '@/shared/application-authorization';
+import { validateRoleTemplates } from '@/shared/experience-contract';
 const logger = createChildLogger({ module: 'application-authorization' });
 
 export interface ApplicationAuthorizationServiceOptions {
@@ -70,6 +74,26 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
   constructor(private readonly store: AuthorizationStore, private readonly options: ApplicationAuthorizationServiceOptions = {}) {
     this.now = options.now ?? Date.now;
   }
+  private compositeRoles(): CompositeRoleEngine {
+    return new CompositeRoleEngine({ store: this.store, now: this.now,
+      current: actor => this.currentActor(actor), withState: (actor, state) => this.managementActor(actor, state),
+      names: () => [...this.apps.keys()], app: name => this.apps.get(name) ?? null,
+      subject: (actor, target) => this.targetActor(actor, target), effective: (actor, target) => this.effective(actor, target),
+      preview: (actor, change, context) => this.previewConstituent(actor, change, context),
+      prepare: (actor, input, id) => this.prepareApply(actor, input, id),
+      apply: (actor, input, transaction, context) => this.applyPrepared(actor, input, transaction, context) });
+  }
+  /** @description List current readable experience role metadata through this authority.
+   * @param actor Verified caller. @param input App and tenant filters. @returns Redacted catalog and assignment views. */
+  async listCompositeRoles(actor: AuthorizationActor, input: { app?: string; tenantId?: string } = {}) {
+    return this.compositeRoles().list(actor, input);
+  }
+  /** @description Review exact member changes while retaining all existing role checks.
+   * @param actor Verified caller. @param input Explicit lifecycle selection. @returns Bound review or member refusals. */
+  async previewCompositeRole(actor: AuthorizationActor, input: CompositeRoleInput) { return this.compositeRoles().preview(actor, input); }
+  /** @description Apply or retrieve one durable atomic composite receipt.
+   * @param actor Verified caller. @param input Review and retry key. @returns Durable receipt. */
+  async applyCompositeRole(actor: AuthorizationActor, input: CompositeRoleApplyInput) { return this.compositeRoles().apply(actor, input); }
   /**
    * @description Activate one registration. In ONE policy transaction: assignments stamped with a
    * previous catalog revision are re-stamped when the change is non-widening (or a reviewer approved
@@ -122,7 +146,15 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     if (input.app === EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP) throw new ApplicationAuthorizationError(400, 'authorization_app_name_reserved');
     if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(input.app) || !input.source || !input.version || !['legacy','enforce'].includes(input.mode)) throw new ApplicationAuthorizationError(400, 'invalid_authorization_registration');
     const catalog = input.catalog === null ? null : validateAuthorizationCatalog(input.catalog);
+    if (input.compositeRoles) {
+      const { templates, requiredApps, optionalApps } = input.compositeRoles;
+      if (![requiredApps, optionalApps].every(rows => Array.isArray(rows) && rows.length <= 128 && rows.every(name => /^[a-z0-9][a-z0-9-]{1,63}$/.test(name)))
+        || new Set([...requiredApps, ...optionalApps]).size !== requiredApps.length + optionalApps.length) throw new ApplicationAuthorizationError(400, 'invalid_composite_registration');
+      try { validateRoleTemplates(input.app, templates, requiredApps, new Set([...requiredApps, ...optionalApps])); }
+      catch { throw new ApplicationAuthorizationError(400, 'invalid_composite_registration'); }
+    }
     return { ...input, access: input.access ? structuredClone(input.access) : undefined,
+      compositeRoles: input.compositeRoles ? structuredClone(input.compositeRoles) : undefined,
       mountPaths: [...(input.mountPaths ?? [])], adapters: { ...input.adapters }, catalog,
       mode: catalog ? 'enforce' : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) };
   }
@@ -298,7 +330,7 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       canDelegateManagement: actor.isSwarmAdmin && managementAllowed(actor, app.app, undefined, 'assign'), managementScopes: (actor.isSwarmAdmin
       ? [{ app: app.app, permissions: ['read','assign','directory'] as Array<'read' | 'assign' | 'directory'> }] : actor.managementScopes?.filter(scope => scope.app === app.app) ?? [])
       .map(scope => ({ ...scope, permissions: scope.permissions.filter(permission => !actor.allowedPermissions || actor.allowedPermissions.includes(`platform:authorization.${permission}`)) })) })),
-    users: [...users.values()], groups: [...groups.values()], assignments };
+    users: [...users.values()], groups: [...groups.values()], assignments: assignments.map(({ grantSource: _source, ...row }) => ({ ...row, ...(_source ? { managed: true } : {}) })) };
   }
   async ownCatalog(actor: AuthorizationActor): Promise<AuthorizationCatalogResult> {
     actor = await this.currentActor(actor); const apps: AuthorizationAppSummary[] = [];
@@ -374,20 +406,28 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     return { ...deny('authorization_allowed'), allowed: true, tier: grantSet.tier, grants: structuredClone(admitted) };
   }
   async previewChange(actor: AuthorizationActor, input: AuthorizationChange): Promise<AuthorizationPreview> {
+    return this.previewConstituent(actor, input);
+  }
+  private async previewConstituent(actor: AuthorizationActor, input: AuthorizationChange, context?: CompositeConstituentContext): Promise<AuthorizationPreview> {
     actor = await this.currentActor(actor);
-    const change = parseAuthorizationChange(input); const app = this.requireApp(change.app); this.validateChange(actor, change, app);
+    const change = parseAuthorizationChange(input);
+    const retiring = Boolean(context?.revokeGrantSource && ['revoke', 'group-unmap'].includes(change.action));
+    const app = retiring ? this.apps.get(change.app) : this.requireApp(change.app);
+    const validate = () => retiring ? this.requireChangeAuthority(actor, change) : this.validateChange(actor, change, app!);
+    validate();
     return this.store.transaction(async ({ state }) => {
-      actor = this.managementActor(actor, state); this.validateChange(actor, change, app);
+      actor = this.managementActor(actor, state); validate();
       if (state.revision !== change.expectedRevision) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
       state.previews = state.previews.filter(preview => preview.receipt || Date.parse(preview.expiresAt) > this.now());
       if (state.previews.length >= 10_000) throw new ApplicationAuthorizationError(503, 'authorization_preview_capacity');
       const self = change.targetSub === actor.sub && change.targetIssuer === actor.issuer;
-      const sensitive = Boolean(applicationManagementRole(change.role) || (change.role && app.catalog?.roles[change.role]?.sensitive));
-      const restoresSensitive = change.action === 'clear-deny' && state.assignments.some(row => row.app === app.app
+      const sensitive = Boolean(context?.sensitive || applicationManagementRole(change.role) || (change.role && app?.catalog?.roles[change.role]?.sensitive));
+      const restoresSensitive = change.action === 'clear-deny' && state.assignments.some(row => row.app === change.app
         && row.targetSub === actor.sub && row.targetIssuer === actor.issuer && row.role
-        && (applicationManagementRole(row.role) || app.catalog?.roles[row.role]?.sensitive));
+        && (applicationManagementRole(row.role) || app?.catalog?.roles[row.role]?.sensitive));
       const preview: StoredAuthorizationPreview = { previewId: randomUUID(), expiresAt: new Date(this.now() + 600_000).toISOString(), revision: state.revision,
-        catalogRevision: app.catalogRevision, change, requiresApproval: (self && (sensitive || restoresSensitive)) || (Boolean(change.group) && sensitive), actor: { sub: actor.sub, issuer: actor.issuer } };
+        catalogRevision: app?.catalogRevision ?? 'source-retired', change, requiresApproval: (self && (sensitive || restoresSensitive)) || (Boolean(change.group) && sensitive), actor: { sub: actor.sub, issuer: actor.issuer },
+        ...(context ? { compositeId: context.id } : {}), ...(retiring ? { revokeGrantSource: context!.revokeGrantSource } : {}) };
       state.previews.push(preview); return this.publicPreview(preview);
     });
   }
@@ -396,14 +436,15 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     const current = await this.prepareApply(actor, input);
     return this.store.transaction(async transaction => this.applyPrepared(current, input, transaction));
   }
-  private async prepareApply(original: AuthorizationActor, input: AuthorizationApplyInput): Promise<AuthorizationActor> {
+  private async prepareApply(original: AuthorizationActor, input: AuthorizationApplyInput, compositeId?: string): Promise<AuthorizationActor> {
     const actor = await this.currentActor(original);
     const preview = await this.store.readPreview(input.previewId);
     if (!preview || preview.actor.sub !== actor.sub || preview.actor.issuer !== actor.issuer) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
+    if (preview.compositeId !== compositeId) throw new ApplicationAuthorizationError(403, 'authorization_composite_preview_reserved');
     this.requireChangeAuthority(actor, preview.change);
     if (!preview.receipt) {
       if (Date.parse(preview.expiresAt) <= this.now()) throw new ApplicationAuthorizationError(409, 'authorization_preview_expired');
-      if (preview.catalogRevision !== this.requireApp(preview.change.app).catalogRevision
+      if (preview.catalogRevision !== (preview.revokeGrantSource ? this.apps.get(preview.change.app)?.catalogRevision ?? 'source-retired' : this.requireApp(preview.change.app).catalogRevision)
         || preview.revision !== (await this.store.read()).revision) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
     }
     if (!preview.receipt && preview.requiresApproval && (!input.approvalReference || !this.options.verifyApproval
@@ -411,11 +452,15 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     // Approval and account lookups must not hold a pool client or the policy writer lock.
     return this.currentActor(original);
   }
-  private applyPrepared(current: AuthorizationActor, input: AuthorizationApplyInput, transaction: AuthorizationTransaction): AuthorizationReceipt {
+  private applyPrepared(current: AuthorizationActor, input: AuthorizationApplyInput, transaction: AuthorizationTransaction,
+    composite?: { id: string; baseRevision: number; grantSource: string }): AuthorizationReceipt {
       const { state, audit } = transaction; const actor = this.managementActor(current, state);
       const preview = state.previews.find(row => row.previewId === input.previewId);
       if (!preview || preview.actor.sub !== actor.sub || preview.actor.issuer !== actor.issuer) throw new ApplicationAuthorizationError(404, 'authorization_preview_not_found');
-      const app = this.requireApp(preview.change.app);
+      if (preview.compositeId !== composite?.id) throw new ApplicationAuthorizationError(403, 'authorization_composite_preview_reserved');
+      const retiring = Boolean(composite && preview.revokeGrantSource && ['revoke', 'group-unmap'].includes(preview.change.action));
+      if (retiring && preview.revokeGrantSource !== composite!.grantSource) throw new ApplicationAuthorizationError(403, 'authorization_composite_source_mismatch');
+      const app = retiring ? this.apps.get(preview.change.app) : this.requireApp(preview.change.app);
       this.requireChangeAuthority(actor, preview.change);
       if (state.previews.some(row => row.previewId !== preview.previewId && row.actor.sub === actor.sub && row.actor.issuer === actor.issuer && row.idempotencyKey === input.idempotencyKey)) throw new ApplicationAuthorizationError(409, 'authorization_idempotency_conflict');
       if (preview.receipt) {
@@ -423,16 +468,17 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
         return preview.receipt;
       }
       if (Date.parse(preview.expiresAt) <= this.now()) throw new ApplicationAuthorizationError(409, 'authorization_preview_expired');
-      if (preview.catalogRevision !== app.catalogRevision || preview.revision !== state.revision) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
-      this.validateChange(actor, preview.change, app);
+      if (preview.catalogRevision !== (app?.catalogRevision ?? 'source-retired') || preview.revision !== (composite?.baseRevision ?? state.revision)) throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
+      if (!retiring) this.validateChange(actor, preview.change, app!);
       const change = preview.change;
-      const matches = (row: AuthorizationAssignment): boolean => row.app === change.app && row.source === app.source && row.targetSub === change.targetSub
+      const matches = (row: AuthorizationAssignment): boolean => row.grantSource === composite?.grantSource && row.app === change.app && (retiring || row.source === app!.source) && row.targetSub === change.targetSub
         && row.targetIssuer === change.targetIssuer && row.tenantId === change.tenantId && JSON.stringify(row.group) === JSON.stringify(change.group)
         && row.role === change.role && row.permission === change.permission && row.deny === ['deny','clear-deny'].includes(change.action);
       state.assignments = state.assignments.filter(row => !matches(row));
-      if (['grant','deny','group-map'].includes(change.action)) state.assignments.push({ id: randomUUID(), app: app.app, source: app.source,
-        catalogRevision: app.catalogRevision, targetSub: change.targetSub, targetIssuer: change.targetIssuer, tenantId: change.tenantId,
-        group: change.group, role: change.role, permission: change.permission, deny: change.action === 'deny', expiresAt: change.expiresAt });
+      if (['grant','deny','group-map'].includes(change.action)) state.assignments.push({ id: randomUUID(), app: app!.app, source: app!.source,
+        catalogRevision: app!.catalogRevision, targetSub: change.targetSub, targetIssuer: change.targetIssuer, tenantId: change.tenantId,
+        group: change.group, role: change.role, permission: change.permission, deny: change.action === 'deny', expiresAt: change.expiresAt,
+        ...(composite ? { grantSource: composite.grantSource } : {}) });
       state.revision += 1; const auditId = randomUUID();
       audit({ id: auditId, actor: { sub: actor.sub, issuer: actor.issuer }, at: new Date(this.now()).toISOString(), change, revision: state.revision, previewId: preview.previewId,
         ...(preview.requiresApproval && input.approvalReference ? { approvalReference: input.approvalReference } : {}) });

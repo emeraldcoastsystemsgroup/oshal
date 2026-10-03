@@ -1,9 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The design study's Home, classroom and learner pieces built into /homebase, in headless Chromium over the real static routes and the synthetic swarm (fixture routes shaped like the real ones): the opt-in check-in panel from ADR-169 location state (the caller's own place and age, household members with nothing shown, who can see the caller, the "share from this browser" switch that stops this browser's device and opens Settings, Location to turn on, refusals by the route's own message, nothing asked outside Home), the household group (people, roles, the directory's names only, the workspace label, badge and breadcrumb, People & roles with household creation and its refusal, Devices with stop reporting), the room strip, a learner's level and XP from Little Monsters' own dashboard (not asked for a teacher, not asked outside the classroom before the probe gate), the classwork due pill, the family learner's greeting, and unread Little Monsters notices with mark read.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert the approved operational class-updates heading while preserving unread notice and mark-read behavior.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -259,7 +260,7 @@ describe('the learner and the classroom', () => {
       { notification_id: 'n2', title: 'Old synthetic notice', body: 'Seen already.', channel: 'in-app', read: true, sent_at: now() });
     await open('classroom', '[data-notice="n1"]');
     const board = await moduleText('updates');
-    expect(board).toMatch(/On our noticeboard[\s\S]*Synthetic notice[\s\S]*Bring a <b>synthetic<\/b> jar\./);
+    expect(board).toMatch(/Class updates[\s\S]*Synthetic notice[\s\S]*Bring a <b>synthetic<\/b> jar\./);
     expect(board).not.toContain('Old synthetic notice');
     await page.locator('button[data-action="notice-read"][data-notice="n1"]').click();
     await page.waitForFunction(() => !document.querySelector('.update[data-notice="n1"]'));

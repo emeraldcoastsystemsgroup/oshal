@@ -622,7 +622,7 @@ Local fixture proof does not imply deployed live publication.
 
 ## Delivery amendment — selectable experience composite roles (operator, 2026-10-03)
 
-**Status:** Approved implementation scope; lifecycle implementation pending.
+**Status:** Composite lifecycle implemented locally; deployed acceptance pending.
 
 An experience may offer a named, versioned template of explicit member-application catalog
 roles. Extend the existing package grant planner and audited access workflow, retaining this
@@ -645,4 +645,10 @@ relationship loss, explicit denies and separation of duties. Preserve these chec
 API, assistant/tool and background paths as well as UI navigation. See the
 [integration contract and acceptance matrix](../architecture/experience-application-integration.md)
 for the Home pilot, lifecycle cases and implementation sequence. No new assignment schema or
-grant behavior is claimed by this documentation amendment.
+grant behavior was claimed by the initial documentation amendment. The implemented
+`experience-roles` floor now adds migration 185, reserved constituent reviews and a durable
+composite assignment under the existing forced operator-only policy. Preview/apply, revoke
+and reviewed upgrades compose this service's ordinary role checks and approvals; one policy
+transaction commits all constituent edges, audit records and the parent receipt. Direct and
+other managed sources survive revocation. Isolated HTTP, Access browser and PostgreSQL
+acceptance passed; installed package acceptance remains open.

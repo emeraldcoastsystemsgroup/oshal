@@ -1,3 +1,6 @@
+/* CHANGE LOG
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Preserve the icon grid track for readable household actions at phone widths.
+ */
 @import "./tokens/skins.css";
 *{box-sizing:border-box}body{margin:0;font-family:Inter,"Segoe UI",sans-serif;background:#f6f5f1;color:#263e38}button,input,select,textarea{font:inherit}button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}button,a{touch-action:manipulation}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--accent,#3c695b);outline-offset:4px}button{color:inherit}a{color:inherit}button:disabled{cursor:default;opacity:.6}h1,h2,h3,p{margin:0}button svg{pointer-events:none}.screenreader{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .experience{--bg:#f6f5f0;--paper:#fffefa;--ink:#283f38;--muted:#64756c;--line:#dce1d6;--accent:#3e6854;--on:#fff;--soft:#e9eee1;--feature:#e8eddd;--radius:20px;min-height:100vh;background:var(--bg);color:var(--ink)}
@@ -38,3 +41,5 @@
 .config-fieldset{border:1px solid var(--line);border-radius:10px;padding:4px 14px;margin:14px 0}.config-fieldset legend{font-size:12px;font-weight:600;padding:0 6px}.config-fieldset .config-check{margin:10px 0}.sidebar-help{display:block;margin-top:8px}.focus-unit{font:13px Inter,"Segoe UI",sans-serif}.people-role{padding:6px 0}.head-actions{display:inline-flex;gap:14px;align-items:center}
 @media(max-width:700px){.main-top{flex-wrap:wrap}.top-controls{flex-wrap:wrap}.home-search{order:5;flex:1 1 100%}.home-search input{width:100%}.room-strip{gap:10px 16px;padding:13px 15px}.room-tabs{gap:12px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+
+.admin-link > .nav-symbol{display:inline-grid}

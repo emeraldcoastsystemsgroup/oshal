@@ -15,10 +15,12 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Bind exact anonymous reads to detached active catalog-less route declarations.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Refuse signed callback dispatch when awaited resource authorization outlives its owner or policy grants.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Use key-order-agnostic sameAnonymousPackageRoutes equality to admit anonymous package reads across YAML parsed declarations.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { readAppDependencies } from '@/shared/app-dependencies';
 import type { Request, Response } from 'express';
 import type { ApplicationAuthorizationService } from '@/features/application-authorization';
 import type { ManifestAuthorizationRegistrar, SwarmAppManifest, SwarmApplicationRecord, SwarmAppRouteDeclaration } from '@/features/swarm-apps';
@@ -79,7 +81,10 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     validatePackageTools(manifest);
     const catalog = loadApplicationAuthorization(path.dirname(path.resolve(manifestPath)), manifest);
     const isPackage = path.basename(manifestPath) === 'oshal-app.yaml';
+    const dependencies = readAppDependencies(manifest);
     return { app: manifest.name, source: installationSource(manifestPath), version: manifest.version ?? '0.0.0', catalog,
+      ...(manifest.experience?.roleTemplates ? { compositeRoles: { templates: structuredClone(manifest.experience.roleTemplates),
+        requiredApps: dependencies.required.apps, optionalApps: dependencies.optional.apps } } : {}),
       agentIds: (manifest.bots ?? []).flatMap(bot => bot.agentId ? [bot.agentId] : []),
       toolNames: (manifest.tools ?? []).map(tool => tool.name),
       mode: isPackage ? applicationAuthorizationMode(this.env) : 'legacy', access: manifest.access,
