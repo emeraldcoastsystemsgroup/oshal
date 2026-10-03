@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (operator: the swarm default is the default, and the bot's own setting wins). A sixth sibling, antigravity-cli (storyboard-antigravity-image-provider.ts), renders through the same bot-node executor and demo carve as codex-cli. The demo default no longer names codex-cli: selection moved to selectStoryboardImageProvider (storyboard-image-default.ts, now awaited), which maps the RENDER BOT's own effective harness to its image rail and fails closed, naming the bot and harness, for a harness that cannot make images; the explicit env still wins and the non-demo default is still codex. The codex-cli render request names its rail ('codex-cli'), never a harness to switch the bot onto. StoryboardImageResult gains optional sourceMimeType (the format a rail produced before PNG normalization) and cliRender (a CLI render's task id, the bot's generate_image receipt, the provider the bot ran on and what its ADR-034 reconcile did).
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the codex-cli render prompt no longer embeds the brief between markers. buildCliRenderPrompt takes only the anchor flag and tells the model that the brief is the "content" value of the UNTRUSTED_CONTENT record below (source ticket-or-user-body), to be followed as data; the brief rides to the executor as the separate `brief` field, which the wiring sends as the bot's untrusted text, while the instruction is sent as renderInstruction and filed under TRUSTED CONFIGURATION. The codex rail's rebind keeps the completion floor alone: the codex CLI's native image tool name was never recorded (ADR-130, 2026-08-22 proof).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for antigravity-cli renders (operator decision 2026-10-03). resolveStoryboardImageProvider takes the caller's optional `deadlineMs` for one render and hands it to the antigravity-cli rail, which keeps its fresh-turn retries and its wait for the render bot inside it (90 s when omitted: the callers' own 120 s less one attempt); every other rail ignores it. cliRender gains `attempt`, the attempt that rendered the frame (1 to 3).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: resolveStoryboardImageProvider resolves through the shared capability resolver with the caller's principal (D8: the userSub the surface passes, else unattributed). The operator's swarm image row answers first (D6); with no row the seed is the existing selectors, unchanged (selectStoryboardImageSeed). createImageCapabilityAdapter declares who pays for each provider (STORYBOARD_IMAGE_COST_CLASSES: codex and openrouter swarm-paid, vertex user-paid, comfyui and the two CLI rails free; D4) and owns the ONE availability function the options list and the resolver both ask (D3): the provider's own available() (credential, configuration, the ADR-127 carve for the CLI rails) and, for codex and openrouter, their vendor healthCheck cached for OSHAL_CAPABILITY_HEALTH_PROBE_TTL_MS (60 s). The refusal words are the ones this function always threw, plus "failed its health check" for a probe that fails. buildStoryboardImageProvider is the one factory both use.
  */
 /**
  * @description Storyboard image providers — siblings behind one interface.
@@ -51,7 +52,19 @@ import { getSwarmApiKey, hasSwarmApiKey, getSwarmPlatformApiKey, hasSwarmPlatfor
 import { vertexProjectLocation } from './veo-client';
 import { RENDER_BRIEF_RECORD_SOURCE, resolveCliStoryboardImageExecutor } from './storyboard-cli-image-executor';
 import { createAntigravityCliImageProvider } from './storyboard-antigravity-image-provider';
-import { selectStoryboardImageProvider } from './storyboard-image-default';
+import { selectStoryboardImageSeed } from './storyboard-image-default';
+import {
+  resolveCapabilityProvider,
+  unattributedCapabilityPrincipal,
+  userCapabilityPrincipal,
+  type CapabilityAdapter,
+  type CapabilityAvailability,
+  type CapabilityCallerCredentials,
+  type CapabilityCostClass,
+  type CapabilityMissingPiece,
+  type CapabilityPrincipal,
+  type CapabilityRefused,
+} from '@/shared/capability-providers';
 
 const logger = createChildLogger({ module: 'storyboard-image-providers' });
 
@@ -736,15 +749,200 @@ export function createCodexCliImageProvider(userSub?: string): StoryboardImagePr
   };
 }
 
+/** Every storyboard image provider id, in the order the options list shows them. */
+export const STORYBOARD_IMAGE_PROVIDER_IDS = Object.freeze(['codex', 'comfyui', 'vertex', 'openrouter', 'codex-cli', 'antigravity-cli'] as const);
+
+/**
+ * Who pays for each image provider (ADR-173 D4). The interface's own costClass says only free or
+ * paid; this says whose credential: the swarm's platform or OpenRouter key, the caller's Google
+ * token for Vertex, or nobody (the GPU box, a subscription already paid).
+ */
+export const STORYBOARD_IMAGE_COST_CLASSES: Readonly<Record<StoryboardImageProvider['id'], CapabilityCostClass>> = Object.freeze({
+  codex: 'swarm-paid', comfyui: 'free', vertex: 'user-paid', openrouter: 'swarm-paid', 'codex-cli': 'free', 'antigravity-cli': 'free',
+});
+
+/** The names the options list shows. */
+const IMAGE_DISPLAY_NAMES: Readonly<Record<StoryboardImageProvider['id'], string>> = Object.freeze({
+  codex: 'OpenAI images (swarm platform key)', comfyui: 'ComfyUI (GPU box)', vertex: 'Vertex AI (your Google Cloud)',
+  openrouter: 'OpenRouter (swarm key)', 'codex-cli': 'Codex CLI on the render bot', 'antigravity-cli': 'Antigravity CLI on the render bot',
+});
+
+/** Providers whose healthCheck is a vendor call distinct from available() — the probes ADR-173 D3 step 4 runs. */
+const VENDOR_PROBED: ReadonlySet<string> = new Set(['codex', 'openrouter']);
+
+/** Default lifetime of one health-probe answer; OSHAL_CAPABILITY_HEALTH_PROBE_TTL_MS overrides, 0 probes every time. */
+const DEFAULT_HEALTH_PROBE_TTL_MS = 60_000;
+
+/** One cached probe answer per provider id. */
+const healthProbeCache = new Map<string, { at: number; ok: boolean; detail: string }>();
+
+/**
+ * @description The health-probe cache lifetime from the environment.
+ * @param {NodeJS.ProcessEnv} env - Environment map.
+ * @returns {number} Milliseconds; 0 disables caching.
+ */
+export function resolveHealthProbeTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.OSHAL_CAPABILITY_HEALTH_PROBE_TTL_MS;
+  if (raw === undefined || String(raw).trim() === '') return DEFAULT_HEALTH_PROBE_TTL_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : DEFAULT_HEALTH_PROBE_TTL_MS;
+}
+
+/** @description Test seam: forget every cached health-probe answer. */
+export function clearStoryboardImageHealthCache(): void {
+  healthProbeCache.clear();
+}
+
+/**
+ * @description Build one storyboard image provider by id, with the credentials and identity it needs.
+ * @param {string} id - The provider id.
+ * @param {{vertexToken?: string, userSub?: string, deadlineMs?: number}} opts - Caller token, caller subject, render deadline.
+ * @returns {StoryboardImageProvider | null} The provider, or null for an unknown id.
+ */
+export function buildStoryboardImageProvider(
+  id: string,
+  opts: { vertexToken?: string; userSub?: string; deadlineMs?: number } = {},
+): StoryboardImageProvider | null {
+  switch (id) {
+    case 'codex': return createCodexImageProvider();
+    case 'comfyui': return createComfyUiImageProvider();
+    case 'vertex': return createVertexImageProvider(opts.vertexToken ?? '');
+    case 'openrouter': return createOpenRouterImageProvider();
+    case 'codex-cli': return createCodexCliImageProvider(opts.userSub);
+    case 'antigravity-cli': return createAntigravityCliImageProvider(opts.userSub, { deadlineMs: opts.deadlineMs });
+    default: return null;
+  }
+}
+
+/**
+ * @description What is missing when a provider's available() is false: the same hint the resolver
+ * has always thrown, now also what the options list shows (ADR-173 D3).
+ * @param {StoryboardImageProvider} provider - The unavailable provider.
+ * @returns {Promise<{missing: CapabilityMissingPiece, detail: string}>} The missing piece and the hint.
+ */
+async function unavailableImageHint(provider: StoryboardImageProvider): Promise<{ missing: CapabilityMissingPiece; detail: string }> {
+  switch (provider.id) {
+    case 'codex':
+      return { missing: 'no-credential', detail: 'the swarm holds no PLATFORM OpenAI key — set OPENAI_API_KEY in .env, or openAiApiKey in config-seed/secrets.json. The codex/ChatGPT login cannot help here: /v1/images rejects subscription tokens (a different auth realm). Or pick a funded provider by name, e.g. STORYBOARD_IMAGE_PROVIDER=openrouter' };
+    case 'comfyui': {
+      // comfyui says exactly WHICH of url / workflow / reachability is missing; the probe runs only
+      // on this failure path, bounded by COMFY_PROBE_TIMEOUT_MS like the availability check.
+      const comfyDetail = provider.healthCheck ? (await provider.healthCheck()).detail : '';
+      return { missing: 'no-credential', detail: `${comfyDetail}. The free GPU rail needs COMFYUI_URL pointed at the box and COMFYUI_STORYBOARD_WORKFLOW pointed at an API-format image workflow carrying a ${COMFY_PROMPT_TOKEN} placeholder; COMFYUI_STORYBOARD_TIMEOUT_MS bounds each frame` };
+    }
+    case 'openrouter':
+      return { missing: 'no-credential', detail: 'set OPENROUTER_API_KEY (or openRouterApiKey in config-seed/secrets.json) — the swarm OpenRouter key funds the image model per image' };
+    case 'codex-cli':
+    case 'antigravity-cli':
+      return { missing: 'not-permitted', detail: 'demo-mode CLI rendering needs DEMO_MODE=true, an operator caller (OSHAL_OPERATOR_SUBS) passed as userSub by the calling surface, and the bot-node executor registered at boot. Otherwise set STORYBOARD_IMAGE_PROVIDER=codex with a platform OPENAI_API_KEY, or =openrouter with credit' };
+    default:
+      return { missing: 'no-credential', detail: "no Google token with the cloud-platform scope — the caller's gcp connector must grant it (read-only is not enough)" };
+  }
+}
+
+/**
+ * @description The vendor health probe (ADR-173 D3 step 4), cached for OSHAL_CAPABILITY_HEALTH_PROBE_TTL_MS.
+ * @param {StoryboardImageProvider} provider - A provider whose available() is true.
+ * @returns {Promise<{ok: boolean, detail: string}>} The probe answer.
+ */
+async function cachedHealthProbe(provider: StoryboardImageProvider): Promise<{ ok: boolean; detail: string }> {
+  if (!VENDOR_PROBED.has(provider.id) || !provider.healthCheck) return { ok: true, detail: '' };
+  const ttlMs = resolveHealthProbeTtlMs();
+  const hit = healthProbeCache.get(provider.id);
+  if (hit && ttlMs > 0 && Date.now() - hit.at < ttlMs) return hit;
+  const answer = await provider.healthCheck().catch((err: unknown) => ({ ok: false, detail: `health probe failed: ${err instanceof Error ? err.message : String(err)}` }));
+  healthProbeCache.set(provider.id, { at: Date.now(), ...answer });
+  if (!answer.ok) logger.warn({ providerId: provider.id, detail: answer.detail }, 'storyboard image provider failed its health probe');
+  return answer;
+}
+
+/**
+ * @description ADR-173 D3 for images: may this caller use this provider now? Registered, a declared
+ * class, the provider's own available() (its credential, configuration and, for the CLI rails, the
+ * ADR-127 carve), then the vendor health probe where one exists.
+ * @param {string} providerId - The provider id.
+ * @param {CapabilityPrincipal} principal - The caller.
+ * @param {CapabilityCallerCredentials | undefined} credentials - A caller-supplied Vertex token.
+ * @param {number | undefined} deadlineMs - The render deadline, for the antigravity-cli rail.
+ * @returns {Promise<CapabilityAvailability>} The availability.
+ */
+async function imageAvailability(
+  providerId: string,
+  principal: CapabilityPrincipal,
+  credentials: CapabilityCallerCredentials | undefined,
+  deadlineMs: number | undefined,
+): Promise<CapabilityAvailability> {
+  const userSub = principal.kind === 'user' ? principal.sub : undefined;
+  const provider = buildStoryboardImageProvider(providerId, { vertexToken: credentials?.vertexToken, userSub, deadlineMs });
+  if (!provider) {
+    return { providerId, available: false, missing: 'not-registered', detail: `'${providerId}' is not a storyboard image provider (${STORYBOARD_IMAGE_PROVIDER_IDS.join(' | ')})` };
+  }
+  if (!(await provider.available())) return { providerId, available: false, ...(await unavailableImageHint(provider)) };
+  const probe = await cachedHealthProbe(provider);
+  if (!probe.ok) return { providerId, available: false, missing: 'health-check-failed', detail: probe.detail };
+  return { providerId, available: true, missing: null, detail: '' };
+}
+
+/**
+ * @description The image capability adapter the shared resolver walks (ADR-173 S1): declarations
+ * with their cost classes, the ONE availability function the options list and the resolver ask,
+ * and the seed of the swarm image default (the existing selectors, selectStoryboardImageSeed).
+ * @param {{deadlineMs?: number}} [opts] - The render deadline, for the antigravity-cli rail.
+ * @returns {CapabilityAdapter} The adapter.
+ */
+export function createImageCapabilityAdapter(opts: { deadlineMs?: number } = {}): CapabilityAdapter {
+  return {
+    capability: 'image',
+    declarations: () => STORYBOARD_IMAGE_PROVIDER_IDS.map((id) => ({
+      capability: 'image' as const, providerId: id, displayName: IMAGE_DISPLAY_NAMES[id], costClass: STORYBOARD_IMAGE_COST_CLASSES[id],
+    })),
+    availability: (providerId, principal, credentials) => imageAvailability(providerId, principal, credentials, opts.deadlineMs),
+    seedSwarmDefault: async () => {
+      const seed = await selectStoryboardImageSeed();
+      const by = seed.renderBot ? `: ${seed.renderBot} on ${seed.harness}` : '';
+      if (!seed.ok) return { choice: null, source: `storyboard selection (${seed.source}${by})`, reason: seed.reason };
+      return { choice: { providerId: seed.id }, source: `storyboard selection (${seed.source}${by})` };
+    },
+  };
+}
+
+/**
+ * @description The words resolveStoryboardImageProvider has always thrown, for a refusal.
+ * @param {CapabilityRefused} refusal - The resolver's refusal.
+ * @returns {string} The message.
+ */
+function imageRefusalMessage(refusal: CapabilityRefused): string {
+  const tail = 'Refusing to fall back to a paid provider you did not ask for.';
+  if (refusal.missing === 'no-swarm-default' || refusal.missing === 'rows-not-loaded' || refusal.missing === 'no-principal') {
+    return `storyboard image provider: ${refusal.detail}. ${tail}`;
+  }
+  const want = refusal.skipped[refusal.skipped.length - 1]?.providerId ?? 'unknown';
+  if (refusal.missing === 'not-registered') return `STORYBOARD_IMAGE_PROVIDER='${want}' is not a provider (${STORYBOARD_IMAGE_PROVIDER_IDS.join(' | ')})`;
+  if (refusal.missing === 'health-check-failed') return `storyboard image provider '${want}' failed its health check — ${refusal.detail}. ${tail}`;
+  return `storyboard image provider '${want}' is not configured — ${refusal.detail}. ${tail}`;
+}
+
+/**
+ * @description The principal of an image call (ADR-173 D8): the calling user, else unattributed.
+ * The operator fact is the ADR-127 carve's own (an exact OSHAL_OPERATOR_SUBS subject).
+ * @param {string | undefined} userSub - The caller's subject, if the surface passed it.
+ * @returns {CapabilityPrincipal} The principal.
+ */
+function imagePrincipal(userSub: string | undefined): CapabilityPrincipal {
+  if (userSub && userSub.trim()) return userCapabilityPrincipal({ sub: userSub, isOperator: isDeploymentOperatorSub(userSub) });
+  return unattributedCapabilityPrincipal('resolveStoryboardImageProvider was called without userSub');
+}
+
 /**
  * @description Choose the storyboard image provider. Explicit, and fails closed.
  *
- * `STORYBOARD_IMAGE_PROVIDER` selects; with it unset, a demo deployment renders on the render
- * bot's own harness (its own switch row, else the fleet default: antigravity-cli → antigravity-cli,
- * openai-codex/codex-cli → codex-cli, any other harness → refused naming the bot and harness) and
- * every other deployment uses `codex` (ADR-130 and its 2026-10-02 amendment;
- * selectStoryboardImageProvider). If the selection is refused or not configured we throw and say
- * what to do — we never silently fall through to a provider that bills per image.
+ * Resolved through the shared capability resolver (ADR-173): the operator's swarm image row, else
+ * the existing selectors — `STORYBOARD_IMAGE_PROVIDER`; with it unset, a demo deployment renders on
+ * the render bot's own harness (its own switch row, else the fleet default: antigravity-cli →
+ * antigravity-cli, openai-codex/codex-cli → codex-cli, any other harness → refused naming the bot
+ * and harness) and every other deployment uses `codex` (ADR-130 and its 2026-10-02 amendment). The
+ * chosen provider must be available to this caller (the same availability the options list shows),
+ * or we throw and say what to do — we never silently fall through to a provider that bills per image.
  *
  * @param {{vertexToken?: string, userSub?: string, deadlineMs?: number}} opts credentials/identity the
  *   selected provider may need, and the caller's own deadline for one render in ms (the antigravity-cli
@@ -754,38 +952,13 @@ export function createCodexCliImageProvider(userSub?: string): StoryboardImagePr
 export async function resolveStoryboardImageProvider(
   opts: { vertexToken?: string; userSub?: string; deadlineMs?: number } = {},
 ): Promise<StoryboardImageProvider> {
-  const selection = await selectStoryboardImageProvider();
-  if (!selection.ok) {
-    throw new Error(`storyboard image provider: ${selection.reason}. Refusing to fall back to a paid provider you did not ask for.`);
-  }
-  const want = selection.id;
-  const byId: Record<string, StoryboardImageProvider> = {
-    codex: createCodexImageProvider(),
-    comfyui: createComfyUiImageProvider(),
-    vertex: createVertexImageProvider(opts.vertexToken ?? ''),
-    openrouter: createOpenRouterImageProvider(),
-    'codex-cli': createCodexCliImageProvider(opts.userSub),
-    'antigravity-cli': createAntigravityCliImageProvider(opts.userSub, { deadlineMs: opts.deadlineMs }),
-  };
-  const chosen = byId[want];
-  if (!chosen) throw new Error(`STORYBOARD_IMAGE_PROVIDER='${want}' is not a provider (codex | comfyui | vertex | openrouter | codex-cli | antigravity-cli)`);
-
-  if (!(await chosen.available())) {
-    // comfyui can say exactly WHICH of url / workflow / reachability is missing, so it does, rather
-    // than handing the operator a list of three things to check. The extra probe only ever runs on
-    // the failure path, and it is bounded by COMFY_PROBE_TIMEOUT_MS like the availability check.
-    const comfyDetail = want === 'comfyui' && chosen.healthCheck ? (await chosen.healthCheck()).detail : '';
-    const hint = want === 'codex'
-      ? 'the swarm holds no PLATFORM OpenAI key — set OPENAI_API_KEY in .env, or openAiApiKey in config-seed/secrets.json. The codex/ChatGPT login cannot help here: /v1/images rejects subscription tokens (a different auth realm). Or pick a funded provider by name, e.g. STORYBOARD_IMAGE_PROVIDER=openrouter'
-      : want === 'comfyui'
-        ? `${comfyDetail}. The free GPU rail needs COMFYUI_URL pointed at the box and COMFYUI_STORYBOARD_WORKFLOW pointed at an API-format image workflow carrying a ${COMFY_PROMPT_TOKEN} placeholder; COMFYUI_STORYBOARD_TIMEOUT_MS bounds each frame`
-        : want === 'openrouter'
-          ? 'set OPENROUTER_API_KEY (or openRouterApiKey in config-seed/secrets.json) — the swarm OpenRouter key funds the image model per image'
-          : want === 'codex-cli' || want === 'antigravity-cli'
-            ? 'demo-mode CLI rendering needs DEMO_MODE=true, an operator caller (OSHAL_OPERATOR_SUBS) passed as userSub by the calling surface, and the bot-node executor registered at boot. Otherwise set STORYBOARD_IMAGE_PROVIDER=codex with a platform OPENAI_API_KEY, or =openrouter with credit'
-            : "no Google token with the cloud-platform scope — the caller's gcp connector must grant it (read-only is not enough)";
-    throw new Error(`storyboard image provider '${want}' is not configured — ${hint}. Refusing to fall back to a paid provider you did not ask for.`);
-  }
-  logger.info({ provider: chosen.id, costClass: chosen.costClass, source: selection.source, renderBot: selection.renderBot, harness: selection.harness }, 'storyboard image provider selected');
+  const resolution = await resolveCapabilityProvider(createImageCapabilityAdapter({ deadlineMs: opts.deadlineMs }), {
+    capability: 'image', principal: imagePrincipal(opts.userSub), appId: null, agentId: null,
+    credentials: { vertexToken: opts.vertexToken },
+  });
+  if (!resolution.ok) throw new Error(imageRefusalMessage(resolution));
+  const chosen = buildStoryboardImageProvider(resolution.providerId, opts);
+  if (!chosen) throw new Error(`STORYBOARD_IMAGE_PROVIDER='${resolution.providerId}' is not a provider (${STORYBOARD_IMAGE_PROVIDER_IDS.join(' | ')})`);
+  logger.info({ provider: chosen.id, costClass: chosen.costClass, rung: resolution.rung, source: resolution.source }, 'storyboard image provider selected');
   return chosen;
 }

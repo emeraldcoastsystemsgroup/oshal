@@ -1,0 +1,172 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D6: the swarm rows (migration 183) held in memory so every capability call reads them without a query, refreshed at boot, after every write through the operator route, and on a timer, so one operator write moves the next call with no restart (the provider-switch snapshot pattern, ProviderSwitchSnapshot). A failed refresh keeps the last good rows and logs at ERROR. The process installs one snapshot; an installed snapshot that has never completed a read answers "not loaded", which the resolver refuses on rather than guessing the seed, and with nothing installed (no Postgres) the reader answers "no rows", which is today's behaviour.
+ */
+
+/**
+ * @description The in-memory swarm capability rows and the process-wide installed instance.
+ * @module shared/capability-providers/capability-row-snapshot
+ */
+
+import { createChildLogger } from '@/shared/logger';
+import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
+import type { Capability, CapabilitySwarmRow, CapabilitySwarmRowReader } from './capability-types';
+
+const logger = createChildLogger({ module: 'capability-row-snapshot' });
+
+/** Default refresh period. Override with OSHAL_CAPABILITY_ROWS_REFRESH_MS; 0 disables the timer. */
+const DEFAULT_REFRESH_MS = 30_000;
+
+/** The one method of the store the snapshot needs. */
+export interface CapabilitySwarmRowSource {
+  listAll(): Promise<CapabilitySwarmRow[]>;
+}
+
+/** What the snapshot knows about its own freshness, for the operator route to report. */
+export interface CapabilityRowSnapshotStatus {
+  loaded: boolean;
+  loadedAt: string | null;
+  rowCount: number;
+  lastError: string | null;
+}
+
+/**
+ * @description The refresh period from the environment.
+ * @param env - Environment map (process.env by default).
+ * @returns Milliseconds between refreshes; 0 disables the timer.
+ */
+export function resolveCapabilityRowsRefreshMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.OSHAL_CAPABILITY_ROWS_REFRESH_MS;
+  if (raw === undefined || String(raw).trim() === '') return DEFAULT_REFRESH_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : DEFAULT_REFRESH_MS;
+}
+
+/** @description The key one row is held under. */
+function rowKey(scopeId: string, capability: Capability): string {
+  return `${scopeId}\u0000${capability}`;
+}
+
+/**
+ * @description The swarm rows as last read, answered synchronously.
+ */
+export class CapabilityRowSnapshot implements CapabilitySwarmRowReader {
+  private rows = new Map<string, CapabilitySwarmRow>();
+  private loaded = false;
+  private loadedAt: string | null = null;
+  private lastError: string | null = null;
+  private timer: NodeJS.Timeout | null = null;
+  private inFlight: Promise<void> | null = null;
+
+  constructor(private readonly source: CapabilitySwarmRowSource) {}
+
+  /**
+   * @description Re-read every row under the system identity (the table is readable by every
+   * identity; the system context keeps a strict GUC mode from starving the read). Concurrent
+   * callers share one read. A failure keeps the previous rows and is logged — never thrown into a call.
+   * @returns Resolves when the read completed or failed.
+   */
+  refresh(): Promise<void> {
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = runWithSystemIdentity(async () => {
+      const startedAt = Date.now();
+      try {
+        const rows = await this.source.listAll();
+        this.rows = new Map(rows.map((row) => [rowKey(row.scopeId, row.capability), row]));
+        this.loaded = true;
+        this.loadedAt = new Date().toISOString();
+        this.lastError = null;
+        logger.debug({ rowCount: rows.length, durationMs: Date.now() - startedAt }, 'Capability row snapshot refreshed');
+      } catch (err) {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        logger.error({ err, keptRows: this.rows.size, durationMs: Date.now() - startedAt },
+          'Capability row snapshot refresh failed — keeping the last good rows');
+      } finally {
+        this.inFlight = null;
+      }
+    });
+    return this.inFlight;
+  }
+
+  /**
+   * @description Start the periodic refresh (unref'd, so it never keeps the process alive).
+   * @param intervalMs - Period; 0 disables.
+   * @returns void
+   */
+  start(intervalMs: number = resolveCapabilityRowsRefreshMs()): void {
+    this.stop();
+    if (intervalMs <= 0) return;
+    this.timer = setInterval(() => { void this.refresh(); }, intervalMs);
+    this.timer.unref();
+  }
+
+  /** @description Stop the periodic refresh. */
+  stop(): void {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+  }
+
+  /**
+   * @description Installed by construction; loaded once one read has succeeded.
+   * @returns The reader state.
+   */
+  state(): { installed: boolean; loaded: boolean } {
+    return { installed: true, loaded: this.loaded };
+  }
+
+  /**
+   * @description One row from memory.
+   * @param scopeId - The fleet scope or an agent id.
+   * @param capability - The capability.
+   * @returns The row, or null.
+   */
+  rowFor(scopeId: string, capability: Capability): CapabilitySwarmRow | null {
+    return this.rows.get(rowKey(scopeId, capability)) ?? null;
+  }
+
+  /** @description Every row in memory, for the operator route. */
+  allRows(): CapabilitySwarmRow[] {
+    return Array.from(this.rows.values());
+  }
+
+  /** @description Freshness for the operator route to report. */
+  status(): CapabilityRowSnapshotStatus {
+    return { loaded: this.loaded, loadedAt: this.loadedAt, rowCount: this.rows.size, lastError: this.lastError };
+  }
+}
+
+/** The reader with nothing installed: no Postgres, so no rows can exist — today's behaviour. */
+const NOTHING_INSTALLED: CapabilitySwarmRowReader = Object.freeze({
+  state: () => ({ installed: false, loaded: false }),
+  rowFor: () => null,
+});
+
+let installed: CapabilityRowSnapshot | null = null;
+
+/**
+ * @description Install the process-wide snapshot (the composition root does this at boot).
+ * @param snapshot - The snapshot, or null to clear (tests).
+ * @returns void
+ */
+export function installCapabilityRowSnapshot(snapshot: CapabilityRowSnapshot | null): void {
+  installed = snapshot;
+}
+
+/**
+ * @description The installed snapshot, for the operator route that writes rows and refreshes after.
+ * @returns The snapshot, or null when nothing is installed.
+ */
+export function installedCapabilityRowSnapshot(): CapabilityRowSnapshot | null {
+  return installed;
+}
+
+/**
+ * @description The reader every capability resolution uses: the installed snapshot, or "no rows"
+ * when nothing is installed.
+ * @returns The reader.
+ */
+export function installedCapabilityRowReader(): CapabilitySwarmRowReader {
+  return installed ?? NOTHING_INSTALLED;
+}

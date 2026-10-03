@@ -9,11 +9,13 @@
  *   explicit Express RequestHandler annotations to exported controller handlers so committed-HEAD
  *   declaration typechecking stays portable and does not infer transitive @types/qs paths.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012: synthesize now honors the caller's SAVED per-user provider/voice via an injected prefs resolver — explicit body values always win; when the body names no provider, the saved provider (and, only then, its saved voice) applies; no resolver / no prefs → the swarm-default flow exactly as before. getVoices accepts ?providerId= so the picker can enumerate a specific provider's voices.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: an injected VoiceCallerResolver says whose call each request is (principal, application, accountable bot; D8) and both handlers pass it to the service. The saved selection is no longer substituted as an explicit provider: it travels as the user default (rung 3), so an unavailable saved provider falls to the swarm default (D1, D5) and its voice is never sent to another provider (D9). Explicit body values still win.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { BaseController } from '@/shared/api';
 import { validateBody, validateFile } from '@/shared/api';
+import type { CapabilityCaller, CapabilityChoice } from '@/shared/capability-providers';
 import { VoiceService } from '../services/voice-service';
 import { SynthesizeRequestSchema } from '../schemas/voice-schemas';
 
@@ -25,6 +27,13 @@ import { SynthesizeRequestSchema } from '../schemas/voice-schemas';
 export type TtsPrefsResolver = (req: Request) => Promise<{ providerId?: string | null; voiceId?: string | null } | null>;
 
 /**
+ * @description Says whose call a request is, the application and the accountable bot (ADR-173 D8).
+ * Injected by the route layer, which owns the caller identity; without it a call resolves as
+ * unattributed (the operator-written rungs only).
+ */
+export type VoiceCallerResolver = (req: Request) => CapabilityCaller;
+
+/**
  * @description Controller for voice-related endpoints (STT/TTS).
  * Extends BaseController to inherit standardized response handling,
  * error handling, logging, and timing.
@@ -32,7 +41,11 @@ export type TtsPrefsResolver = (req: Request) => Promise<{ providerId?: string |
  * Delegates all business logic to VoiceService.
  */
 export class VoiceController extends BaseController {
-  constructor(private service: VoiceService, private prefsResolver?: TtsPrefsResolver) {
+  constructor(
+    private service: VoiceService,
+    private prefsResolver?: TtsPrefsResolver,
+    private callerResolver?: VoiceCallerResolver,
+  ) {
     super({ module: 'voice-controller' });
   }
 
@@ -50,9 +63,11 @@ export class VoiceController extends BaseController {
       allowedMimeTypes: ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/webm', 'audio/ogg'],
     });
 
-    // Delegate to service
+    // Delegate to service with the caller (ADR-173 D8): the swarm default answers unless the
+    // calling code names a provider, and a failed provider surfaces its own failure (D5).
+    const caller = this.callerResolver?.(req);
     const result = await this.measure('transcribeAudio', () =>
-      this.service.transcribeAudio(audioFile.buffer, audioFile.mimetype)
+      this.service.transcribeAudio(audioFile.buffer, audioFile.mimetype, { caller })
     );
 
     // Return standardized success response
@@ -69,22 +84,20 @@ export class VoiceController extends BaseController {
     // Validate request body
     const { text, voice, providerId } = validateBody(req, SynthesizeRequestSchema);
 
-    // JVV-012: a caller that names no provider gets their SAVED per-user selection (provider
-    // + voice). Explicit body values always win; the saved voice applies only alongside the
-    // saved provider (voice ids are provider-specific). No prefs → swarm default, unchanged.
-    let effectiveProviderId = providerId;
-    let effectiveVoice = voice;
-    if (!effectiveProviderId && this.prefsResolver) {
+    // JVV-012 + ADR-173: a caller that names no provider has their SAVED selection (provider +
+    // voice) tried as rung 3, the user default; when that provider is unavailable the swarm
+    // default answers (D1, D5), and a voice travels only with its own provider (D9). An explicit
+    // body provider is a required preference and wins.
+    let userDefault: CapabilityChoice | null = null;
+    if (!providerId && this.prefsResolver) {
       const prefs = await this.prefsResolver(req);
-      if (prefs?.providerId) {
-        effectiveProviderId = prefs.providerId;
-        if (!effectiveVoice && prefs.voiceId) effectiveVoice = prefs.voiceId;
-      }
+      if (prefs?.providerId) userDefault = { providerId: prefs.providerId, voice: prefs.voiceId ?? null };
     }
+    const caller = this.callerResolver?.(req);
 
     // Delegate to service
     const result = await this.measure('synthesizeSpeech', () =>
-      this.service.synthesizeSpeech(text, effectiveVoice, effectiveProviderId)
+      this.service.synthesizeSpeech(text, voice, providerId, { caller, userDefault })
     );
 
     // Return standardized success response

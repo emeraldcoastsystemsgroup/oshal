@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the free ComfyUI storyboard image provider. The boundary this feature lives on is the ComfyUI HTTP protocol, so the transport is REAL: every case runs against a local http.createServer on an ephemeral loopback port that speaks /system_stats, /prompt, /history, /view and /upload/image, and nothing here mocks fetch. Pins: (1) the submit -> poll -> fetch round trip returns the exact bytes the box served; (2) the pinned workflow's %PROMPT% slot actually receives the frame prompt, and a workflow carrying no slot is refused before anything is submitted; (3) the anchor frame is uploaded and injected into %ANCHOR%, and a workflow without that slot uploads nothing; (4) availability states WHICH of url / workflow / reachability is missing and never throws; (5) a job that never completes hits the bounded poll window and fails visibly instead of hanging; (6) a /prompt rejection, a box-side execution error and a non-PNG result each surface as a clear message; (7) selection still fails closed - comfyui unconfigured refuses even while a funded paid sibling is available and resolvable; (8) the AI Test Lab card is registered and its read-only step runs green against the same fake box.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The cases adversarial verification found missing. The fake box can now BLACK-HOLE a route (accept the TCP connection, never answer), and /prompt, /view and /upload/image are each black-holed with a 1500 ms window and must reject inside it naming the route - the first cut had no such case, which is how an unbounded /prompt (304753 ms measured) shipped. Also: two anchors uploaded back to back land under two distinct box-assigned names and no `overwrite` field is sent; a /history body of JSON null and a `messages` that is not an array are both survived; a corrupt workflow and a slotless workflow both read NOT ready on healthCheck() and the Test Lab card, not green; and a box that 500s on every poll is warned about once and named in the final timeout message.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: the fail-closed selection case answers the OpenRouter key probe in-process (resolution now runs it, D3 step 4); only that vendor URL is answered — the ComfyUI box double is still reached over real HTTP — and mocks and the probe cache are reset after every case.
  */
 
 import * as fs from 'fs';
@@ -18,9 +19,11 @@ const logSpies = vi.hoisted(() => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => logSpies }));
 
 import {
+  clearStoryboardImageHealthCache,
   createComfyUiImageProvider,
   resolveStoryboardImageProvider,
 } from '../../src/features/video-generation/services/storyboard-image-providers';
+import { answerVendorKeyProbes } from '../helpers/vendor-key-probe-stub';
 import { SCENARIOS } from '../../src/app/routes/test-lab-scenarios';
 
 /** A real PNG signature plus filler — the provider validates the magic, nothing decodes it here. */
@@ -281,6 +284,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  clearStoryboardImageHealthCache();
   for (const res of hung.splice(0)) { try { res.destroy(); } catch { /* socket already closed */ } }
   for (const key of ENV_KEYS) {
     const value = savedEnv[key];
@@ -544,6 +549,9 @@ describe('storyboard provider selection stays fail-closed', () => {
     // A paid rail that IS resolvable right now — so the refusal below is a choice, not an accident.
     process.env.OPENROUTER_API_KEY = 'sk-or-v1-fake-key-for-this-spec-only';
     process.env.STORYBOARD_IMAGE_PROVIDER = 'openrouter';
+    // ADR-173 D3 step 4: resolution runs the OpenRouter key probe; that one URL is answered
+    // in-process, and every other request (the ComfyUI box double) still goes over real HTTP.
+    answerVendorKeyProbes(200);
     expect((await resolveStoryboardImageProvider()).id).toBe('openrouter');
 
     delete process.env.COMFYUI_URL;
