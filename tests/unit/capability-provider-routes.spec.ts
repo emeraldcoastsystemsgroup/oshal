@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 guard for the operator route's own branches, over a real express app and the REAL capability adapters (text to speech over a real registry, images and video over their real providers, no credentials, so nothing reaches a network): GET lists all four capabilities with each provider's cost class and availability and the swarm default with its source; an unknown capability, an unknown provider, a voice the provider does not list, a voice on a speech-to-text row and a model are each refused 400 with nothing written; a listed voice is written beside its provider (D9); a table refusal (42501) answers 403; no store answers 503; the speech-to-text try action transcribes through exactly the named provider as the calling operator and refuses a request with no clip; a non-operator is refused on every route. The database boundary itself (the policy, the role, the real snapshot and the end-to-end move of a dictation) is capability-swarm-rows-postgres.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 (round 2): a service secret is never an operator session. The harness mounts the global request-identity middleware as server.ts does (a valid secret makes the DATABASE identity operator-level, so the route guard is the only wall in front of the operator-only table) and a probe shows that both header forms carry a valid secret and the operator's forwarded subject. GET /, PUT and DELETE /swarm/:capability and POST /stt/:providerId/try each refuse that call (403 operator_session_required) in both forms (x-oshal-user-sub and x-oshal-user-sub-b64) and read or write nothing; the try action also refuses a non-operator session and a request with no session, and transcribes nothing.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the offer endpoints: a price and quota label written, listed on the provider with the capability's price unit and cleared; an unknown provider, a negative or non-numeric price, an over-long label and an audience (slice S2) refused 400 with nothing written; a non-operator refused.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (round 2): PUT and DELETE /offers/:capability/:providerId refuse a service secret forwarding the operator, in both header forms (403 operator_session_required), and write nothing; DELETE /offers refuses a non-operator session and removes nothing.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -274,5 +275,35 @@ describe('a service secret is never an operator session (ADR-173 S1)', () => {
     expect(person.text).toContain('Operator privilege required');
     expect(none.text).toContain('operator_session_required');
     expect(transcribeAudio).not.toHaveBeenCalled();
+  });
+});
+
+describe('the offer routes refuse a service secret and a non-operator (ADR-173 S1b)', () => {
+  const OFFER_ROUTES: Array<[string, string, unknown]> = [
+    ['PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0.0004 }],
+    ['DELETE', '/offers/stt/gemini-stt', undefined],
+  ];
+
+  it.each(OFFER_ROUTES)('%s %s refuses a service secret forwarding the operator, in both header forms, and writes nothing', async (method, route, body) => {
+    const spies = [vi.spyOn(offerStore, 'listAll'), vi.spyOn(offerStore, 'upsert'), vi.spyOn(offerStore, 'remove')];
+    try {
+      for (const [, headers] of SERVICE_HEADERS) {
+        const res = await send(method, route, body, headers);
+        expect(res.status).toBe(403);
+        expect(res.text).toContain('operator_session_required');
+      }
+      expect(spies.map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
+      expect(offers.size).toBe(0);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it('DELETE /offers refuses a non-operator session and removes nothing', async () => {
+    expect((await call('PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0.0004 })).status).toBe(200);
+    const res = await send('DELETE', '/offers/stt/gemini-stt', undefined, { 'x-test-sub': PERSON_SUB });
+    expect(res.status).toBe(403);
+    expect(res.text).toContain('Operator privilege required');
+    expect(offers.size).toBe(1);
   });
 });
