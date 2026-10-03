@@ -24,6 +24,8 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The publish JSDoc said the endpoint has "two emit targets: a single-shot bot (manifest-worker) or an authored multi-bot workflow (staged)". The compiler sets pipeline: 'graph' unconditionally on both emit paths, so neither is an emit target and there are three spec modes, not two. It survived the CV-1 sweep only by phrasing the claim differently from the pattern being grepped.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six, and it is a path ALLOW-LIST: a frozen root here is a containment boundary computed against a directory the rest of the process does not use. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  * 20 | maintainer@emeraldcoastsystemsgroup.com   | POST /load and POST /import require swarm operator authority; ordinary callers receive 403 before any manifest file is written to disk or loaded.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com   | Register the operator schedule-control routes (GET /:name/schedules, PATCH /:name/schedules/:id, app-schedule-control-routes.ts) beside the ADR-157 services routes, before this router's own /:name routes.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com   | DELETE /:name removes the app's schedule overrides after the app is removed (clearManifestOverridesFor), so a reinstall starts from the manifest; a toggle keeps them. A failure to clear is logged and does not fail the uninstall.
  */
 
 /** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
@@ -34,6 +36,8 @@ import path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
 import { registerApplicationServiceActivationRoutes } from './application-service-activation-routes';
+import { clearManifestOverridesFor, manifestBeforeUninstall, registerAppScheduleControlRoutes } from './app-schedule-control-routes';
+import { getHomeScheduleService } from '../home-schedule-dispatch';
 import {
   SwarmAppService,
   APP_ACCESS_TIERS,
@@ -161,6 +165,8 @@ async function admittedHomeManifests(
  *   GET    /api/swarm/apps/:name                get one app (manifest included)
  *   POST   /api/swarm/apps/load                 load a manifest by path {path}
  *   PATCH  /api/swarm/apps/:name/toggle         body {active:bool}
+ *   GET    /api/swarm/apps/:name/schedules      operator: manifest schedules with live state + override
+ *   PATCH  /api/swarm/apps/:name/schedules/:id  operator: body {enabled?, cron?|null} — on/off, cadence
  *   DELETE /api/swarm/apps/:name                unload entirely
  *   GET    /api/swarm/apps/:name/export         download manifest YAML
  *   POST   /api/swarm/apps/import               upload a manifest YAML file
@@ -185,6 +191,8 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
   // ADR-157: the kernel-served Scheduled services surface. Registered first so its literal
   // segments are matched before this router's own /:name routes.
   registerApplicationServiceActivationRoutes(router);
+  // Operator control of the manifest schedules (on/off, cadence). Literal segment, same reason.
+  registerAppScheduleControlRoutes(router, service);
 
   /**
    * @description The ACTIVE manifests this caller may see — the same visibility rule GET /:name
@@ -770,6 +778,7 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
         res.status(403).json({ error: 'dropData is operator-only (deletes the app\'s RAG data)' });
         return;
       }
+      const installed = await manifestBeforeUninstall(service, name);
       const result = await service.unloadApp(name, { force, dropData });
       if (result.blocked) {
         // ADR-085 D11: name the TOOLS too — "app X depends on this" is actionable; "something
@@ -791,6 +800,8 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
         res.status(404).json({ error: 'App not found' });
         return;
       }
+      await clearManifestOverridesFor(getHomeScheduleService(), installed)
+        .catch((err) => logger.error({ err, name }, 'Removing the uninstalled app\'s schedule overrides failed'));
       res.json({
         unloaded: true,
         name,

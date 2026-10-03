@@ -8,8 +8,9 @@
   are all live on `oshal-local-api`. Outlet ratings are oshal's own, observed from its stored coverage
   (2026-10-01 update at the end; the seed table and any external rating license are retired). The
   classify backend is the swarm's accounted bot rail (amended 2026-10-02, "Classify provider" under
-  Operations & tuning): built and locally tested, live proof owed at the next deploy. On the deployed
-  box no item had been model-classified since 2026-08-06 when that was read on 2026-10-02.
+  Operations & tuning), proven live on 2026-10-02 after no item had been model-classified since
+  2026-08-06. Operators see and change World's schedules and pull sources on the World Sources &
+  schedules page (2026-10-02 update at the end).
 - **Date:** 2026-06-20
 - **Related:** [ADR-058 (Personal-Intelligence Service)](058-personal-intelligence-service-and-ingestion.md)
   (the *personal* sibling — this is the deferred "world graph, its own ADR"),
@@ -130,7 +131,8 @@ mounted in `server.ts`, and the surface is in `config-seed/profiles/oshal-framew
 ## Deferred
 
 - Finance-targeted query plans (`CROSS_SPECTRUM_FINANCE` is built, not yet wired to a finance topic path).
-- More feed sources — GDELT (global news + tone), SEC EDGAR (filings), FRED (macro series into the join).
+- More feed sources — GDELT (global news + tone), FRED (macro series into the join). SEC EDGAR filings
+  already arrive through the firehose's 8-K and all-filings feeds.
 - Surface "ingest a new subject" via a session-authed cockpit endpoint (calls the service server-side).
 - Correlation edges between world metrics and personal data (the cross-layer join).
 
@@ -175,7 +177,8 @@ ticker; the gap was thin, slow ticker coverage and no derived feature vector. Al
 ### Dual schedule — bounded handlers so neither starves the other
 The manifest declares two framework schedules (both → `dispatchWorldSchedule`, keyed off `taskType`):
 - **`ticker-pulse`** (`*/5 8-23 * * 1-5`) — the trading universe + market context. Every name gets a **lean
-  3-source pull** (`PULSE_FEED_IDS`: Yahoo symbol + Google 2-day recency + Reddit-new); a **rotating slice**
+  pull** (`PULSE_FEED_IDS`: Yahoo symbol + Google 2-day recency; Reddit and Hacker News are pulled only for the
+  deep slice); a **rotating slice**
   (`deepTickerSlice`, 12/fire, time-derived, no cursor) additionally gets the full finance fan-out, so deep
   breadth runs continuously while any single pulse stays short. Universe refreshed concurrently.
 - **`world-refresh`** (`0 */6 * * *`) — DEPTH: macro/topics + tracked **non-ticker** subjects only (tickers are
@@ -348,7 +351,7 @@ bot's record names, and each turn's recorded cost is in `chat_tasks`.
 | `WORLD_PULSE_DEEP_SLICE` | **The dominant steady-state cost** — how many names get the full classify fan-out per pulse (rotates, so all are still covered over more pulses). `1` is the smallest slice that takes effect: as built `0` is read as unset and resolves to the code default of 12 in `world-schedule-dispatch.ts`, not to all-lean. | `2` |
 | `WORLD_DEEPDIVE_BUDGET` | Max deep-dive items classified per cycle. | `3` |
 | `WORLD_FIREHOSE_EVERY_N_PULSES` | Run the publisher firehose (+ its classify) every Nth pulse. | `8` |
-| `WORLD_FIREHOSE_LIMIT` | Firehose feeds pulled per run. | `6` |
+| `WORLD_FIREHOSE_LIMIT` | Items read per firehose feed per run (compose default; the code default is 40). | `6` |
 | `WORLD_DEEPDIVE_ENABLED` | `false` skips the firehose deep-dive entirely (its items keep their speed-read lexicon score). The per-subject ingest still classifies new items; `WORLD_CLASSIFY_DISABLED=true` is the switch that stops every classify call. | `true` |
 
 > **`WORLD_CLASSIFY_CONCURRENCY` does NOT bound total LLM load** — it only limits one subject's chunk
@@ -363,8 +366,9 @@ bot's record names, and each turn's recorded cost is in `chat_tasks`.
 > enough to fit the pulse window: `MAX_THINKING_TOKENS=0` on the classify spawn, which went away with
 > that spawn on 2026-10-02, and a minified JSON instruction, which the classify prompt still carries
 > (measured then on an in-container 8-item haiku chunk: 39.3 s / 4,277 output tokens → 5.1 s / 414,
-> same classification quality — the answer was the final ~350 tokens all along). This ADR records no
-> per-call timing for the bot rail.
+> same classification quality — the answer was the final ~350 tokens all along). On the bot rail, forty
+> calls measured on 2026-10-02 between 15:16 and 15:23 UTC averaged 10.3 s (max 33.9 s); the per-pulse
+> slice exists because forty of them in one pulse overran the scheduler's 240 s dispatch budget.
 
 ### "oshal-api is grinding" — triage
 
@@ -384,8 +388,12 @@ read from the api log:
   cause comes from the chokepoint or the bot node (an entitlement or cost-governance refusal for the
   owner, a signing refusal, or the node refusing or failing the turn): read `err`, then that node's log.
 - `world classify budget exhausted` → the hour or day cap bit; chunks are on lexicon until the window rolls.
-- Repeated `Schedule dispatch timed out` → fires are overrunning the scheduler's dispatch timeout. To
-  cut classify volume lower `WORLD_PULSE_DEEP_SLICE` (→ 1) first, then `WORLD_DEEPDIVE_BUDGET`.
+- Repeated `Schedule dispatch timed out` → fires are overrunning the scheduler's dispatch timeout. Read
+  `classifyBudget.pulseUsed` in the `world refresh complete` records first: a pulse at its
+  `WORLD_CLASSIFY_BUDGET_PER_PULSE` ceiling spent time in classify, one with `pulseUsed` 0 did not (on
+  2026-10-02 between 19:00 and 20:00 UTC three abandoned pulses made no model call; BACKLOG "World ticker
+  pulse overruns its dispatch budget…"). To cut classify volume lower `WORLD_PULSE_DEEP_SLICE` (→ 1)
+  first, then `WORLD_DEEPDIVE_BUDGET`. A whole source can be switched off on the Sources & schedules page.
 
 *Until 2026-10-02 (history):* classify ran as CLI subprocesses inside `oshal-api`. Tuned (slice 2) the
 container sat mostly idle (<5 % CPU) with brief ~150 % bursts per cycle. When it was pinned high
@@ -470,3 +478,63 @@ read-only read-back of the shared graph on 2026-10-02 00:10 UTC found all 37 pre
 non-null retired rating prop. The seed-era graph the new seed neither writes nor removes (9 nodes under
 `world:bias:*` and `world:outlet-kind:*`, with 37 `leans` and 37 `is_kind` edges) was removed once, after a
 backup, in one ArangoDB stream transaction, and a re-check finds none.
+
+## Update — operators see and change World's schedules and sources (2026-10-02)
+
+The operator asked for a World screen that shows the configured cron jobs and the pull locations, with
+knobs to turn them on or off and run them more or less often. It is built in two layers, so the
+schedule half works for any application and the World half stays in the engine.
+
+**Application schedules (core).** A manifest schedule could not be changed before: the schedule API
+refuses every `app:` schedule, and the registrar re-applied the manifest cron on every boot. Core now
+keeps an operator override per manifest schedule (`ManifestScheduleOverride`: `enabled`, `cron`, who
+changed it and when) in the scheduler's Redis store (hash `oshal:scheduler:manifest-overrides`, field
+`<app>-<scheduleId>`). The registrar applies it every time the manifest registers the schedule, so it
+survives a restart, a reload and an app toggle. Two operator-only routes on the swarm-apps router read
+and change it: `GET /api/swarm/apps/:name/schedules` and `PATCH /api/swarm/apps/:name/schedules/:id`
+with `{ "enabled": bool, "cron": "<cron>" | null }` (null returns to the manifest cron). A cron with
+less than `APP_SCHEDULE_MIN_INTERVAL_MINUTES` (default 5) between any two of its next twelve fires is
+refused. The same change fixed a scheduler defect: a finished dispatch saved the copy of the record it
+read before the run, so a pause or a cron change made while a fire ran (a World pulse runs for minutes)
+was undone when that fire finished, and a schedule deleted mid-run was written back. A finished dispatch
+now re-reads the record. Guard: `tests/unit/app-schedule-control.spec.ts` on a disposable Redis.
+
+**World sources (world-data).** `world-source-control.ts` keeps two small tables on the series store:
+`world_source_switches` (one row per source an operator switched off; switching it back on deletes the
+row) and `world_collector_runs` (each depth collector's last run: when, `ok` / `failed` / `skipped`
+with the reason, and its counts; a refused or failed congress feed counts as failed). A switch only turns
+a source off: the `.env` flags stay the ceiling. The ingest step skips a switched-off feed for every
+caller, an explicit `world_ingest` included, and reports it as `skipped: 'switched-off'`. The dispatcher
+reads the switch set once per fire, skips a switched-off depth collector with a WARN naming its source id,
+leaves out the whole firehose pass (switch `firehose`) or single firehose feeds, and lists the
+switched-off ids in the `world refresh complete` record (`switchedOff`). Switch reads are cached for
+`WORLD_SOURCE_SWITCH_TTL_MS` (default 30 s); a change clears the cache. `world-source-inventory.ts`
+builds the list of pull locations from the same registries the fetch code reads, with the schedules that
+use each one, its `.env` gates, its last-24-hour pulls from `world_pulls` and each collector's last
+run. A URL that came from an operator override is shown as origin and path only. Guard:
+`tests/unit/world-depth-collectors-postgres.spec.ts` on a disposable TimescaleDB.
+
+**The page.** The World store package (1.4.0) serves it at `/api/world/operations/app`, mounted
+`auth: operator`; the dashboard shows its "Sources & schedules" link only when that route answers. The
+AI Test Lab card `world-sources-schedules` reads both halves on a live box without changing anything.
+
+**Where World pulls from (2026-10-02).** The page reads the registries directly; this table is a
+snapshot.
+
+| Source | Pulls from | Used by | Governed by |
+|---|---|---|---|
+| Google News (`google-news`) | `news.google.com/rss/search?q={query}`, plus recency and cross-spectrum `site:` variants | world-refresh topics; ticker-pulse, every ticker and the market subjects | switch |
+| Bing News (`bing-news`) | `bing.com/news/search?format=RSS&q={query}` | world-refresh topics; ticker-pulse market subjects and deep slice | switch |
+| Yahoo Finance (`yahoo-finance`) | `feeds.finance.yahoo.com/rss/2.0/headline?s={SYMBOL}` | ticker-pulse, every ticker | switch |
+| Reddit, Hacker News | `reddit.com/search.rss`, `hnrss.org/newest` | ticker-pulse deep slice | switch |
+| Federal Register, EPA, ClinicalTrials.gov, Blawg, Bing Web, WordPress, Internet Archive | their RSS search endpoints | on demand only (`world_ingest` with `sources`) | switch |
+| Publisher firehose (30 feeds) | CNBC, WSJ, MarketWatch, Investing.com, Yahoo Finance, NYT, BBC, Guardian, Fox Business, Seeking Alpha, Business Insider, ZeroHedge, TheStreet, SEC EDGAR 8-K and all filings, Federal Reserve press, BLS | ticker-pulse, every `WORLD_FIREHOSE_EVERY_N_PULSES`th pulse | `WORLD_FIREHOSE_ENABLED`, `WORLD_FIREHOSE_FEEDS` (replaces the list), switch per pass and per feed |
+| Nasdaq earnings calendar (`market-events`) | `api.nasdaq.com/api/calendar/earnings?date={date}` | world-refresh | `WORLD_EVENTS_ENABLED`, switch |
+| Congressional trades (`congress-trades`) | `WORLD_POLITICAL_URL` if set; else Quiver's live feed when `WORLD_POLITICAL_TOKEN` is set; else a free community mirror of the STOCK Act filings | world-refresh | `WORLD_FLOW_ENABLED`, switch |
+| Insider trades (`insider-trades`) | openinsider.com latest purchases and sales of $25k and up (or `WORLD_INSIDER_URLS`) | world-refresh | `WORLD_FLOW_ENABLED`, switch |
+| FINRA short volume (`short-interest`) | `cdn.finra.org/equity/regsho/daily/CNMSshvol{date}.txt` | world-refresh | `WORLD_FLOW_ENABLED`, switch |
+| Federal contract awards (`gov-contracts`) | `api.usaspending.gov/api/v2/search/spending_by_award/`, one POST per universe ticker | world-refresh | `WORLD_FLOW_ENABLED`, `WORLD_GOV_ENABLED`, switch |
+
+The only pull credential is the optional Quiver token. The free congress mirror names the member in
+`filer_name`, which the normalizer does not read yet, so its rows are stored with representative
+"Unknown" (BACKLOG "Political-trades (STOCK Act) signal has never run on this box").

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added barrel exports for scheduling types
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exported ListSchedulesFilter for per-app/per-user schedule listing
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export the reserved manifest service-route task kind for the app-layer dispatcher.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export ManifestScheduleOverride (schema + type) for the operator schedule-control routes and the manifest registrar.
  */
 
 export {
@@ -17,6 +18,7 @@ export {
   UpdateScheduleInputSchema,
   ListSchedulesFilterSchema,
   MANIFEST_SERVICE_ROUTE_TASK_KIND,
+  ManifestScheduleOverrideSchema,
 } from './schedule';
 export type {
   ScheduleStatus,
@@ -27,4 +29,5 @@ export type {
   UpdateScheduleInput,
   ScheduleDispatchResult,
   ListSchedulesFilter,
+  ManifestScheduleOverride,
 } from './schedule';

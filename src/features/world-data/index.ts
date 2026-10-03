@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Export analyzeBatch with its ClassifyProvider seam and createClassifyBudget, plus the observed outlet rating types: the Test Lab's world outlet-rating card classifies one seeded item through the deployed classifier with a capturing provider and its own budget (no model call, no spend from the global classify budget), and reads the rating set the service now computes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Export configureWorldClassify / worldClassifyConfigured: the app layer registers the platform's classify backend (the accountable bot rail) once per process; news-fetcher no longer builds a provider of its own.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Export beginClassifyPulse: the world schedule dispatcher starts each fire's slice of the classify budget.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Export the World sources inventory and source control (worldSourceInventory, describeWorldSources, isWorldSourceId, FIREHOSE_SWITCH_ID, WORLD_COLLECTOR_IDS, WorldSourceControl and its row types) for the dispatcher and the World package's operator route.
  */
 
 /**
@@ -54,3 +55,11 @@ export {
 } from './firehose-feeds';
 export { DEFAULT_WORLD_TOPICS, tickerSubject, type WorldSubject } from './world-default-subjects';
 export { MARKET_SUBJECTS } from './market-subjects';
+export {
+  worldSourceInventory, describeWorldSources, isWorldSourceId, FIREHOSE_SWITCH_ID, WORLD_COLLECTOR_IDS,
+  type WorldCollectorId, type WorldSourceEntry, type WorldSourceGate, type WorldSourceRow,
+} from './world-source-inventory';
+export {
+  WorldSourceControl, worldSourceControl, worldSourceSwitchTtlMs,
+  type WorldCollectorOutcome, type WorldCollectorRun, type WorldFeedPullStats, type WorldSourceSwitch,
+} from './world-source-control';

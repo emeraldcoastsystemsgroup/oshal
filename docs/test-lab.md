@@ -166,6 +166,28 @@ were not provided.") when the credential is absent: the fire must log "congress 
 at ERROR naming `WORLD_POLITICAL_TOKEN`, write no row, and write once the token is set and sent as a
 Bearer credential. That is local evidence; only a pass of the live step shows the installed collector ran.
 
+### World sources and schedules
+
+**World sources and schedules (operator page)** (`world-sources-schedules`, Tools) runs two read-only
+steps. `live-schedules` reads the two World schedule records (`world-refresh`, `ticker-pulse`) with
+their on/off, cron and any operator override; it is degraded when no scheduler runs in the process or a
+schedule is not registered. `live-sources` reads the source inventory the operator page shows: every
+feed, the firehose and the five depth collectors with their switches, `.env` gates and each collector's
+last run; it is degraded when world intelligence is off and fails when a collector is missing. Neither
+changes any data or calls a feed; the first sources read creates the two empty switch tables if they are
+missing.
+
+Run the linked suites locally with `npm run test:world-operator-controls`. `tests/unit/app-schedule-control.spec.ts`
+starts its own Redis and runs the real schedule service, registrar and routes: non-operators are refused,
+on/off and cadence survive a re-registration and an app toggle, an interval under the floor is refused,
+and a pause made during a fire is not undone when the fire finishes. The depth suite
+(`tests/unit/world-depth-collectors-postgres.spec.ts`) proves the switches on its own TimescaleDB: a
+switched-off collector is skipped and recorded, the firehose and single firehose feeds are left out, the
+real ingest step never fetches a switched-off feed, the inventory never shows an override's query, a
+firehose feed reads not pulling while the pass is off, and a collector's failed or partial feed is recorded
+that way. `tests/unit/world-collector-feed-outcome.spec.ts` proves each collector detects its own failed
+requests (the public feeds are a fetch stub there).
+
 ### World outlet ratings and fetched-text containment
 
 **World outlet ratings: observed by oshal, fetched text filtered** (`world-outlet-ratings`, Tools)
