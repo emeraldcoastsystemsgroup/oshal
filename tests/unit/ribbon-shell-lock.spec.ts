@@ -5,12 +5,15 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The ribbon's shell-lock decision: locked only for a non-operator whose deployment names a landing application; the hub is withheld when locked; the header's Experiences entries carry the attribute the lock hides them by.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the hidden discovery menu, generated lock markers and refusal to load experiences in a locked shell.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Match the actual legacy static entry URLs and prove reintroduced entries are refused.
  */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { computeBottomTray, PLATFORM_HUB_ID, resolveShellLock } from '@/pages/cockpit/js/components/RibbonNav.js';
+const staticExperienceEntry = /data-experience="\/(?:portal|studio|jarvis|orbit|commons|homebase|nexus|simple|little-monsters)(?:[/?"])/;
+const retiredExperienceEntry = /data-experience="\/(?:portal|studio|jarvis|orbit|commons|homebase|little-monsters)(?:[/?"])/;
 
 describe('resolveShellLock', () => {
   it('locks only a non-operator on a deployment with a landing application', () => {
@@ -32,12 +35,16 @@ describe('resolveShellLock', () => {
   it('the cockpit header marks every Experiences entry and its label so the lock can hide them', () => {
     const html = readFileSync(resolve(process.cwd(), 'src/pages/cockpit/index.html'), 'utf8');
     expect(html).toMatch(/id="experience-menu"[^>]*hidden/);
-    expect(html).not.toMatch(/data-experience="(?:studio|jarvis|orbit|commons|homebase)"/);
+    expect(html).not.toMatch(retiredExperienceEntry);
+    expect(html.match(/data-experience="\/(?:nexus|simple)"/g)).toHaveLength(2);
     const source = readFileSync(resolve(process.cwd(), 'src/pages/cockpit/js/components/RibbonNav.js'), 'utf8');
     expect(source).toMatch(/\[data-experience\], \[data-experiences-label\]/);
     expect(source).toMatch(/if \(this\.shellLocked\) this\._applyShellLock\(\);[\s\S]*?else await this\._loadExperiences\(\);/);
     expect(source).toMatch(/heading\.dataset\.experiencesLabel/);
     expect(source).toMatch(/link\.dataset\.experience/);
     expect(source).toMatch(/if \(this\.hidePlatformChrome && !this\.shellLocked\) this\._appendPlatformHub\(\);/);
+  });
+  it.each(['/portal','/studio','/jarvis','/orbit','/commons','/homebase?preset=family','/nexus','/simple','/little-monsters'])('detects reintroduced static menu entry %s', url => {
+    expect(`<a data-experience="${url}">Legacy entry</a>`).toMatch(staticExperienceEntry);
   });
 });

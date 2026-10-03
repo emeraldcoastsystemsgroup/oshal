@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Platform tools: add 'tool-channels' (Chat channels) — the self-serve page for Discord, Telegram, SMS and WhatsApp (link a chat identity with a one-time code, unlink it, and for an operator paste the deployment's Discord bot token). A static page under src/pages/cockpit/tools/ like Notifications; nothing in the cockpit linked the channel routes before, so "cockpit → Channels" in the docs pointed at a page that did not exist.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): a non-operator on a deployment whose landing names an application gets no platform hub, a logo that returns to that application and no Experiences menu — the deployment is that application's product for them. Inputs ride the profile response (landingApp, operator); resolveShellLock is the pure, exported decision.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep focused profile refusals closed and preserve the server's shell-lock inputs.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -500,23 +501,28 @@ export class RibbonNav {
     return this.guestCaps.notations[this._viewAppSegment(view)] || null;
   }
 
-  /** Fetch active profile; on failure fall back to everything-visible. */
+  /** Fetch the profile; a refused focused request stays closed with its shell context. */
   async _fetchProfile() {
+    const requested = resolveRequestedProfileName();
+    this.profileOperator = null;
     try {
-      const requested = resolveRequestedProfileName();
       const url = requested ? `/api/ui/profile?name=${encodeURIComponent(requested)}` : '/api/ui/profile';
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       // Shell lock inputs ride the profile response: the deployment's landing application and
       // the server's own operator verdict for this caller.
       this.landingApp = typeof data.landingApp === 'string' && data.landingApp ? data.landingApp : null;
       this.profileOperator = typeof data.operator === 'boolean' ? data.operator : null;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return data.profile;
     } catch (err) {
-      this.landingApp = null;
-      this.profileOperator = null;
-      logger.warn('Failed to fetch UI profile; rendering full framework ribbon', { error: err?.message });
+      if (requested) {
+        this.landingApp ||= requested;
+        logger.warn('Focused application profile unavailable; keeping its ribbon closed', { error: err?.message });
+        return { name: 'profile-unavailable', displayName: 'Application unavailable',
+          ribbon: { items: [], dynamicTools: { allow: [] } }, defaultView: null };
+      }
+      logger.warn('Failed to fetch UI profile; preserving shell context in framework fallback', { error: err?.message });
       return {
         name: 'framework-fallback',
         ribbon: { items: HARDCODED_VIEWS.map(v => v.id), dynamicTools: { allow: ['*'] } },
