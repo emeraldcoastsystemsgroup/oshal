@@ -18,10 +18,12 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fleet-default LLM provider switch panel (config-admin-fleet-default.js) above the per-bot section: loaded with the rest of the page, rendered from state, Save/Clear wired to PUT/DELETE /api/agents/provider-switch/fleet-default. The per-bot provider select is live now that the API reports providerOverridable for every registry bot (its save path is unchanged: PUT /runtime writes the bot's own row).
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The page's start (app.init: event wiring plus the six load reads) runs only when no ADR-164 D6 audience view is active, so a shell framing /config/ with ?audience=company|family gets the read-only card from index.html and the full page never loads or wires its save controls; without an audience, with one the page does not provide, or on a core without the kit, it starts exactly as before.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Agent-scoped deep links no longer read the hidden shared-config, ownership, or RAG panels. A shared secret-store refusal cannot blank the independent per-bot provider controls, while the full config surface keeps the existing encrypted-secret guard unchanged.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the capability providers panel (config-admin-capability-providers.js) below the fleet default: loaded with the page (not in the agent-scoped view, which reads no shared panels), rendered from state, its saves and clears wired by the panel module.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
 import { clearFleetDefault, loadFleetDefault, renderFleetDefaultPanel, saveFleetDefault } from './config-admin-fleet-default.js';
+import { bindCapabilityProvidersPanel, loadCapabilityProviders, renderCapabilityProvidersPanel } from './config-admin-capability-providers.js';
 import {
   fetchJson, postJson, requestJson,
   readString, readRecord, readSelectedAgentIdFromUrl, readScopeFromUrl,
@@ -59,6 +61,7 @@ class ConfigAdminApp {
       selectedAgentTools: [],
       selectedAgentRuntimeConfig: null,
       fleetDefault: null,
+      capabilityProviders: null,
     };
 
     this.elements = {
@@ -91,6 +94,7 @@ class ConfigAdminApp {
       refreshButton: document.getElementById('refreshButton'),
       selectedAgentPanel: document.getElementById('selectedAgentPanel'),
       fleetDefaultPanel: document.getElementById('fleetDefaultPanel'),
+      capabilityProvidersPanel: document.getElementById('capabilityProvidersPanel'),
       sharedConfigForm: document.getElementById('sharedConfigForm'),
       statusBanner: document.getElementById('statusBanner'),
     };
@@ -160,6 +164,8 @@ class ConfigAdminApp {
         await clearFleetDefault(this);
       }
     });
+
+    bindCapabilityProvidersPanel(this);
 
     this.elements.selectedAgentPanel.addEventListener('submit', async (event) => {
       if (event.target.matches('#agentProfileForm')) {
@@ -241,6 +247,7 @@ class ConfigAdminApp {
       this.state.agents = Array.isArray(agents.agents) ? agents.agents : [];
       this.state.selectedAgentId = resolveSelectedAgentId(this.state.selectedAgentId, this.state.agents);
       await loadFleetDefault(this);
+      if (!agentScope) await loadCapabilityProviders(this);
 
       this.render();
       this.setStatus('Config admin loaded from mounted OSHAL APIs.', 'success');
@@ -266,6 +273,7 @@ class ConfigAdminApp {
     renderOwnershipCards(this.elements, this.state.ownership);
     renderAgentCards(this.elements, this.state.agents);
     renderFleetDefaultPanel(this);
+    renderCapabilityProvidersPanel(this);
     renderSelectedAgentPanelMarkup(this);
     renderSelectedAgentAuthState(this);
   }

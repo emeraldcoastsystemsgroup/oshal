@@ -10,6 +10,7 @@
   5 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Added RAG Engine and Google Search MCP service runtime configuration sections
   6 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
   7 | maintainer@emeraldcoastsystemsgroup.com | Audience view (ADR-164 D6): framed with ?audience=company (Studio, Orbit, Commons) or ?audience=family (Jarvis), the page paints a read-only card from four GETs the full page already makes on load (GET /api/agents/provider-switch, GET /api/agents, GET /api/config, GET /api/config/rag): the fleet default provider and its fallback order, the bots and the rung each one's provider comes from, refused switches, the shared settings (addresses and keys only as set or not set) and the RAG runtime, with every refusal said in place of a figure. The full page's start in config-admin.js runs only when no audience view is active; the default screen is unchanged.
+  8 | maintainer@emeraldcoastsystemsgroup.com | ADR-173 S1b: a Capability Providers section (capabilityProvidersPanel) below the fleet default: the swarm default per capability and each provider's unit price, rendered by config-admin-capability-providers.js.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -391,6 +392,19 @@
         <p class="field-copy">One row for the whole fleet: a bot with no provider of its own runs on it, above the registry literal. A bot's own provider (below) outranks it.</p>
         <div id="fleetDefaultPanel" class="agent-config-panel">
           <div class="empty-state">Loading the fleet default...</div>
+        </div>
+      </section>
+
+      <section class="panel panel-wide" id="capabilityProvidersSection" data-scope="shared">
+        <div class="panel-head">
+          <div>
+            <p class="panel-eyebrow">Capability Providers</p>
+            <h2>Speech, Images and Video</h2>
+          </div>
+        </div>
+        <p class="field-copy">The swarm default for text to speech, speech to text, images and video: what a call uses when nothing above it chooses. One save, no restart. Every provider says who pays and, when it cannot be used now, why. A unit price prices the spend each speech call records.</p>
+        <div id="capabilityProvidersPanel" class="agent-config-panel">
+          <div class="empty-state">Loading capability providers...</div>
         </div>
       </section>
 
