@@ -5,6 +5,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the ESPN Fantasy league-read card for the fantasy-leagues kernel skill (ADR-146 D2): the anonymous refusal on /api/connect/espn-fantasy/access-token, with the loopback protocol-seam suite and the kernel-skill contract suite attached. No ESPN host is contacted and no real league is read; a real-league read stays an operator acceptance step behind a signed-in session.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Describe same-subject issuer-switch refusal in the linked real-HTTP consent suite; the installed card remains anonymous refusal only.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register qualified personal grant authentication and scoped HTTP/provider/crypto/storage guards without claiming real consent or PostgreSQL from a refusal card.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Register the Outlook mail package seams card (reader, sync reader, outlookMailSend incl. the Google rail) with the anonymous refusal on /api/connect/outlook/access-token; the two specs were not linked to any card.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -63,6 +64,16 @@ export const CONNECTOR_OAUTH_SCENARIOS: Scenario[] = [{
   ],
   steps: [
     { id: 'private-token', app: 'connectors', label: 'Protect the Yahoo credential', run: () => refusal('/api/connect/yahoo/access-token', 401, 'Yahoo credential requires sign-in') },
+  ],
+}, {
+  id: 'outlook-mail-package-seams', title: 'Outlook mail seams for installed packages (read, sync, send)', group: 'tool',
+  description: 'Check that the Outlook credential stays behind sign-in. The linked suites drive the fixed package seams with real request shapes and a scripted Graph: the reader and the sync reader select only the caller\'s exact personal grant and pass only matched metadata; the sender (outlookMailSend) requires the exact sender mailbox and the send scope, posts one bounded recipient to the fixed Graph or Gmail endpoint, resolves Reply-To in core, and returns a status word with no token or provider body. They do not sign in to a real mailbox or send mail.',
+  regressionTests: [
+    { level: 'unit', path: 'tests/unit/outlook-mail-reader.spec.ts' },
+    { level: 'unit', path: 'tests/unit/outlook-mail-sender.spec.ts' },
+  ],
+  steps: [
+    { id: 'private-token', app: 'connectors', label: 'Protect the Outlook credential', run: () => refusal('/api/connect/outlook/access-token', 401, 'Outlook credential requires sign-in') },
   ],
 }, {
   id: 'espn-fantasy-league-reads', title: 'ESPN Fantasy league reads (fantasy-leagues kernel skill)', group: 'tool',
