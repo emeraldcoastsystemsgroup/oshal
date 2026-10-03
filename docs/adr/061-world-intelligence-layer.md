@@ -518,6 +518,16 @@ run. A URL that came from an operator override is shown as origin and path only.
 `auth: operator`; the dashboard shows its "Sources & schedules" link only when that route answers. The
 AI Test Lab card `world-sources-schedules` reads both halves on a live box without changing anything.
 
+**Proven live (2026-10-03, main 75dc340c, World 1.4.0).** As the operator: a schedule switched off and on, a
+1-minute cadence refused, a cadence changed and reset, an override set before an api restart still in force after
+it, and a feed switched off and on (its `world_source_switches` row stored, then removed); anonymous callers get
+401. The depth refresh was then re-timed through this control to fire at 02:33 UTC: the five collectors recorded
+their runs (four `ok`; `gov-contracts` `partial`, 84 tickers with awards and some USAspending requests failed),
+and the page showed them. The schedule was reset to the manifest at 02:37 while three copies of that fire were
+still running (the scheduler dispatches a fire again at each 60 s index reconcile while it runs; BACKLOG "Scheduler
+re-dispatches a schedule whose fire outlives its 60 s index reconcile"). All three finished at 02:40:12 and the
+record kept the manifest cron and its 06:00 next run, which is the scheduler fix above holding on the box.
+
 **Where World pulls from (2026-10-02).** The page reads the registries directly; this table is a
 snapshot.
 
