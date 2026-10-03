@@ -97,8 +97,11 @@ from preparation or unit tests alone.
 **Approved continuation (2026-10-03):** [Experience application integration](architecture/experience-application-integration.md)
 records the seven-experience source inventory and E1–E6 delivery contract. Reuse Finance/Education
 package-owned screens and manifest navigation. Declaration validation and package hosting/discovery
-are implemented in source. Composite-role lifecycle and all seven extracted package sources have
-local checks; release and installed acceptance remain pending. Keep this item open. Work packets:
+are deployed. All seven packages are released and installed at 1.0.1 with verified enforce-mode
+audits. Installed contract/readiness, role lifecycle, restart, overlap/expiry, exact fixture cleanup
+and data-preservation checks pass; real browser checks cover all seven entries. Keep this item open
+for second-real-non-admin privacy acceptance. The final contextual sidebar wording is deployed
+and browser-verified; temporary verification grants are removed. Work packets:
 E2 hosting/skins/authorized discovery; E3 exact-role preview, provenance, overlap-safe revocation,
 expiry and reviewed upgrades; E4 Home pilot; E5 Business, Classroom, Studio, Jarvis, Orbit and
 Commons; E6 installed Test Lab/browser/API/database acceptance. Home uses a distinct package ID;

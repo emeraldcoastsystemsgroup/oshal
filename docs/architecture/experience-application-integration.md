@@ -11,11 +11,11 @@ application-hosting baseline.
 | --- | --- | --- |
 | E1 inventory and contracts | Source inventory and delivery contract recorded here | The tables below identify source owners and migration gates |
 | E2a declaration validation | Implemented in `src/shared/experience-contract/`, called by the manifest loader | `tests/unit/experience-package-contract.spec.ts` |
-| E2b hosting and discovery | Implemented locally; deployed proof pending | Loader/service/runtime fixtures prove two installed packages with distinct callers, entry denial, private scope and member visibility; 36 browser cases pass, including the chooser at four widths |
-| E3 composite roles | Implemented locally; deployed proof pending | Exact-role preview, atomic PostgreSQL apply, durable receipts, source-safe revoke, reviewed upgrades, current authority/identity/expiry/deny/approval and real Access UI tests |
-| E4 Home pilot | Source package implemented; release and installed proof pending | Actual package hosting/authorization and source UI checks pass; shopping add/complete/reload, optional school refusal and phone household actions verified |
-| E5 remaining six | Six source packages implemented; release and installed proof pending | All seven owned source entries load through the existing runtime; browser checks cover role views, named member screens, phone/keyboard operation and saved drafts |
-| E6 installed acceptance | Pending | Deployed revisions, fixture cleanup and registered Test Lab results |
+| E2b hosting and discovery | Deployed; all seven packages installed | Actual enforce-mode install/update/uninstall/reinstall, authorized discovery, entry refusal and package chooser checks pass; source fixtures separately cover distinct callers and private scope |
+| E3 composite roles | Deployed; installed lifecycle checks pass | Atomic assignment and reviewed optional-member upgrade, durable retry receipts, deny precedence, overlap-safe revoke, actual expiry, restart persistence and PostgreSQL RLS refusal checks pass |
+| E4 Home pilot | Released and installed | Selected required and optional member screens open; a temporary unpriced list note persists across reload and is removed; existing Smart Home and Education IDs and records are preserved |
+| E5 remaining six | All six released and installed | All seven entries pass desktop, phone and keyboard checks; named member views, the package chooser and preserved Central assistant/Simple chat are exercised through the real signed-in browser |
+| E6 installed acceptance | Installed checks pass; second-account privacy acceptance remains open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. Cross-user privacy still requires a second real authenticated non-admin account |
 
 The `experience` compatibility floor now supplies package hosting and discovery:
 `GET /api/ui/experiences` lists active scope-visible packages under current authorization;
@@ -23,7 +23,57 @@ The `experience` compatibility floor now supplies package hosting and discovery:
 changed installation before redirecting. Page entries use package routes; rail entries
 reuse the existing focused cockpit profile. The portal and cockpit menu consume this
 catalog. Discovery failure offers no static fallback. Installation and deployed acceptance
-are separate gates, and release/installed acceptance for E3–E6 remain open.
+are separate gates. The seven packages are released; the remaining E6 items below
+keep overall acceptance open.
+
+### Installed verification recorded on 2026-10-03
+
+The seven packages were updated to **1.0.1** through the standard installer with
+enforce-mode verified audit stamps. The fresh main-only store checkout preserves all
+seven audited package trees and source ancestors, and the normal store gate reports
+87 passes with no failures, partial results, skips or blocked checks. Updates preserve
+existing assignments exactly; installation creates no role grants.
+
+Actual deployed verification uses core `1782dfb5757ae3fb2132e6bac905cb23631f97d5`.
+Its standard rollout passes all 37 app-container health checks, parity verification,
+assistant response and ticket dispatch. Seven installed contract runs preserve exact
+source/version and execution revisions, reuse the same run for a retried request and
+verify runner cleanup. Seven readiness cards pass through the existing authenticated
+browser cookie session. PAT forwarding is deliberately unavailable for this smoke
+transport. The fourteen external source-fixture cards remain explicitly pending in
+the installed runner; they are not counted as live acceptance passes.
+
+All seven desktop, phone and keyboard entry checks were recorded on the 1.0.0
+packages; the 1.0.1 update changes readiness bindings and package contracts, with
+entry UI bytes unchanged. Updated Business/Classroom context controls and Orbit's
+phone/keyboard behavior were also checked on the deployed revision. Existing member
+views, Central assistant and Simple chat remain available under their own authority.
+
+Actual restart verification preserves catalogs, assignments, receipt retries and
+test history, with all 36 bot containers unchanged. The first check refused an empty
+catalog before autoload settled; recovery compares the saved before-state and final
+container identity. Because the original snapshot omitted Docker StartedAt, its
+restart provenance is qualified as a bounded restart-window correlation.
+
+Final cleanup removes only the owned temporary composite, direct and deny fixtures
+and the temporary Home note. Entry refusal is verified again with zero install
+grants. Smart Home/Education IDs and exact digests of 19 existing Education/tenant
+tables are unchanged.
+
+The final contextual sidebar/access wording is deployed on core
+`8c1891ef615747c480f943b07fe9657be1b5c44f`. The real browser verifies Home,
+Business and Classroom captions, search labels, phone layout and keyboard focus
+restoration. The rollout finishes with all 37 containers healthy, clean parity and
+zero API restarts. A transient startup health/Access Review stall and the first
+ticket-probe timeout are retained as failed observations; after recovery, the full
+standard live gate passes bot-role authority, Jarvis and ticket dispatch on the
+unchanged release, without redeployment, timeout changes or skipped checks. The
+brief caption-verification assignments are removed, and zero grants plus strict
+data preservation are verified again.
+
+One acceptance item remains open: exercise cross-user privacy with a second real
+authenticated non-admin account. Source fixtures, the primary operator session
+and database RLS checks do not substitute for that acceptance.
 
 The `experience-roles` floor requires migration 185 and the existing Access management
 authority. `GET /api/authorization/composites` lists current readable templates and
@@ -67,7 +117,8 @@ manifests, never frozen into a permanent list of applications.
 | Orbit / `orbit-experience` | `/orbit`; `orbit.html`, same shared engines | Suite/application map, inspector, relationships, focus and operational panels | Installed catalog, viewer-scoped app detail/dependencies/assistants and member profiles |
 | Commons / `commons-experience` | `/commons`; `commons.html`, same shared engines | Suite/Game rooms, pins, room conversation, work board, household/team and roster | Installed catalog, Jarvis threads, work items, tenant membership and permitted directory reads |
 
-All seven IDs above now have source packages in the store development branch; publication and installed acceptance remain pending. `home` continues to
+All seven IDs above have released and installed 1.0.1 packages; the remaining E6
+acceptance items are recorded above. `home` continues to
 mean Smart Home; `little-monsters` continues to mean Education. Neither is renamed.
 
 ### Homebase surface and authority matrix
@@ -249,13 +300,12 @@ backend. The new dynamic menu is preserved at the published core revision and is
 restored only with coordinated backend/package availability. Do not add an outage
 fallback that silently serves an unadmitted experience.
 
-Core hosting PR #937 merged at 151f2d0c after independent exact-source review and
-the published gate. The later composite lifecycle, operational UX and alias changes
-have independent working-source review and are being verified for publication.
-The normal store pre-push gate passed all 87 checks at ee1651b2 with zero failures,
-partial results or skips, using disposable Linux/PostgreSQL/physics prerequisites.
-Independent store review still required CRM mapping, UTF-8 preservation and source
-documentation corrections; the amended source requires its own normal gate and
-exact-revision review. No skip acceptance or hook bypass was used. Coordinated
-deployment, exact-commit package audits, registered installed Test Lab results,
-negative member API/database checks and cleanup receipts remain outstanding.
+Core hosting PR #937 and the later composite lifecycle, operational UX, alias and
+chooser changes are merged after independent exact-source reviews and normal gates.
+All seven audited 1.0.1 package sources and evidence are released and installed.
+The final normal store gate passes all 87 checks with zero failures, partial results,
+skips or blocked checks, using disposable Linux/PostgreSQL/physics prerequisites.
+No skip acceptance or hook bypass was used. Actual deployed verification, installed
+Test Lab results, lifecycle boundaries and cleanup/preservation are recorded in the
+delivery status above. The remaining acceptance item is a second real authenticated
+non-admin privacy check.
