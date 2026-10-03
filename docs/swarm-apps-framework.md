@@ -237,9 +237,10 @@ The exported YAML is self-contained metadata. If your manifest references person
 |---|---|---|
 | Server boot | `autoLoadAll()` reads every `swarm-apps/*.yaml`, upserts each, runs `activate()` for any with `status='active'`. Reconciles: DB rows whose YAML is missing get flipped to `inactive`. | Ribbon icons appear, bots go active, routes open. |
 | `POST /api/swarm/apps/load {path}` | Reads the YAML, upserts, activates if `status='active'`. | Same as boot for that one app. |
-| `PATCH /api/swarm/apps/:name/toggle {active:false}` | Deactivates bots (`status='inactive'`), deregisters manifest tools, deregisters all static + dynamic ribbon icons, unregisters workflow. | Tool calls are disabled, ribbon icons vanish immediately. Any `curl` to the app's `mountPath` returns 503. |
-| `PATCH .../toggle {active:true}` | Re-upserts bots, flips to active, re-registers executable tools, UIs, and workflow. | Everything reappears. |
-| `DELETE /api/swarm/apps/:name` | Deactivates + deletes DB row. | Full purge. Manifest file stays on disk — next boot would re-add it. |
+| `PATCH /api/swarm/apps/:name/toggle {active:false}` | Deactivates bots (`status='inactive'`), deregisters manifest tools, deregisters all static + dynamic ribbon icons, unregisters workflow, and deletes the app's schedule records. Operator schedule overrides are kept. | Tool calls are disabled, ribbon icons vanish immediately. Any `curl` to the app's `mountPath` returns 503. |
+| `PATCH .../toggle {active:true}` | Re-upserts bots, flips to active, re-registers executable tools, UIs, workflow, and schedules, each schedule with its operator override applied. | Everything reappears, on the cadence and on/off the operator last set. |
+| `DELETE /api/swarm/apps/:name` | Deactivates + deletes DB row, and removes the app's schedule overrides. | Full purge. Manifest file stays on disk — next boot would re-add it, on the manifest's own schedules. |
+| `PATCH /api/swarm/apps/:name/schedules/:id {enabled?, cron?}` (operator) | Stores an operator override for one framework schedule (`cron: null` returns to the manifest cron) and applies it to the live record. A cron with less than `APP_SCHEDULE_MIN_INTERVAL_MINUTES` (default 5) between fires is refused. | The schedule pauses, resumes or moves to the new cadence at once; boot, reload and toggle-on re-apply the override. `GET /api/swarm/apps/:name/schedules` lists every declared schedule with its live state. |
 | Remove YAML + restart | Reconcile pass flips to inactive. | Same as toggle-off. |
 | Put YAML back + restart | Autoload upserts + activates. | Same as toggle-on. |
 
