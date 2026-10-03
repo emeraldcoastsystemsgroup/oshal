@@ -2111,7 +2111,7 @@ to every signed-in person on every deployment.
 
 - **Context:** `GET /api/readiness` (`src/app/routes/readiness-routes.ts:429`) probes the voice sides in `probeVoiceSide` (`:337-360`). It reads `loadSwarmVoiceConfig()` `tts.default` / `stt.default` (`:342-343`), which is the seed: `config-seed/global-config.json` (`src/features/voice-providers/services/voice-config-loader.ts:84`). After ADR-173 S1 (core #1036, `523fb0c2`), calls resolve the operator's swarm row (`oshal_capability_swarm_rows`) before the seed (ADR-173, S1a as built). So once the operator moves the swarm STT default (D12, which the S1 live case does), readiness still probes and reports the seed provider.
 - **Remaining:** make readiness's voice side read the swarm default the resolver uses.
-- **Done when:** readiness's voice side reports the provider that `describeCapabilitySwarmDefault` names (the row first, then the seed; `src/shared/capability-providers/capability-resolution.ts:331-350`), and a spec writes a swarm STT row and sees readiness report that provider.
+- **Done when:** readiness's voice side reports the provider that `describeCapabilitySwarmDefault` names (the row first, then the seed; `src/shared/capability-providers/capability-resolution.ts:331-348`), and a spec writes a swarm STT row and sees readiness report that provider.
 
 ### Create and Portrait Studio: carry the application permission through the CLI image dispatch
 - **Status:** OPEN — needs operator · it would widen who the ADR-127 demo carve covers, which is a security boundary; until the operator decides, the CLI image rail serves the deployment operator only
