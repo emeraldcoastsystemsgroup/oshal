@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Clearer Guard A refusals (operator decision 2026-10-03; Guard A still accepts exactly what it did). The Guard A table now pins the whole error each refusal reaches the provider's caller with: generate_image never ran, ran and ended in ERROR (the 2026-10-03 replay shape: TOOL_ERROR "no image generated in response", then NO_IMAGE_CAPABILITY), ran but never finished, or reached DONE with no acceptable file; and the bot's untrusted diagnostic (the tool's error text, the model's final reply) on the error's `diagnostic`, never in its message. New: an ERROR step with an image in the brain anyway is refused (only the DONE check stands in its way); the reply and the tool error are bounded and lose their control characters; the bot logs the refusal with both as fields; pino's err serializer carries the diagnostic; the REAL storyboard pipeline (generateStoryboardFrame) does not retry a refusal whose tool error and reply carry its transient words, because they are not in the message it classifies; and the 2026-10-03 00:24 shape end to end, a render bot found on a stale default corrected onto its own antigravity-cli before the render (reconcile 'corrected', one switch, onto its own setting). The wrapper case pins the bot-side refusal text with its diagnostic marker.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Verifier finding on core PR #1031: the refusal's diagnostic reached the Antigravity provider error's message and stderr, which ProviderFailoverProvider classifies, and bot-node-runtime wraps antigravity-cli in that failover whenever a fallback order is configured. New: three refusals carrying a throttle word (RESOURCE_EXHAUSTED/quota in the tool's error, 429 Too Many Requests in the model's reply, RESOURCE_EXHAUSTED as the tool step's last state) run through the REAL maybeWrapBotNodeProviderFailover with a recording openai-codex rung: no "[ProviderFailover] ... retrying via" line, the rung never runs, one agy turn, and the api still receives the diagnostic (the handler re-attaches it where the error leaves the node). The active-only reason no longer names the stream's state; it moved into the diagnostic. The marker is the shared ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, pinned equal to agy-image-turn.js's.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Retry, max 3, fresh turns (operator decision 2026-10-03). A render whose generate_image ran and ended in ERROR now runs again as a fresh turn through this same real chain: the Guard A table's two ERROR shapes make three agy turns, each with its own private HOME (removed) and its own -a2/-a3 workspace (no output collected), and fail with "render retries exhausted: all 3 attempts failed" after Guard A's words; every other shape stays one turn with its message unchanged. New: a first turn ending in ERROR and a second that renders (FAKE_AGY_IMAGE_MODE_SEQUENCE) hands back the second turn's image, attempt 2, from <id>-a2, the second turn's instruction naming its own anchor; the same through the REAL boot wiring and its one-image-turn-per-bot queue, where neither dispatch body carries the queue's startBy. Guard A's [backoff] category (a quota, a 429 or a rate limit in the image tool's own error) is Guard A's own token: it crosses the REAL maybeWrapBotNodeProviderFailover on every attempt with no failover line, the openai-codex rung never runs, and it alone selects the long waits; the shared ANY_BOT_IMAGE_TURN_ERROR_REFUSAL and ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY are pinned equal to agy-image-turn.js's. The provider's waits ride the test-only sleepImpl and are recorded, so the real chain runs without real 3 to 45 s waits; the storyboard frame stage still adds no retry of its own (three turns, the provider's).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Verifier finding on core PR #1033 (retries stacked): once a render has retried, the error it throws is the provider's own words only, Guard A's fixed ERROR words and how the retries ended, so the ERROR rows, the bounded-diagnostic case, the frame-stage case and the [backoff] failover rows now expect that stop message (STOPPED), not the last attempt's words through the node. The provider here runs on the frame stage's 420 s budget, so the recorded [backoff] waits always leave room for three attempts whatever the real chain's pace (the default is now 90 s).
  */
 
 import { spawn } from 'node:child_process';
@@ -68,6 +69,8 @@ const REFUSED = 'antigravity-cli image provider: render task failed — Antigrav
 const NO_DONE = 'the event stream shows no generate_image tool step that reached DONE';
 /** What the provider adds when three fresh turns all ended in Guard A's ERROR. */
 const EXHAUSTED = ' — render retries exhausted: all 3 attempts failed';
+/** How a render that retried ends: the provider's own words, Guard A's fixed ERROR words, never an attempt's words through the node. */
+const STOPPED = 'antigravity-cli image provider: render task failed — image turn refused: ';
 /** A failed render: the message, and the bot's untrusted diagnostic beside it. */
 type RenderError = Error & { diagnostic?: string };
 /** The provider's waits between attempts, recorded instead of slept (the test-only sleepImpl). */
@@ -197,8 +200,8 @@ function renderWorkspaces(): string[] {
   return fs.readdirSync(root).filter((name) => name.startsWith('sbimg-')).map((name) => path.join(root, name));
 }
 
-/** The real antigravity-cli provider, its waits between fresh turns recorded instead of slept. */
-const renderProvider = (options: { taskId?: string } = {}) => createAntigravityCliImageProvider(OWNER, { ...options, sleepImpl: recordWait });
+/** The real antigravity-cli provider on the frame stage's 420 s budget, its waits between fresh turns recorded instead of slept. */
+const renderProvider = (options: { taskId?: string } = {}) => createAntigravityCliImageProvider(OWNER, { deadlineMs: 420_000, ...options, sleepImpl: recordWait });
 
 /** One render through the real chain with the stand-in agy in `mode`; the error it failed with, or null. */
 async function refusedRender(mode: string, controller = botNodeTaskController()): Promise<RenderError | null> {
@@ -290,8 +293,9 @@ describe('antigravity-cli storyboard rail, through the real bot-node chain and a
     ['outside', NO_FILE, 'model reply "RENDERED"', 1],
   ])('Guard A refuses the %s turn and says which way it failed: nothing collected, the render fails, every HOME is removed', async (mode, reason, diagnostic, turns) => {
     const err = await refusedRender(mode);
-    // The message is the bot's own words only; every no-DONE reason still starts with the old text.
-    expect(err?.message).toBe(`${REFUSED}${reason}`);
+    // The message is the bot's own words only; every no-DONE reason still starts with the old text. A render
+    // that retried ends on the provider's own words: Guard A's fixed ERROR words and how the retries ended.
+    expect(err?.message).toBe(`${turns > 1 ? STOPPED : REFUSED}${reason}`);
     // The tool's error text and the model's reply ride beside it as untrusted diagnostic text.
     expect(err?.diagnostic).toBe(diagnostic);
     // Only Guard A's ERROR runs again, each time as a fresh turn: its own workspace and its own private HOME.
@@ -345,7 +349,7 @@ describe('Guard A refusals: bounded diagnostics, the bot log, and an error messa
     // Guard A writes the marker; the node re-attaches behind it and the api splits on it: one contract across the runtimes.
     expect(ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER).toBe(agyImageTurn.DIAGNOSTIC_MARKER);
     // A quota in the tool's own error puts the ERROR in Guard A's [backoff] category, in Guard A's own words.
-    expect(err?.message).toBe(`${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR [backoff]${EXHAUSTED}`);
+    expect(err?.message).toBe(`${STOPPED}${NO_DONE}: generate_image ran and ended in ERROR [backoff]${EXHAUSTED}`);
     expect(err?.diagnostic).toBe(`generate_image error ${JSON.stringify(toolError)}; model reply ${JSON.stringify(reply)}`);
     expect(err?.diagnostic).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
     // A framework logger's { err } (Create logs its region-edit failure that way) carries it: pino's err serializer copies it.
@@ -383,7 +387,7 @@ describe('Guard A refusals: bounded diagnostics, the bot log, and an error messa
     // generateStoryboardFrame retries only when the error MESSAGE reads transient (RATE_LIMITED, EMPTY_RESPONSE, 429, 5xx).
     const err = await generateStoryboardFrame({ n: 1, camera: 'WIDE: a red circle on white' }, { styleLock: 'flat colour', cast: [], provider }, null)
       .then(() => null, (e: Error) => e);
-    expect(err?.message).toBe(`storyboard frame 1 (antigravity-cli): ${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR${EXHAUSTED}`);
+    expect(err?.message).toBe(`storyboard frame 1 (antigravity-cli): ${STOPPED}${NO_DONE}: generate_image ran and ended in ERROR${EXHAUSTED}`);
     // The provider's own three fresh turns on Guard A's words; the frame stage adds none on the tool's or the model's words.
     expect(observations(), 'one render of three fresh turns: words from the tool or the model never decide a retry').toHaveLength(3);
   }, 60_000);
@@ -400,7 +404,7 @@ describe('a Guard A refusal never enters the bot node\'s provider failover (the 
     return maybeWrapBotNodeProviderFailover(raw, 'antigravity-cli', { 'antigravity-cli': raw, 'openai-codex': codexRung }, ['openai-codex']);
   }
 
-  const BACKOFF = `${NO_DONE}: generate_image ran and ended in ERROR [backoff]${EXHAUSTED}`;
+  const BACKOFF = `${STOPPED}${NO_DONE}: generate_image ran and ended in ERROR [backoff]${EXHAUSTED}`;
   it.each([
     // Guard A's own [backoff] category crosses the failover on every one of the three fresh turns.
     ['a quota in the image tool\'s own error', 'error-step',
@@ -413,9 +417,9 @@ describe('a Guard A refusal never enters the bot node\'s provider failover (the 
       { FAKE_AGY_TOOL_ERROR_JSON: JSON.stringify({ type: 'TOOL_ERROR', message: 'image model rate limit reached' }) },
       BACKOFF, 'generate_image error "TOOL_ERROR: image model rate limit reached"; model reply "NO_IMAGE_CAPABILITY"', 3],
     ['a 429 in the model\'s reply', 'no-step', { FAKE_AGY_REPLY_JSON: JSON.stringify('429 Too Many Requests') },
-      `${NO_DONE}: generate_image never ran in this turn`, 'model reply "429 Too Many Requests"', 1],
+      `${REFUSED}${NO_DONE}: generate_image never ran in this turn`, 'model reply "429 Too Many Requests"', 1],
     ['a throttle word as the tool step\'s last state', 'active-only', { FAKE_AGY_ACTIVE_STATE: 'RESOURCE_EXHAUSTED' },
-      `${NO_DONE}: generate_image ran but did not finish`, 'generate_image last state "RESOURCE_EXHAUSTED"; model reply "RENDERED"', 1],
+      `${REFUSED}${NO_DONE}: generate_image ran but did not finish`, 'generate_image last state "RESOURCE_EXHAUSTED"; model reply "RENDERED"', 1],
   ])('%s: no failover, no second rung, one agy turn per attempt, and the api still receives the diagnostic', async (_label, mode, env, reason, diagnostic, turns) => {
     Object.assign(process.env, env);
     const rungCalls: string[] = [];
@@ -429,7 +433,7 @@ describe('a Guard A refusal never enters the bot node\'s provider failover (the 
     expect(stdout.lines().filter((line) => line.includes('[ProviderFailover]') && line.includes('retrying via')), 'no failover was attempted').toEqual([]);
     expect(rungCalls, 'the fallback rung never ran').toEqual([]);
     expect(observations(), 'one agy turn per attempt').toHaveLength(turns);
-    expect(err?.message).toBe(`${REFUSED}${reason}`);
+    expect(err?.message).toBe(reason);
     expect(err?.diagnostic, 'the handler re-attached it where the error left the node').toBe(diagnostic);
     if (reason !== BACKOFF) return;
     // Only Guard A's [backoff] token chose the long waits: about 20 s, then about 45 s.

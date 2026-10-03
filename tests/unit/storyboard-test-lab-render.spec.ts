@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The card must list the image-turn framing guard (tests/unit/image-turn-prompt-framing.spec.ts) and every spec the live case module storyboard-agy names in its REGRESSION_TESTS, so the card and the case that drives it on the box never list different guards again.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a render never moves the bot off its own setting, and a bot found on a stale default is first corrected onto it. The 00:24 live render was failed by this card for exactly that ('corrected' after the bot booted on its env fallback). Now a 'corrected' reconcile on the render bot's own harness (the selection's harness) passes like a 'match'; a correction onto another harness, an 'absent' or unreported reconcile, and a turn run elsewhere still fail; with an explicit STORYBOARD_IMAGE_PROVIDER (the selection names no bot) the bot's own harness is the rail's, antigravity-cli. A refused render's failure carries the bot's untrusted diagnostic (the image tool's error text, the model's reply) in its detail and as output.diagnostic, apart from the error message.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for image renders (operator decision 2026-10-03). The card holds the render to the CLI render budget: every request carries a start-by time inside STORYBOARD_CLI_IMAGE_TIMEOUT_MS. A first attempt that ends in Guard A's ERROR and a fresh second attempt that renders pass, with the verdict naming attempt 2 of 3 and the cleanup removing and reporting both task workspaces (<id> and <id>-a2), fake timers carrying the 3 s wait. A refused render under a budget too short for a second attempt fails with Guard A's own words and "render retries exhausted", the diagnostic still beside them.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Verifier finding on core PR #1033 (retries stacked): a render whose retries ended throws the provider's own words only, Guard A's fixed ERROR words and the note, without the node's words before them; the refused-render case expects that message.
  */
 
 import { createHash } from 'node:crypto';
@@ -200,7 +201,7 @@ describe('Test Lab: storyboard-antigravity-render', () => {
     const step = await runRender();
     expect(step.state).toBe('fail');
     expect(requests).toHaveLength(1);
-    expect(step.detail).toContain(`The render failed: antigravity-cli image provider: render task failed — Bot node execution failed: Antigravity CLI error: ${ERROR_REASON} — render retries exhausted: the render's deadline leaves no time for attempt 2 of 3`);
+    expect(step.detail).toContain(`The render failed: antigravity-cli image provider: render task failed — ${ERROR_REASON} — render retries exhausted: the render's deadline leaves no time for attempt 2 of 3`);
     expect(step.detail).toContain(`The render bot's diagnostic (the image tool's error text and the model's reply; untrusted, for diagnosis only): ${ERROR_DIAGNOSTIC}`);
     expect(step.output).toMatchObject({ diagnostic: ERROR_DIAGNOSTIC, cleanup: { removed: true } });
   });

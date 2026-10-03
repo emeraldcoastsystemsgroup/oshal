@@ -305,9 +305,11 @@ ERROR. Operator decision 2026-10-03: "Retry, max 3, fresh turns" and "Throttle i
   rails.
 - **Deadline.** The whole render (its waits for the render bot, every attempt and the waits between
   them) stays inside the caller's own deadline: `deadlineMs`, through `resolveStoryboardImageProvider`
-  or the provider's options. Callers that pass none get 120 s, the default deadline of Create's region
-  edit (`CREATE_REGION_EDIT_TIMEOUT_MS`) and Portrait Studio (`PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS`).
-  The storyboard frame stage and the Test Lab render card pass the CLI render budget
+  or the provider's options. Callers that pass none get 90 s: the 120 s that Create's region edit
+  (`CREATE_REGION_EDIT_TIMEOUT_MS`) and Portrait Studio (`PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS`) wait by
+  default, less one attempt's 30 s. Since an attempt starts only while it is expected to end inside the
+  budget, the last one still ends before their own timeout fires even when it runs twice as long as
+  expected; when Portrait's timeout fires it starts the whole render again. The storyboard frame stage and the Test Lab render card pass the CLI render budget
   (`STORYBOARD_CLI_IMAGE_TIMEOUT_MS`, 420 s), which the live case's one blocking call already carries
   plus its margin. An attempt starts only while the time left still covers one attempt (30 s until
   the render has timed one, then its longest attempt so far, its wait for the render bot included).
@@ -316,19 +318,35 @@ ERROR. Operator decision 2026-10-03: "Retry, max 3, fresh turns" and "Throttle i
   taken then. A render that stops says why: "render retries exhausted" (all three attempts failed, or
   the deadline leaves no time for the next) or "image renders are busy". The deadline decides only
   whether an attempt starts; a dispatch already running is bounded by its own dispatch budget, as
-  before. The provider's notes come after the bot's own words and carry no tool or model text; the
-  storyboard frame stage does not retry an exhausted render again (crossed for real in the image-turn
-  suite: three turns, not fifteen).
+  before.
+- **Stop messages.** Once a render has retried, or stops at Guard A's ERROR, the error it throws is the
+  provider's own words only: Guard A's fixed ERROR words (with ` [backoff]` when it applied), then how
+  the retries ended ("render retries exhausted", "render retries stopped" for a retry that failed in
+  a way that is never retried, or "image renders are busy"). A retry attempt's own error, such as a
+  bot-node 500 or a dispatch timeout, is logged with the attempt but never leads the message, so
+  neither the storyboard frame stage nor Portrait Studio, which both retry on a message they read as
+  transient, re-runs a render the provider already retried. The first version of this amendment let
+  that attempt's words lead: through the real frame stage, a Guard A ERROR followed by a bot-node 500
+  on the retry made one frame run 10 image turns (verifier finding on core PR #1033). Now it makes two.
+  A first attempt that is never retried keeps its error as before, and the frame stage still retries
+  such an attempt when it failed transiently, as it always did. Each of those stage retries adds one
+  turn, and the render that ends the stage makes at most three.
 - **Observability.** Each failed attempt is logged on the api (`antigravity-cli render attempt
   failed`: `attempt` n/3, `category`, `waitMs`, `outcome`), a rendered frame reports
   `cliRender.attempt`, and the Test Lab card's verdict and the `storyboard-agy` PASS line name the
   attempt that rendered the frame. The card removes the tagged workspace and each attempt's.
 - **Not built.** Create and Portrait Studio do not pass their own configured deadline yet, so a
-  deployment that sets either below 120 s gets renders bounded at 120 s, not at its setting.
+  deployment that sets either below its 120 s default still gets the 90 s default budget, not one
+  below its own setting.
 
 Guards: `tests/unit/storyboard-antigravity-render-retry.spec.ts` (the provider over the real Guard A
 wording, fake timers measuring every wait: what is and is not retried, the fresh task ids, the waits,
-`[backoff]`, the deadline and `startBy`, busy, and that the diagnostic decides nothing),
+`[backoff]`, the deadline and `startBy`, busy, and that the diagnostic decides nothing; the verifier's
+probe through the real `generateStoryboardFrame`, at most three turns and no stage retry once the
+provider retried; the 90 s default ending before 120 s when every attempt starts late and runs twice
+its reserve; and every stop message driven out of the provider and checked against the frame stage's
+real `STORYBOARD_FRAME_TRANSIENT_ERROR` and against Portrait Studio's `isTransientVendorError`, which,
+being store code, is a verbatim copy pinned by the sha256 of the store source),
 `tests/unit/storyboard-image-turn-queue.spec.ts` (the queue itself), plus the updated
 `storyboard-antigravity-image-turn` (fresh turns through the real chain and a real `agy` child, and
 ` [backoff]` through the real provider failover with no rung run), `storyboard-cli-image-wiring` (two

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the render prompt no longer embeds the brief. buildAntigravityRenderPrompt takes only the anchor path and tells the model that the Prompt input is the "content" value of the UNTRUSTED_CONTENT record below (source ticket-or-user-body), to be passed verbatim as data; the brief rides to the executor as the separate `brief` field, which the wiring sends as the bot's untrusted text, while the instruction is sent as renderInstruction and filed under TRUSTED CONFIGURATION with generate_image named in the rebind. The 2026-10-02 19:00 live turn was refused by the model because the whole render sat inside the data-only record under an authority of [attempt_completion].
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Clearer Guard A refusals (operator decision 2026-10-03, diagnostic only). The bot's refusal now ends with an untrusted diagnostic (the image tool's own error text and the model's final reply, bounded on the bot) behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER. A failed render's error keeps the bot's own words as its message, cut at 300 characters as before, and carries that diagnostic beside it as `diagnostic` (an own enumerable property, so a logged { err } shows it), never in the message: the storyboard frame stage and Portrait Studio retry when a render error's message reads transient, and Switchboard answers 503 when it reads not-configured, so tool or model text must not decide any of those (D&D and Switchboard also show the message to their users). Every other failure is unchanged.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Retry, max 3, fresh turns (operator decision 2026-10-03). The 04:41-04:47 UTC measured run on main 3f06817f rendered the storyboard card 4 of 10 times while Create's region edit, on the same Antigravity login seconds apart, rendered 10 of 10; all six failures were Guard A's "generate_image ran and ended in ERROR" (tool error TOOL_ERROR "no image generated in response", model reply NO_IMAGE_CAPABILITY, no failover), and byte-identical replays in fresh conversations went ERROR, DONE, ERROR. So a render whose attempt failed with exactly those Guard A words, read from the error MESSAGE only (ANY_BOT_IMAGE_TURN_ERROR_REFUSAL ending the bot's own words; the untrusted diagnostic is never read), runs again as a fresh turn: a new task id and workspace per attempt (<id>, <id>-a2, <id>-a3), the anchor staged again, after about 3 s and then about 8 s with up to 20 % jitter, or about 20 s and then 45 s when Guard A added its own [backoff] category (the tool's error read as a quota or rate limit), three attempts in all. Never retried: a turn whose generate_image never ran or did not finish, a DONE with no acceptable file, a missing or mismatched output, and any failure that is not Guard A's. The whole render, its waits for the render bot (startBy, the executor's one-image-turn-per-bot queue) and its attempts, stays inside the caller's deadline (options.deadlineMs; 120 s when omitted, Create's and Portrait Studio's own default): no attempt starts unless the time left still covers one attempt (30 s until this render has timed one, then its longest), so a render stops and says why rather than overrun: "render retries exhausted" or "image renders are busy". Each attempt is logged (attempt n/3, category, wait, outcome) and a rendered result reports its attempt.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Verifier finding on core PR #1033: retries stacked. When a retry attempt failed with something other than Guard A's ERROR (a bot-node 500, a dispatch timeout), the thrown message led with that attempt's own words, so the storyboard frame stage (its transient pattern) and Portrait Studio (isTransientVendorError) re-ran the whole render: one frame made 10 image turns through the real generateStoryboardFrame. Once a render has retried, or stops at Guard A's ERROR, the error it throws is the provider's own words only: Guard A's fixed ERROR words as the last retried attempt carried them (with [backoff] when it had it) and how the retries ended; each attempt's own error is still logged by logFailedAttempt. A first attempt that is never retried keeps its error as before. The default deadline is now 90 s, the callers' own 120 s (CREATE_REGION_EDIT_TIMEOUT_MS, PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS) less one attempt's 30 s: an attempt starts only while it is expected to end inside that budget, so the last one, even when it runs twice as long, ends before their timeout fires (Portrait re-runs a whole render when it does).
  */
 /**
  * @description The antigravity-cli storyboard image rail: the swarm's Antigravity harness rendering
@@ -29,12 +30,6 @@ const logger = createChildLogger({ module: 'storyboard-antigravity-image-provide
 
 /** The most image turns one render makes: the first, then at most two fresh retries (operator decision 2026-10-03). */
 export const ANTIGRAVITY_RENDER_MAX_ATTEMPTS = 3;
-/**
- * A render's whole budget (its waits for the render bot, its attempts and the waits between them) when
- * its caller names none: Create's region edit and Portrait Studio give a render 120 s by default
- * (CREATE_REGION_EDIT_TIMEOUT_MS, PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS), the shortest deadline a caller holds.
- */
-export const ANTIGRAVITY_RENDER_DEFAULT_DEADLINE_MS = 120_000;
 /** The waits before the second and the third attempt after generate_image ran and ended in ERROR. */
 const ERROR_RETRY_WAITS_MS: readonly number[] = [3_000, 8_000];
 /** The waits when Guard A put that ERROR in its [backoff] category (the tool's error read as a quota or rate limit). */
@@ -43,6 +38,19 @@ const BACKOFF_RETRY_WAITS_MS: readonly number[] = [20_000, 45_000];
 const RETRY_JITTER_RATIO = 0.2;
 /** What one attempt is assumed to need until this render has timed one (whole live renders took 12 to 24 s on 2026-10-03). */
 const ATTEMPT_RESERVE_MS = 30_000;
+/**
+ * How long Create's region edit and Portrait Studio wait for a render by default
+ * (CREATE_REGION_EDIT_TIMEOUT_MS, PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS), the shortest a caller holds. When it
+ * passes they stop waiting, and Portrait Studio starts the whole render again.
+ */
+const CALLER_DEFAULT_TIMEOUT_MS = 120_000;
+/**
+ * A render's whole budget (its waits for the render bot, its attempts and the waits between them) when
+ * its caller names none: the callers' own 120 s less one attempt. An attempt starts only while it is
+ * expected to end inside this budget, so the last one, even when it runs twice as long as expected,
+ * still ends before the caller's own timeout fires.
+ */
+export const ANTIGRAVITY_RENDER_DEFAULT_DEADLINE_MS = CALLER_DEFAULT_TIMEOUT_MS - ATTEMPT_RESERVE_MS;
 
 /** The ImageName every render asks generate_image for (agy writes it as storyboard_frame_<epoch-ms>). */
 export const ANTIGRAVITY_IMAGE_NAME = 'storyboard-frame';
@@ -174,8 +182,8 @@ async function readCollectedImage(dir: string): Promise<{ png: Buffer; mimeType:
 /** @description How a failed attempt may be retried: Guard A's ERROR, plain or in its own [backoff] category. */
 type RetryCategory = 'error' | 'backoff';
 
-/** @description What follows a failed attempt: a wait and a fresh turn, or why the render stops there. */
-type NextStep = { waitMs: number } | { stop: 'not-retried' | 'exhausted' | 'deadline' };
+/** @description What follows a failed attempt: a wait and a fresh turn on that retry category, or why the render stops there. */
+type NextStep = { waitMs: number; category: RetryCategory } | { stop: 'not-retried' | 'exhausted' | 'deadline' };
 
 /** @description One render in progress: who renders it, on which task workspaces, until when, and how it waits. */
 interface RenderRun {
@@ -242,48 +250,64 @@ function nextStep(category: RetryCategory | null, failedAttempt: number, deadlin
   if (failedAttempt >= ANTIGRAVITY_RENDER_MAX_ATTEMPTS) return { stop: 'exhausted' };
   const base = (category === 'backoff' ? BACKOFF_RETRY_WAITS_MS : ERROR_RETRY_WAITS_MS)[failedAttempt - 1];
   const waitMs = base + Math.floor(Math.random() * base * RETRY_JITTER_RATIO);
-  return Date.now() + waitMs + reserveMs > deadline ? { stop: 'deadline' } : { waitMs };
+  return Date.now() + waitMs + reserveMs > deadline ? { stop: 'deadline' } : { waitMs, category };
 }
 
+/** @description A Guard A ERROR a render retried on, or stopped at: its category and its untrusted diagnostic. */
+interface GuardAError { category: RetryCategory; diagnostic?: string }
+
 /**
- * @description A failed render's error with a note on how its retries ended. The message keeps the bot's
- * own words first and adds only fixed words after them; the untrusted diagnostic stays beside it.
- * @param {AntigravityRenderError} failure - The last attempt's error.
- * @param {string} note - The provider's own words on the retries.
+ * @description The error a render throws once its fresh-turn retries end. The message is the provider's
+ * own words only: Guard A's fixed ERROR words as that attempt carried them (with Guard A's [backoff]
+ * category when it had it), then how the retries ended. No attempt's own text reaches it, so a caller
+ * that classifies render errors by message (the storyboard frame stage's and Portrait Studio's
+ * transient retry) never re-runs a render this provider already retried; each attempt's own error is
+ * logged by logFailedAttempt. That ERROR's untrusted diagnostic rides beside the message.
+ * @param {GuardAError} last - The Guard A ERROR the retries end on.
+ * @param {string} note - How the retries ended.
  * @returns {AntigravityRenderError} The error to throw.
  */
-function withRetryNote(failure: AntigravityRenderError, note: string): AntigravityRenderError {
-  const error: AntigravityRenderError = new Error(`${failure.message} — ${note}`);
-  if (failure.diagnostic !== undefined) error.diagnostic = failure.diagnostic;
+function retriesEnded(last: GuardAError, note: string): AntigravityRenderError {
+  const words = `${ANY_BOT_IMAGE_TURN_ERROR_REFUSAL}${last.category === 'backoff' ? ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY : ''}`;
+  const error: AntigravityRenderError = new Error(`antigravity-cli image provider: render task failed — ${words} — ${note}`);
+  if (last.diagnostic !== undefined) error.diagnostic = last.diagnostic;
   return error;
 }
 
 /**
  * @description The error a render stops with after a failed attempt. A first attempt that is never
- * retried keeps its error exactly as before; otherwise the message says how the retries ended.
+ * retried keeps its error exactly as before. A later attempt that fails in a way that is never retried
+ * ends the render on the Guard A ERROR it was retrying, and an attempt that stops at Guard A's ERROR
+ * ends it on that ERROR; both say how the retries ended (retriesEnded).
  * @param {AntigravityRenderError} failure - The failed attempt's error.
+ * @param {RetryCategory | null} category - Its retry category.
+ * @param {GuardAError | null} retried - The last Guard A ERROR this render retried on, if any.
  * @param {number} attempt - The attempt that failed (1-based).
  * @param {'not-retried' | 'exhausted' | 'deadline'} stop - Why there is no next attempt.
  * @returns {AntigravityRenderError} The error to throw.
  */
-function stoppedFailure(failure: AntigravityRenderError, attempt: number, stop: 'not-retried' | 'exhausted' | 'deadline'): AntigravityRenderError {
+function stoppedFailure(failure: AntigravityRenderError, category: RetryCategory | null, retried: GuardAError | null, attempt: number,
+  stop: 'not-retried' | 'exhausted' | 'deadline'): AntigravityRenderError {
   const of = ANTIGRAVITY_RENDER_MAX_ATTEMPTS;
-  if (stop === 'not-retried') return attempt === 1 ? failure : withRetryNote(failure, `render retries stopped: attempt ${attempt} of ${of} failed in a way that is never retried`);
-  if (stop === 'exhausted') return withRetryNote(failure, `render retries exhausted: all ${of} attempts failed`);
-  return withRetryNote(failure, `render retries exhausted: the render's deadline leaves no time for attempt ${attempt + 1} of ${of}`);
+  if (stop === 'not-retried' || !category) {
+    return retried ? retriesEnded(retried, `render retries stopped: attempt ${attempt} of ${of} failed in a way that is never retried`) : failure;
+  }
+  const last: GuardAError = { category, diagnostic: failure.diagnostic };
+  if (stop === 'exhausted') return retriesEnded(last, `render retries exhausted: all ${of} attempts failed`);
+  return retriesEnded(last, `render retries exhausted: the render's deadline leaves no time for attempt ${attempt + 1} of ${of}`);
 }
 
 /**
  * @description The error of an attempt that never started: the render bot was still rendering other
- * images when the attempt had to start to finish inside the render's deadline. After a failed attempt
- * it keeps that attempt's words first.
+ * images when the attempt had to start to finish inside the render's deadline. After a retry it ends the
+ * render on the Guard A ERROR that was being retried (retriesEnded).
  * @param {number} attempt - The attempt that could not start (1-based).
- * @param {AntigravityRenderError | null} previous - The failed attempt before it, if any.
+ * @param {GuardAError | null} retried - The last Guard A ERROR this render retried on, if any.
  * @returns {AntigravityRenderError} The error to throw.
  */
-function busyFailure(attempt: number, previous: AntigravityRenderError | null): AntigravityRenderError {
+function busyFailure(attempt: number, retried: GuardAError | null): AntigravityRenderError {
   const busy = `image renders are busy: the render bot was still rendering other images when attempt ${attempt} of ${ANTIGRAVITY_RENDER_MAX_ATTEMPTS} had to start to finish within this render's deadline`;
-  return previous ? withRetryNote(previous, `render retries exhausted: ${busy}`) : new Error(`antigravity-cli image provider: ${busy}`);
+  return retried ? retriesEnded(retried, `render retries exhausted: ${busy}`) : new Error(`antigravity-cli image provider: ${busy}`);
 }
 
 /**
@@ -340,14 +364,14 @@ function logFailedAttempt(at: { taskId: string; attempt: number; started: number
  */
 async function renderWithRetries(run: RenderRun, brief: string, anchor: Buffer | null): Promise<StoryboardImageResult> {
   let reserveMs = Math.min(ATTEMPT_RESERVE_MS, run.deadline - Date.now());
-  let previous: AntigravityRenderError | null = null;
+  let retried: GuardAError | null = null;
   for (let attempt = 1; ; attempt += 1) {
     const at = { taskId: run.taskIds[attempt - 1], attempt, started: Date.now() };
     const outcome = await renderAttempt(run, attempt, run.deadline - reserveMs, brief, anchor)
       .catch((err: unknown): AntigravityRenderError => (err instanceof Error ? err : new Error(String(err))));
     if (outcome === 'busy') {
       logger.warn({ taskId: at.taskId, attempt: `${attempt}/${ANTIGRAVITY_RENDER_MAX_ATTEMPTS}`, outcome: 'busy', waitedMs: Date.now() - at.started }, 'antigravity-cli render attempt not started: image renders are busy');
-      throw busyFailure(attempt, previous);
+      throw busyFailure(attempt, retried);
     }
     if (!(outcome instanceof Error)) {
       logger.info({ taskId: at.taskId, attempt: `${attempt}/${ANTIGRAVITY_RENDER_MAX_ATTEMPTS}`, sourceMimeType: outcome.sourceMimeType, locator: outcome.cliRender?.locator, bytes: outcome.image.length, durationMs: Date.now() - at.started }, 'antigravity-cli storyboard frame rendered');
@@ -357,9 +381,9 @@ async function renderWithRetries(run: RenderRun, brief: string, anchor: Buffer |
     const category = retryCategory(outcome.message);
     const next = nextStep(category, attempt, run.deadline, reserveMs);
     logFailedAttempt(at, outcome, category, next);
-    if (!('waitMs' in next)) throw stoppedFailure(outcome, attempt, next.stop);
+    if (!('waitMs' in next)) throw stoppedFailure(outcome, category, retried, attempt, next.stop);
     await run.sleep(next.waitMs);
-    previous = outcome;
+    retried = { category: next.category, diagnostic: outcome.diagnostic };
   }
 }
 
@@ -380,7 +404,8 @@ function waitOnTimer(ms: number): Promise<void> {
  * inside the caller's deadline (renderWithRetries).
  * @param {string | undefined} userSub - The REAL calling user's sub, threaded to the bot-side gates.
  * @param {AntigravityRenderOptions} [options] - A caller-chosen render task id, the caller's deadline
- *   for one render (120 s when omitted), and the wait between attempts (tests only).
+ *   for one render (90 s when omitted: the callers' own 120 s less one attempt), and the wait between
+ *   attempts (tests only).
  * @returns {StoryboardImageProvider} The provider.
  */
 export function createAntigravityCliImageProvider(userSub?: string, options: AntigravityRenderOptions = {}): StoryboardImageProvider {
