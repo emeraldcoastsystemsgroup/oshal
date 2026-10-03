@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attach tests/unit/world-depth-collectors-postgres.spec.ts: the depth fire runs the congress collector before its subject sweep (real dispatch, real collector, real feed fetch, disposable TimescaleDB). The collector used to sit behind that sweep, which took about 33 minutes on 2026-06-26, against a 240 s dispatch abandonment.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The degraded detail names the credential refusal line too: on 2026-09-28 the default congress feed answered HTTP 401 without WORLD_POLITICAL_TOKEN, and a refused feed writes nothing, so "nothing observed" has that as a cause to check.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The World sources and schedules card (the operator page, 2026-10-02): two read-only live steps — the two World schedule records with on/off, cron and any operator override, and the source inventory with switches, .env gates and each depth collector's last run — plus the suites that prove the controls across a real Redis (app-schedule-control) and a real TimescaleDB (world-depth-collectors-postgres).
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Attach tests/unit/schedule-dispatch-once.spec.ts to the World sources and schedules card: one dispatch per due occurrence across the real Redis store (the 2026-10-03 re-dispatch defect ran the depth refresh as three concurrent copies).
  *
  * @module routes/test-lab-world-signal-scenarios
  */
@@ -168,6 +169,7 @@ export const WORLD_SIGNAL_SCENARIOS: Scenario[] = [{
   description: 'Reads, without changing any data, what the World Sources & schedules page shows: the two World schedule records with on/off, cron and any operator override, and every place World pulls from with its switch, .env gates and each depth collector\'s last run. The attached suites prove the controls across a real Redis and a real TimescaleDB.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/app-schedule-control.spec.ts' },
+    { level: 'integration', path: 'tests/unit/schedule-dispatch-once.spec.ts' },
     { level: 'integration', path: 'tests/unit/world-depth-collectors-postgres.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-collector-feed-outcome.spec.ts' },
     { level: 'unit', path: 'tests/unit/world-signal-test-lab.spec.ts' },

@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Scope new user-owned schedule ids by exact taskType and owner so create-or-replace cannot overwrite another tenant; preserve exact-owner legacy ids in place.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Honour the record's `timezone` when computing next-run (cron-parser `tz` option) so "9am" fires at the user's 9am, not the container's; and treat `once` as a real state — a one-shot pauses itself the moment it fires instead of relying on the stale-misfire heuristic (which let a no-year cron recur annually). Both changes are inert for records that set neither field, so existing schedules are byte-for-byte unaffected.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | A finished dispatch re-reads the record before saving its run metadata. It used to save the copy read before the run, so a pause or cron change made while a fire was in flight (a World pulse runs for minutes) was silently undone when that fire finished, and a schedule deleted mid-run was written back. Added the operator-control surface the application schedule screen uses: manifest-schedule overrides (read/save/clear), the record for a task type, one-save applyControl, isValidCron and shortestCronGapMs.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | One dispatch per due occurrence. The index reconcile (every 60 s) re-adds every active record at its stored nextRunAt, and a record being dispatched keeps the past nextRunAt it was popped at until its dispatch saves the next occurrence, so the next pop handed the same occurrence out again: a fire longer than about a minute ran as up to four concurrent copies (measured 2026-10-03: the World depth refresh popped at 02:33:15, 02:34:15 and 02:36:15; a trading-assess occurrence ran three times). dispatchDueSchedules now skips a popped id whose due dispatch is still running in this process; the guard releases when that dispatch finishes or the dispatch timeout abandons it. Only the api runs the scheduler, so an in-process guard is enough. It returns the number actually dispatched.
  */
 
 import { createHash } from 'node:crypto';
@@ -69,6 +70,13 @@ export class ScheduleService {
   private lastIndexReconcileAtMs = 0;
   /** Count of dispatches running in the background (fire-and-forget) — bounds pile-up. */
   private inFlightDispatches = 0;
+  /**
+   * Schedule ids whose due dispatch is running in this process. The index reconcile re-adds a record
+   * at its stored nextRunAt, which stays in the past until that dispatch saves the next occurrence (or
+   * the dispatch timeout skips it), so without this the next pop would dispatch the same occurrence
+   * again. Released when the dispatch finishes or is abandoned at the timeout.
+   */
+  private readonly dueDispatchesRunning = new Set<string>();
 
   constructor(
     private readonly store: RedisScheduleStore,
@@ -386,9 +394,10 @@ export class ScheduleService {
   }
 
   /**
-   * @description Dispatches all due schedules in a bounded batch.
+   * @description Dispatches all due schedules in a bounded batch, each due occurrence once: an id
+   * whose due dispatch is still running in this process is not dispatched again.
    *
-   * @returns Number of schedules dispatched in this cycle.
+   * @returns Number of schedules dispatched in this cycle (a skipped, still-running id is not counted).
    */
   async dispatchDueSchedules(): Promise<number> {
     await this.reconcileScheduleIndexIfDue();
@@ -408,12 +417,24 @@ export class ScheduleService {
     // minutes-long world news refresh held the single-flight runner, starving the every-5-min trading
     // autopilot. Decoupling cadence from job duration fixes it at the root. Each job self-guards
     // (dispatchOneDue try/catch) and is time-boxed (withDispatchTimeout); the counter bounds pile-up.
+    // ONE DISPATCH PER OCCURRENCE: a popped id whose earlier due dispatch is still running is the same
+    // occurrence handed out again by the index reconcile, so it is skipped, not run a second time.
+    let dispatched = 0;
     for (const scheduleId of dueIds) {
+      if (this.dueDispatchesRunning.has(scheduleId)) {
+        logger.info({ scheduleId }, 'Schedule still running from this occurrence — not dispatched again');
+        continue;
+      }
+      this.dueDispatchesRunning.add(scheduleId);
       this.inFlightDispatches += 1;
-      void this.dispatchOneDue(scheduleId).finally(() => { this.inFlightDispatches -= 1; });
+      dispatched += 1;
+      void this.dispatchOneDue(scheduleId).finally(() => {
+        this.inFlightDispatches -= 1;
+        this.dueDispatchesRunning.delete(scheduleId);
+      });
     }
 
-    return dueIds.length;
+    return dispatched;
   }
 
   /** Dispatch one popped due schedule, guarded + time-boxed so it never throws into — or hangs — the

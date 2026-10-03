@@ -180,7 +180,9 @@ missing.
 Run the linked suites locally with `npm run test:world-operator-controls`. `tests/unit/app-schedule-control.spec.ts`
 starts its own Redis and runs the real schedule service, registrar and routes: non-operators are refused,
 on/off and cadence survive a re-registration and an app toggle, an interval under the floor is refused,
-and a pause made during a fire is not undone when the fire finishes. The depth suite
+and a pause made during a fire is not undone when the fire finishes. `tests/unit/schedule-dispatch-once.spec.ts`
+runs the real reconcile and pop on its own Redis: a fire held open across two reconcile cycles is dispatched once,
+and a fire abandoned at the dispatch timeout releases its schedule for the next occurrence. The depth suite
 (`tests/unit/world-depth-collectors-postgres.spec.ts`) proves the switches on its own TimescaleDB: a
 switched-off collector is skipped and recorded, the firehose and single firehose feeds are left out, the
 real ingest step never fetches a switched-off feed, the inventory never shows an override's query, a
