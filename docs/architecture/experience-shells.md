@@ -32,8 +32,9 @@ The selectable experiences, over one unchanged backend:
 `GET /api/ui/experiences` catalog, beside recent work and the searchable application directory.
 The cockpit **Experiences** menu and shell pickers consume that same catalog; each choice opens
 through the checked package entry operation. A policy outage does not restore static choices.
-Nexus and Simple retain their existing routes. Legacy seven-experience routes redirect through
-the corresponding installed package open operation, including `/little-monsters` to Classroom.
+Nexus and Simple retain their existing routes. Legacy seven-experience routes still serve
+the authenticated shell documents; `/little-monsters` still redirects to the Classroom preset.
+Retiring these aliases through the corresponding installed package open operation is pending E5.
 
 These are source implementation details. The current deployed backend has not received E2;
 its bind-mounted cockpit document stays aligned with that backend until coordinated rollout.
