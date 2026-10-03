@@ -73,6 +73,8 @@ credentials and defaults generally and or on a bot by bot level."*
    the whole fleet. Nothing is seeded into the switch table from `agent_config`; a per-bot row exists
    only when an operator writes one.
 
+   *Pointer, 2026-10-03:* [ADR-173](173-capability-providers-resolve-per-user.md) D11 (accepted) adds the user per-bot row above and moves the user's general preference below the administrator's per-bot rows, in its slice S3; this table describes what is built until S3 ships.
+
 3. **The authoritative dispatch record carries the winning rung.** ADR-034's post-execution check
    ("what ran is what was authorized") stays. Its authority becomes the resolved row, so a switch is one
    write and the next dispatch to an idle bot runs on it: the node already reconciles an idle bot to the

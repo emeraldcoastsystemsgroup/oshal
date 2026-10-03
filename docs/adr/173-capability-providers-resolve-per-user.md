@@ -1,7 +1,7 @@
 # ADR-173: Capability providers resolve per user — text to speech, speech to text, image and video
 
 Date: 2026-10-03
-Status: **Proposed. Nothing in the Decision is built.** Each of D1 to D12 is a recommendation for the operator to accept, change or reject; its reason and its alternative sit beside it.
+Status: **Accepted — 2026-10-03, operator decision.** The operator approved D1 to D12 as written ("Approve all 12 as written"). Nothing in the Decision is built yet; slices S1 to S5 are the build.
 
 The Context records core `main` `3f06817f` (docs-only commits since) and store `main` `25c87a29`, with read-only observations of the operator's box on 2026-10-03. Paths marked `store:` are in the `oshal-applications` repository.
 
@@ -229,10 +229,11 @@ Each fact below is cited to the file and line at the commits above.
   operator LLM lane (`openai-compat-lanes.ts:30-34`) and Career Hunter's Google search
   (`store: career-hunter/engine/jobhunter/config.py:176`).
 
-## Decision (proposed)
+## Decision
 
 Four capabilities, text to speech (`tts`), speech to text (`stt`), `image` and `video`, resolve a provider through one
-order, from records, and LLM is aligned to it (D11). Every item below is an operator decision.
+order, from records, and LLM is aligned to it (D11). The operator approved every item below as written on 2026-10-03.
+Each carries its reason, and the alternative that was considered beside it.
 
 Terms. A *rung* is one step of the order. A *principal* is the identity a call is made for. The *swarm default* is shown
 to users as "Portal default". *Operator* and *administrator* name the same role here: the identity `requiresOperator`
@@ -240,7 +241,7 @@ admits, which is swarm root and admin roles plus the break-glass allowlist (ADR-
 
 ### Decisions at a glance
 
-| | Question | Recommended | Alternative |
+| | Question | Decided | Considered |
 |---|---|---|---|
 | D1 | Order | Application, bot, user default, swarm default, refuse | The user's own choices above the application's |
 | D2 | Storage | Per-user, per-user-per-bot, swarm and offer tables | An image column on the switch rows plus a table per capability |
@@ -255,9 +256,9 @@ admits, which is swarm root and admin roles plus the break-glass allowlist (ADR-
 | D11 | LLM | Add the user's per-bot rung; general preference below administrator rows | Add the per-bot rung only |
 | D12 | The free Google key | Optional credential; STT default to `local-stt` | Keep Gemini as the STT default |
 
-### D1. One resolution order for all four capabilities — operator decision
+### D1. One resolution order for all four capabilities — decided
 
-**Recommended.** The same five rungs, top to bottom, for every capability:
+**Decided.** The same five rungs, top to bottom, for every capability:
 
 | Rung | Record | Governs |
 |---|---|---|
@@ -272,7 +273,7 @@ A rung is used when it has a setting and that setting's provider is available to
 rung is tried, subject to D5. Each resolution reports the rung that answered (`app`, `user-bot`, `bot-row`,
 `user-default`, `swarm-default`), as ADR-162 does for a bot's provider (`162-a-bots-brain-is-layered-records.md:116-118`).
 
-Example, an illustration of the proposal and not observed behaviour: a signed-in user triggers narration in an application
+Example, an illustration of the rule and not observed behaviour: a signed-in user triggers narration in an application
 whose manifest prefers `gemini-tts`. Rung 1 is skipped because the Google key is not set. Rung 2: the application's bot has
 no row and the user has no per-bot choice. Rung 3: the user chose `openai-tts`, which is available and was granted (D4), so
 it speaks with that and reports `user-default`. Both providers are `swarm-paid`, so D5 allows the skip.
@@ -283,17 +284,16 @@ explanation ("which rung chose this?") and one place to test. Today the orders d
 swarm default and ignores the application; STT is the swarm default alone; image is an environment variable and then the
 render bot's harness; video has none.
 
-**Alternative.** Order by owner, as ADR-162 does for LLM: the user's own choices (per bot, then default) above the
+**Considered.** Order by owner, as ADR-162 does for LLM: the user's own choices (per bot, then default) above the
 application's preference and the administrator's row. A user could then always override an application, including its
-voice, and an application could no longer guarantee a provider. Choose this if user control should outrank application
-design.
+voice, and an application could no longer guarantee a provider.
 
-**Flag.** ADR-162 today puts a user's general LLM preference above the administrator's per-bot rows. Whether LLM adopts
-this order is D11.
+**Note.** ADR-162 puts a user's general LLM preference above the administrator's per-bot rows. D11 moves it below them,
+so LLM follows this order.
 
-### D2. Storage: four small tables that mirror the LLM records — operator decision
+### D2. Storage: four small tables that mirror the LLM records — decided
 
-**Recommended.** Table names are chosen in S1; the shapes are:
+**Decided.** Table names are chosen in S1; the shapes are:
 
 - **A per-user table** keyed `(user_sub, capability)`, holding `provider_id` and an `options` jsonb (voice, model).
   Forced row-level security, owner or operator, the policy of migrations `112` and `122`. It absorbs `voice_user_prefs`:
@@ -317,13 +317,13 @@ produce. For LLM, a user's general preference stays in `oshal_user_llm_prefs` an
 keyed by capability avoids four copies with four resolvers, and `options` lets TTS carry a voice and LLM carry a model
 without a column per capability.
 
-**Alternative.** Extend what exists: add an image column to the switch rows (the smallest proposal in the "Images phase 2"
+**Considered.** Extend what exists: add an image column to the switch rows (the smallest proposal in the "Images phase 2"
 BACKLOG entry), keep `voice_user_prefs` for TTS, and add a table per capability. Smaller first step, but each capability
 gets its own table, route and resolver, STT and video still have no home, and image and video get no user default.
 
-### D3. "Available" is one function per capability, shared by the list and the resolver — operator decision
+### D3. "Available" is one function per capability, shared by the list and the resolver — decided
 
-**Recommended.** For each capability, one function answers "may this caller use this provider now?" and, when not, names
+**Decided.** For each capability, one function answers "may this caller use this provider now?" and, when not, names
 the missing piece. It follows `cliBrainOffer` (`user-brain-resolution.ts:123-166`) and is called by the options list and
 the resolver, so an option cannot be offered that a call would not run on. It checks, cheapest first:
 
@@ -346,12 +346,12 @@ the speech providers' `getStatus` checks that a key or file exists, `local-stt` 
 transcription (`local-stt-provider.ts:72-78`), and the image providers record that "key-presence lies"
 (`storyboard-image-providers.ts:93-99`).
 
-**Alternative.** Leave availability inside each provider and filter only the picker. Cheaper, and the picker and the
+**Considered.** Leave availability inside each provider and filter only the picker. Cheaper, and the picker and the
 resolver can again disagree.
 
-### D4. Who pays: every provider has a cost class — operator decision
+### D4. Who pays: every provider has a cost class — decided
 
-**Recommended.**
+**Decided.**
 
 - Each provider declares one class: `free` (no one is billed: on-host, in the browser, or a subscription already paid, as
   ADR-130 classes the command-line image rails), `swarm-paid` (the swarm's vendor credential carries the call, including a
@@ -381,12 +381,12 @@ user may already use. A class on each provider makes who pays visible in the lis
 still hear and speak through whatever the operator set as the swarm default, as they do today, so `google-cloud-tts` keeps
 speaking to everyone while the operator keeps it as the default.
 
-**Alternative.** Keep the open picker: any signed-in user may pick any registered provider and the class is a label. Spend
+**Considered.** Keep the open picker: any signed-in user may pick any registered provider and the class is a label. Spend
 is still recorded. Nothing changes for users; the operator relies on the vendor's own limits.
 
-### D5. Fallback crosses a rung only when a provider is unavailable — operator decision
+### D5. Fallback crosses a rung only when a provider is unavailable — decided
 
-**Recommended.**
+**Decided.**
 
 - A rung is skipped only when its provider is unavailable (D3). A provider that was available and then fails at call time
   fails the call clearly, under the retry rules its own rail already has; the resolver does not move to another provider.
@@ -407,14 +407,14 @@ is handled by D12, which moves the default off the quota-limited tier, not by fa
 will see a failed transcription at the quota wall. `tests/unit/voice-stt-failover.spec.ts` asserts the old behaviour and is
 rewritten in S1.
 
-**Alternative.** Also allow a failover on a runtime failure, but only to a `free` provider or one in the same cost class.
+**Considered.** Also allow a failover on a runtime failure, but only to a `free` provider or one in the same cost class.
 That keeps the Gemini-quota behaviour and D&D's chain and never lands on a different payer, at the price that a user can be
 served by a provider they did not pick. A variant is the LLM pattern: an operator-written fallback order on the swarm row
 (migration `148`), so a failover is something the operator wrote down.
 
-### D6. Swarm defaults are rows — operator decision
+### D6. Swarm defaults are rows — decided
 
-**Recommended.** The swarm default for each capability is a swarm row (D2) that the operator writes in one call from the
+**Decided.** The swarm default for each capability is a swarm row (D2) that the operator writes in one call from the
 config-admin page, effective without a restart: the write refreshes the snapshot in the writing process and the rest read it
 on the snapshot's interval, the `provider-switch` pattern (`provider-switch-routes.ts:154-160`). The route admits operator
 browser sessions and refuses a service secret (as `provider-switch-routes.ts:206-216` does), and the table's own policy
@@ -425,12 +425,12 @@ another is one write, with no pull request, image deploy or restart.
 default is an environment variable and a recreate, some of those variables never reach the container, and video has no
 default (G1).
 
-**Alternative.** Keep the file and the environment and add the user layers only. The operator still cannot move a default
+**Considered.** Keep the file and the environment and add the user layers only. The operator still cannot move a default
 from the cockpit, and the environment selectors (S5) cannot be retired.
 
-### D7. "The bot" for controller-side media calls — operator decision
+### D7. "The bot" for controller-side media calls — decided
 
-**Recommended.** The bot rung uses the accountable bot of the calling application surface, the identity ADR-036 already
+**Decided.** The bot rung uses the accountable bot of the calling application surface, the identity ADR-036 already
 requires for cost: Switchboard's comms bot and D&D's DM bot already carry their spend this way
 (`store: switchboard/routes/switchboard-compose-routes.js:200`, `store: dnd/lib/dnd-media-service.js:228`). For the
 command-line image rails it is the render bot (`STORYBOARD_CLI_IMAGE_BOT_ID`); with no image row for it, its own harness
@@ -439,12 +439,12 @@ keeps picking the rail as ADR-130 phase 1 does. A call with no bot skips rung 2.
 **Why.** Most TTS, STT and image calls run in the controller with no bot turn, so "the bot's setting" has no meaning until
 one bot is named, and the call sites already name one for cost.
 
-**Alternative.** Define the bot rung only for calls that run on a bot node, which today is the command-line image rails. It
+**Considered.** Define the bot rung only for calls that run on a bot node, which today is the command-line image rails. It
 is smaller, but an administrator then cannot give an application's bot its own voice or image provider.
 
-### D8. Every capability call carries the caller's principal — operator decision
+### D8. Every capability call carries the caller's principal — decided
 
-**Recommended.** The resolver takes the caller's principal (the user's subject), the application and the bot as required
+**Decided.** The resolver takes the caller's principal (the user's subject), the application and the bot as required
 inputs. Scheduled or swarm-owned work passes an explicit system principal and resolves the operator-written rungs only. The
 callers that drop or ignore the user today are fixed in S4: video narration (`video-render-service.ts:59`) and deck narration
 (`deck-to-video-provider.ts:92`), the D&D and Game Show voice chains, `POST /api/voice/transcribe`
@@ -454,12 +454,12 @@ fails when the resolver is called without a principal.
 **Why.** A user default can only apply to a call that says whose it is. On the box, the missing `userSub` already makes
 Switchboard and D&D images refuse for everyone (G4).
 
-**Alternative.** Pass the principal only where a caller already has one and let the rest resolve operator-written rungs. No
+**Considered.** Pass the principal only where a caller already has one and let the rest resolve operator-written rungs. No
 store changes, but a user's default then applies on some surfaces and not on others.
 
-### D9. TTS stores provider and voice together — operator decision
+### D9. TTS stores provider and voice together — decided
 
-**Recommended.** Every TTS choice (a user default, a per-bot choice, a swarm row, an application preference) is a
+**Decided.** Every TTS choice (a user default, a per-bot choice, a swarm row, an application preference) is a
 `(provider, voice)` pair, because a voice id belongs to its provider (`voice-controller.ts:72-74`). When resolution lands
 on a different provider than the pair named, the voice is dropped and the landing provider's own default voice is used
 (`defaultVoice` in its config). A voice id is never sent to a provider that did not list it.
@@ -467,17 +467,17 @@ on a different provider than the pair named, the voice is dropped and the landin
 **Why.** Little Monsters offers Gemini voice names and D&D allows only OpenAI-style names (Context). A bare voice id sent to
 the wrong provider is a failed call or the wrong voice.
 
-**Alternative.** Store the provider alone and leave the voice a client setting, as Little Monsters does in `localStorage`
+**Considered.** Store the provider alone and leave the voice a client setting, as Little Monsters does in `localStorage`
 today. Smaller, but the voice does not follow the user across devices and an administrator cannot set it.
 
-### D10. Applications declare a preference in a manifest block — operator decision
+### D10. Applications declare a preference in a manifest block — decided
 
-**Recommended.** A top-level `capabilities:` block in an application manifest replaces the `voice:` block that nothing
+**Decided.** A top-level `capabilities:` block in an application manifest replaces the `voice:` block that nothing
 reads. Per capability it lists one or more preferred `(provider, voice or model)` pairs in order. By default the preference
 falls through to the next rung when none of its pairs is available; `required: true` fails the call closed instead. An
 explicit provider named by server code (the speaker route's `google-cloud-stt`, Calling Assistant's `sttProvider`) is a
 required preference, as today: its own failure surfaces and it is never switched. During migration the old `voice:` block
-is read as a preference, with a log line per manifest. Proposed shape, not built:
+is read as a preference, with a log line per manifest. The shape, not yet built:
 
 ```yaml
 capabilities:
@@ -496,12 +496,12 @@ provider. Little Monsters' read-aloud, today the caller's saved choice else the 
 the Google key exists; D&D and Game Show would prefer what their blocks name. The word `capabilities` already names a bot's
 string list one level down (`swarm-apps/types.ts:243`); the manifest-level block is a different key.
 
-**Alternative.** Ignore the old `voice:` blocks and let each package re-declare under the new key, so nothing moves until a
+**Considered.** Ignore the old `voice:` blocks and let each package re-declare under the new key, so nothing moves until a
 package author acts; or name the block `providers:` to avoid the collision.
 
-### D11. LLM: add the user's per-bot choice, and decide where the general preference sits — operator decision
+### D11. LLM: the user's per-bot choice is added, and the general preference sits below administrator rows — decided
 
-**Recommended.**
+**Decided.**
 
 - Add the missing rung: a user's own per-bot LLM choice, stored in the per-user per-bot table (D2) and resolved ahead of the
   administrator's per-bot row. The operator expects this to exist ("bots can be configured per user to have specific api
@@ -523,13 +523,12 @@ package author acts; or name the block `providers:` to avoid the collision.
 media is one thing to explain, and an administrator's per-bot row, which a user's named preference overrides today, would
 then hold for that bot.
 
-**Alternative.** Keep ADR-162's order for LLM (the user's general preference above administrator per-bot rows) and add only
-the per-bot rung. No effective brain changes anywhere; the cost is two orders to explain and to test. If chosen, ADR-162 §2
-gets the per-bot row added in S3 and nothing else.
+**Considered.** Keep ADR-162's order for LLM (the user's general preference above administrator per-bot rows) and add only
+the per-bot rung. No effective brain changes anywhere; the cost is two orders to explain and to test.
 
-### D12. The free Google key becomes an optional provider credential — operator decision
+### D12. The free Google key becomes an optional provider credential — decided
 
-**Recommended.** Within the four capabilities the key is the credential of two providers, `gemini-stt` and `gemini-tts`.
+**Decided.** Within the four capabilities the key is the credential of two providers, `gemini-stt` and `gemini-tts`.
 Removing it makes those two unavailable, shown with the missing piece (D3), and changes nothing else in the four. In S1,
 after a live transcription through `local-stt` shows it works on this box, the operator writes the swarm STT row to
 `local-stt` (free, on-host), so the key can be removed without breaking voice input. The shipped seed in
@@ -545,7 +544,7 @@ removing the key stays unsafe for those two until each is moved by its own chang
 first candidate, D&D's third), the lane and the search all rest on one free tier. After S5 nothing in the four
 capabilities reads the key except those two providers.
 
-**Alternative.** Keep `gemini-stt` as the swarm STT default and apply D5 as written. No change to what users get, but a
+**Considered.** Keep `gemini-stt` as the swarm STT default and apply D5 as written. No change to what users get, but a
 quota wall surfaces as a failed transcription and the key stays load-bearing for voice input. Or move the default to
 `google-cloud-stt`, which is paid, on the service account.
 
@@ -567,10 +566,11 @@ quota wall surfaces as a failed transcription and the key stays load-bearing for
 - **Cost of building.** Four tables with migrations and real-role security specs; a registry, an availability function
   and a resolver for each capability; a user card, a config-admin card and per-bot panels; one store pull request per
   package that calls a media capability (application code lives in the store, CLAUDE.md Rule 0c); a guard for each decision.
-- **Scope.** This ADR builds nothing and edits neither ADR-130 nor ADR-162. If accepted it supersedes the scope of the
-  BACKLOG entry "Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)", which stays until
-  then and points here, and it carries the user per-bot preference that ADR-162 names as a follow-up. The slice that builds
-  the image part updates ADR-130's "Not built (phase 2)" paragraph.
+- **Scope.** This ADR builds nothing. It supersedes the scope of the BACKLOG entry "Images phase 2: a per-bot image
+  setting, and image APIs as bot-level choices (ADR-130)", which stays and points here, and it carries the user per-bot
+  preference that ADR-162 names as a follow-up. ADR-130 and ADR-162 each carry a dated one-line pointer to this ADR
+  (2026-10-03); neither decision is rewritten. The slice that builds the image part updates ADR-130's "Not built (phase 2)"
+  paragraph, and S3 amends ADR-162 §2 when it builds the per-bot rung and the reorder.
 - **Docs.** Each slice updates its collateral (the voice docs, the ADR index status, the BACKLOG entry) in the same change.
 
 ## Alternatives considered
@@ -614,8 +614,8 @@ functionality"). Database claims are proved against the real enforcing role and 
   - Done when (live): a non-operator test user picks a free provider and the next call reports `user-default`; without a
     grant a swarm-paid provider shows unavailable for that user; after the operator's grant it can be saved.
 - **S3. The bot rung.** Administrator per-bot rows (operator route and per-bot panel), the per-user per-bot table with its
-  routes and panel, D7's bot identity for controller-side calls, and for LLM the user per-bot rung and, if D11 is accepted
-  as recommended, the reorder with its pin migration.
+  routes and panel, D7's bot identity for controller-side calls, and for LLM the user per-bot rung and, per D11, the
+  reorder with its pin migration.
   - Done when (tested): a spec over the real snapshot shows the administrator's per-bot row beats the user default for that
     bot and the user's per-bot choice beats the administrator's row; a spec through `stampRemoteBrain` shows a user's per-bot
     LLM choice stamped on the dispatch; a migration spec lists and pins each affected user and bot.

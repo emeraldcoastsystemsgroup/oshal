@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **0** | being worked in the current session |
-| OPEN — actionable | **19** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **72** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **20** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **71** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **74** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **8** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -2009,7 +2009,7 @@ to every signed-in person on every deployment.
 ### Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)
 - **Status:** OPEN — needs operator · a contract change: a provider-switch schema change, and retiring the deployment-wide `STORYBOARD_IMAGE_PROVIDER` selector ("Not built (phase 2)" in the ADR-130 amendment 2026-10-02)
 
-- **Pointer:** if accepted, [ADR-173](adr/173-capability-providers-resolve-per-user.md) supersedes this entry's scope: the per-bot image setting becomes the bot rung of its resolution order (D1, D2, D7), built under "Capability providers per user (ADR-173) — build slices". This entry stays until the operator decides.
+- **Pointer:** [ADR-173](adr/173-capability-providers-resolve-per-user.md), accepted 2026-10-03, supersedes this entry's scope: the per-bot image setting is the bot rung of its resolution order (D1, D2, D7) and `STORYBOARD_IMAGE_PROVIDER` is retired in its slice S5, both built under "Capability providers per user (ADR-173) — build slices". The Status and Remaining below predate that decision and are carried by that entry; this entry closes when its slices S3 and S5 are done.
 - **Context:** phase 1 (core #1013, `d7986a88`) picks the image rail from the render bot's own effective provider.
   - A render bot whose harness has no image rail is refused: any harness other than `antigravity-cli`, `openai-codex` and `codex-cli` (for example `claude-code`, `cline`, `gemini-cli` and the Cline-backed ids).
   - The only way to name an image API is `STORYBOARD_IMAGE_PROVIDER`, one deployment-wide setting: the `codex` platform key, `comfyui`, `vertex` or `openrouter`. It is set in `.env` and passed to the api by `docker-compose.oshal-local.yml`.
@@ -2025,13 +2025,13 @@ to every signed-in person on every deployment.
   - ADR-130 records `STORYBOARD_IMAGE_PROVIDER` as retired, or as kept only as an override.
 
 ### Capability providers per user (ADR-173) — build slices
-- **Status:** OPEN — needs operator · ADR-173 is Proposed; the operator decides D1 to D12 before any slice starts
+- **Status:** OPEN — actionable · ADR-173 accepted 2026-10-03: the operator approved D1 to D12 as written, so the slices are decided and buildable
 
-- **Context:** [ADR-173](adr/173-capability-providers-resolve-per-user.md) is Proposed. It would make text to speech, speech to text, image and video resolve a provider per user, from records, with the swarm default as the floor.
+- **Context:** [ADR-173](adr/173-capability-providers-resolve-per-user.md) is Accepted (2026-10-03). It decides that text to speech, speech to text, image and video resolve a provider per user, from records, with the swarm default as the floor; none of it is built.
   - Today the swarm default is a file (TTS, STT) or an environment variable (image), only TTS has a user setting, the manifest `voice:` block is read by nothing, and several callers drop the user.
-  - If accepted it supersedes the scope of "Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)", which stays until then, and it carries the user per-bot preference that ADR-162 names as a follow-up.
-- **Why it needs the operator:** it adds tables, a resolver and a manifest key to core, and it changes who may choose a paying provider (D4), the order in which a user's choice meets a bot's setting (D1, D11) and a swarm default (D12). The operator's direction was "don't just blast it in... this is a core change"; ADR-173 states each recommendation, D1 to D12, with its alternative.
-- **Remaining:** the operator decides D1 to D12; then five slices build in order, each accepted on its own.
+  - It supersedes the scope of "Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)", which stays and points here, and it carries the user per-bot preference that ADR-162 names as a follow-up.
+- **Decision:** the operator approved D1 to D12 as written on 2026-10-03 ("Approve all 12 as written"). ADR-173 records each decision with its reason and the alternative considered. It adds tables, a resolver and a manifest key to core, and it changes who may choose a paying provider (D4), the order in which a user's choice meets a bot's setting (D1, D11) and a swarm default (D12).
+- **Remaining:** five slices build in order, each accepted on its own.
   - S1: registry, availability, cost classes, swarm rows, and TTS and STT spend (core).
   - S2: user defaults and a "My defaults" card.
   - S3: the bot rung, including a user's per-bot LLM choice.
