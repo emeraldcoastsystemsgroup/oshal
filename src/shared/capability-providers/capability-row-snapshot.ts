@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D6: the swarm rows (migration 183) held in memory so every capability call reads them without a query, refreshed at boot, after every write through the operator route, and on a timer, so one operator write moves the next call with no restart (the provider-switch snapshot pattern, ProviderSwitchSnapshot). A failed refresh keeps the last good rows and logs at ERROR. The process installs one snapshot; an installed snapshot that has never completed a read answers "not loaded", which the resolver refuses on rather than guessing the seed, and with nothing installed (no Postgres) the reader answers "no rows", which is today's behaviour.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 D6: a refresh asked for while a read is running no longer shares that read. The running read (the timer's, say) may have begun before the operator's write committed, so the route's refresh after the write could answer with the old rows and the next call would resolve the old default until the next tick. Such a call now gets one further read that starts when the running one ends (shared by every caller that asks meanwhile). Guard: tests/unit/capability-row-snapshot.spec.ts.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the snapshot also holds the provider offers (migration 184) when its source lists them, so a spend recording reads the unit price from memory; offerFor() and installedCapabilityOfferReader() answer it, and the status counts the offers.
  */
 
 /**
@@ -14,16 +15,24 @@
 
 import { createChildLogger } from '@/shared/logger';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
-import type { Capability, CapabilitySwarmRow, CapabilitySwarmRowReader } from './capability-types';
+import type {
+  Capability,
+  CapabilityOfferReader,
+  CapabilityProviderOffer,
+  CapabilitySwarmRow,
+  CapabilitySwarmRowReader,
+} from './capability-types';
 
 const logger = createChildLogger({ module: 'capability-row-snapshot' });
 
 /** Default refresh period. Override with OSHAL_CAPABILITY_ROWS_REFRESH_MS; 0 disables the timer. */
 const DEFAULT_REFRESH_MS = 30_000;
 
-/** The one method of the store the snapshot needs. */
+/** What the snapshot reads: the swarm rows, and (from S1b) the provider offers. */
 export interface CapabilitySwarmRowSource {
   listAll(): Promise<CapabilitySwarmRow[]>;
+  /** The offer rows (migration 184); a source without it has no offers. */
+  listOffers?(): Promise<CapabilityProviderOffer[]>;
 }
 
 /** What the snapshot knows about its own freshness, for the operator route to report. */
@@ -31,6 +40,7 @@ export interface CapabilityRowSnapshotStatus {
   loaded: boolean;
   loadedAt: string | null;
   rowCount: number;
+  offerCount: number;
   lastError: string | null;
 }
 
@@ -54,8 +64,9 @@ function rowKey(scopeId: string, capability: Capability): string {
 /**
  * @description The swarm rows as last read, answered synchronously.
  */
-export class CapabilityRowSnapshot implements CapabilitySwarmRowReader {
+export class CapabilityRowSnapshot implements CapabilitySwarmRowReader, CapabilityOfferReader {
   private rows = new Map<string, CapabilitySwarmRow>();
+  private offers = new Map<string, CapabilityProviderOffer>();
   private loaded = false;
   private loadedAt: string | null = null;
   private lastError: string | null = null;
@@ -86,11 +97,13 @@ export class CapabilityRowSnapshot implements CapabilitySwarmRowReader {
       const startedAt = Date.now();
       try {
         const rows = await this.source.listAll();
+        const offers = this.source.listOffers ? await this.source.listOffers() : [];
         this.rows = new Map(rows.map((row) => [rowKey(row.scopeId, row.capability), row]));
+        this.offers = new Map(offers.map((offer) => [rowKey(offer.providerId, offer.capability), offer]));
         this.loaded = true;
         this.loadedAt = new Date().toISOString();
         this.lastError = null;
-        logger.debug({ rowCount: rows.length, durationMs: Date.now() - startedAt }, 'Capability row snapshot refreshed');
+        logger.debug({ rowCount: rows.length, offerCount: offers.length, durationMs: Date.now() - startedAt }, 'Capability row snapshot refreshed');
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err);
         logger.error({ err, keptRows: this.rows.size, durationMs: Date.now() - startedAt },
@@ -142,9 +155,19 @@ export class CapabilityRowSnapshot implements CapabilitySwarmRowReader {
     return Array.from(this.rows.values());
   }
 
+  /**
+   * @description One provider's offer row from memory (ADR-173 D4: its unit price and quota label).
+   * @param capability - The capability.
+   * @param providerId - The provider.
+   * @returns The offer, or null when none is set.
+   */
+  offerFor(capability: Capability, providerId: string): CapabilityProviderOffer | null {
+    return this.offers.get(rowKey(providerId, capability)) ?? null;
+  }
+
   /** @description Freshness for the operator route to report. */
   status(): CapabilityRowSnapshotStatus {
-    return { loaded: this.loaded, loadedAt: this.loadedAt, rowCount: this.rows.size, lastError: this.lastError };
+    return { loaded: this.loaded, loadedAt: this.loadedAt, rowCount: this.rows.size, offerCount: this.offers.size, lastError: this.lastError };
   }
 }
 
@@ -153,6 +176,9 @@ const NOTHING_INSTALLED: CapabilitySwarmRowReader = Object.freeze({
   state: () => ({ installed: false, loaded: false }),
   rowFor: () => null,
 });
+
+/** No offers at all: no snapshot installed. */
+const NO_OFFERS: CapabilityOfferReader = Object.freeze({ offerFor: () => null });
 
 let installed: CapabilityRowSnapshot | null = null;
 
@@ -180,4 +206,12 @@ export function installedCapabilityRowSnapshot(): CapabilityRowSnapshot | null {
  */
 export function installedCapabilityRowReader(): CapabilitySwarmRowReader {
   return installed ?? NOTHING_INSTALLED;
+}
+
+/**
+ * @description The offer reader every spend recording uses: the installed snapshot, or "no offers".
+ * @returns The reader.
+ */
+export function installedCapabilityOfferReader(): CapabilityOfferReader {
+  return installed ?? NO_OFFERS;
 }

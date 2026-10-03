@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 voice picker rails: listTtsProviders() reports every registered provider with its LIVE getStatus (configured true/false + reason — the UI renders unconfigured ones as honest disabled states) and voices for the configured ones; getAvailableVoices() accepts an optional explicit providerId so the picker can enumerate a non-default provider's voices.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Turn-time STT failover: when the DEFAULT-resolved provider fails or is unconfigured mid-call (live 2026-08-11: Gemini free tier quota-walled → every dictation answered "Transcription failed" while the local sherpa sidecar sat idle), walk each remaining server-kind registered provider once and return the first real transcript; nothing answers → the ORIGINAL failure surfaces. An explicitly requested provider is the caller's choice and never switches — same boundary rule as an explicit BYO brain. Guard: tests/unit/voice-stt-failover.spec.ts.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: both directions resolve through the shared capability resolver with the caller's principal (D8): an explicit provider is a required preference (D10), the caller's saved voice choice is rung 3, the swarm default is the operator's row else the seed the config names (D6), and a refusal names the missing piece; every answer reports the rung. Entry 7's registration-order failover is REMOVED (D5): a provider that was available and then fails surfaces its own failure and no other provider is tried, so a free-tier quota wall can no longer become a paid Cloud call. A voice travels only with its own provider and only when that provider lists it (D9). listTtsProviders reports each provider's cost class and availability for the caller from the SAME availability function the resolver asks (D3). A caller that names no principal (store code until S4) resolves as unattributed: the operator-written rungs only, logged.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4): a successful server TTS or STT call records its spend through the installed recorder — the accountable bot and the caller from the call's CapabilityCaller, the units (characters, counted as code points, for TTS; audio seconds measured from the clip for STT, else the transcript's last segment), and the unit price from the provider's offer row. A free provider and a failed call record nothing; a recorder failure is logged and never fails the call.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -20,12 +21,15 @@ import {
   createTtsCapabilityAdapter,
   getSTTProviderRegistry,
   getTTSProviderRegistry,
+  measureAudioSeconds,
   type STTProvider,
   type TTSProvider,
   type TTSVoice,
 } from '@/features/voice-providers';
 import {
   describeCapabilitySwarmDefault,
+  installedCapabilityOfferReader,
+  installedCapabilitySpendRecorder,
   listCapabilityOptions,
   resolveCapabilityProvider,
   unattributedCapabilityPrincipal,
@@ -34,9 +38,12 @@ import {
   type CapabilityChoice,
   type CapabilityCostClass,
   type CapabilityMissingPiece,
+  type CapabilityOfferReader,
   type CapabilityPrincipal,
   type CapabilityResolution,
+  type CapabilityResolved,
   type CapabilityRung,
+  type CapabilitySpendRecorder,
   type CapabilitySwarmRowReader,
 } from '@/shared/capability-providers';
 
@@ -115,6 +122,20 @@ export interface TtsProviderListing {
 /** @description Optional collaborators (tests); the defaults are the installed ones. */
 export interface VoiceServiceDeps {
   rows?: CapabilitySwarmRowReader;
+  /** The offer rows a spend is priced from (default: the installed snapshot). */
+  offers?: CapabilityOfferReader;
+  /** The spend recorder (default: the one installed at boot; null records nothing). */
+  spend?: CapabilitySpendRecorder | null;
+}
+
+/**
+ * @description The latest segment end a transcript reports, as a fallback measure of its audio.
+ * @param segments - The provider's timestamped segments, if any.
+ * @returns Seconds, or null.
+ */
+function lastSegmentEnd(segments: TranscribeResult['segments']): number | null {
+  const ends = (segments ?? []).map((segment) => segment.endTime).filter((end) => Number.isFinite(end));
+  return ends.length ? Math.max(...ends) : null;
 }
 
 /**
@@ -184,8 +205,39 @@ export class VoiceService {
     if (provider.kind === 'browser') {
       return { providerId: provider.id, fallback: 'browser', message: 'Browser STT selected — use Web Speech API on the client', rung: resolution.rung };
     }
+    const started = Date.now();
     const result = await this.runServerSTT(provider, buffer, mimetype, options.enableSegments === true, options.signal);
+    if (!result.fallback) {
+      // ADR-173 D4: the call's audio seconds, measured from the clip itself (else the transcript's last segment).
+      await this.recordSpend(resolution, caller, measureAudioSeconds(buffer, mimetype) ?? lastSegmentEnd(result.segments), Date.now() - started);
+    }
     return { ...result, rung: resolution.rung };
+  }
+
+  /**
+   * @description Record one TTS or STT call's spend (ADR-173 D4) through the installed recorder: the
+   * accountable bot, the caller, the call's units and the offer row's unit price. A free provider
+   * records nothing; the recorder never fails the call.
+   * @param resolution The resolution that chose the provider.
+   * @param caller Whose call it was.
+   * @param units Characters (TTS) or audio seconds (STT); null when not measurable.
+   * @param durationMs How long the vendor call took.
+   * @returns Resolves once recorded or the failure is logged.
+   */
+  private async recordSpend(resolution: CapabilityResolved, caller: CapabilityCaller, units: number | null, durationMs: number): Promise<void> {
+    if (resolution.costClass === 'free') return;
+    const recorder = this.deps.spend === undefined ? installedCapabilitySpendRecorder() : this.deps.spend;
+    if (!recorder) return;
+    const offer = (this.deps.offers ?? installedCapabilityOfferReader()).offerFor(resolution.capability, resolution.providerId);
+    try {
+      await recorder({
+        capability: resolution.capability, providerId: resolution.providerId, costClass: resolution.costClass, units,
+        unitPriceUsd: offer?.unitPriceUsd ?? null, principal: caller.principal, agentId: caller.agentId, appId: caller.appId,
+        model: resolution.model, durationMs,
+      });
+    } catch (err) {
+      logger.error({ err, capability: resolution.capability, providerId: resolution.providerId }, 'Voice spend recording failed — the call itself is unaffected');
+    }
   }
 
   /**
@@ -270,7 +322,11 @@ export class VoiceService {
     if (provider.kind === 'browser') {
       return { providerId: provider.id, fallback: 'browser', message: 'Browser TTS selected — use speechSynthesis on the client', voiceId, rung: resolution.rung };
     }
-    return { ...(await this.runServerTTS(provider, text, voiceId)), rung: resolution.rung };
+    const started = Date.now();
+    const result = await this.runServerTTS(provider, text, voiceId);
+    // ADR-173 D4: the call's characters, counted as code points (an emoji is one character, not two).
+    if (!result.fallback) await this.recordSpend(resolution, caller, Array.from(text).length, Date.now() - started);
+    return { ...result, rung: resolution.rung };
   }
 
   /**

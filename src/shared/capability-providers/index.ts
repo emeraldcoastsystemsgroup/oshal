@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: barrel for the shared capability-provider rules — the types, the principal constructors, the swarm-row snapshot with its installed instance, and the one resolver and options list the four capabilities share. Shared (bottom) layer so the voice and media features resolve through the same code the operator route reports from.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: export the offer types and reader, the spend event and recorder seam, and the spend rule (capabilitySpendAmount).
  */
 
 /**
@@ -15,6 +16,7 @@ export {
   CAPABILITIES,
   CAPABILITY_COST_CLASSES,
   CAPABILITY_FLEET_SCOPE,
+  CAPABILITY_PRICE_UNITS,
   CAPABILITY_RUNGS,
   isCapability,
   isCapabilityCostClass,
@@ -26,9 +28,12 @@ export {
   type CapabilityChoice,
   type CapabilityCostClass,
   type CapabilityMissingPiece,
+  type CapabilityOfferAudience,
+  type CapabilityOfferReader,
   type CapabilityOption,
   type CapabilityPrincipal,
   type CapabilityProviderDeclaration,
+  type CapabilityProviderOffer,
   type CapabilityRefused,
   type CapabilityResolution,
   type CapabilityResolved,
@@ -37,6 +42,8 @@ export {
   type CapabilityRung,
   type CapabilitySeedDefault,
   type CapabilitySkippedRung,
+  type CapabilitySpendEvent,
+  type CapabilitySpendRecorder,
   type CapabilitySwarmRow,
   type CapabilitySwarmRowReader,
 } from './capability-types';
@@ -53,12 +60,19 @@ export {
 export {
   CapabilityRowSnapshot,
   installCapabilityRowSnapshot,
+  installedCapabilityOfferReader,
   installedCapabilityRowReader,
   installedCapabilityRowSnapshot,
   resolveCapabilityRowsRefreshMs,
   type CapabilityRowSnapshotStatus,
   type CapabilitySwarmRowSource,
 } from './capability-row-snapshot';
+export {
+  capabilitySpendAmount,
+  installCapabilitySpendRecorder,
+  installedCapabilitySpendRecorder,
+  type CapabilitySpendAmount,
+} from './capability-spend';
 export {
   describeCapabilitySwarmDefault,
   listCapabilityOptions,

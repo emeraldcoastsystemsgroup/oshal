@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 (D6): the operator surface for the capability swarm rows, mounted at /api/capability-providers. GET lists, per capability (tts, stt, image, video), the swarm default (the operator's row, else the seed the config or selector names), every provider with its cost class and its availability for the calling operator from the SAME availability function the resolver asks (D3), every stored row, and the snapshot's freshness. PUT /swarm/:capability validates the provider id against that capability's declarations (an unknown id is a 400 naming the accepted ids, never a silent write) and a text-to-speech voice against the voices that provider lists (D9), upserts the one row under the caller's identity — the table's own operator-only policy is the enforcement, not this file — and refreshes the snapshot so the next call resolves the new default with no restart; DELETE /swarm/:capability returns the capability to its seed. POST /stt/:providerId/try transcribes one uploaded clip through exactly that provider (a required preference, never switched), so an operator can prove a provider works before making it the swarm default (D12). Operator sessions only: a request without an authenticated user session — a service secret among them — is refused before anything is read.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (D4): PUT and DELETE /offers/:capability/:providerId set and clear one provider's unit price (USD per character, audio second, image or video second) and its quota label on the offer row (migration 184), validated against the capability's declarations; offeredTo is refused until slice S2 builds the grant control. The listing carries each provider's offer and each capability's price unit. Writes refresh the snapshot, so the next call is priced at the new rate.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -14,6 +15,7 @@ import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity'
 import {
   CAPABILITIES,
   CAPABILITY_FLEET_SCOPE,
+  CAPABILITY_PRICE_UNITS,
   describeCapabilitySwarmDefault,
   isCapability,
   listCapabilityOptions,
@@ -21,10 +23,11 @@ import {
   type Capability,
   type CapabilityAdapter,
   type CapabilityCaller,
+  type CapabilityProviderOffer,
   type CapabilityRowSnapshot,
   type CapabilitySwarmRow,
 } from '@/shared/capability-providers';
-import type { CapabilitySwarmRowStore } from '@/features/capability-providers';
+import type { CapabilityOfferStore, CapabilitySwarmRowStore } from '@/features/capability-providers';
 import type { VoiceService } from '@/features/voice';
 
 const logger = createChildLogger({ module: 'capability-provider-routes' });
@@ -39,6 +42,8 @@ export interface CapabilityProviderRouteDeps {
   adapters: () => Readonly<Record<Capability, CapabilityAdapter>>;
   /** The voice service the speech-to-text try action transcribes through. */
   voice: Pick<VoiceService, 'transcribeAudio'>;
+  /** The provider-offer store (unit prices, quota labels); absent without Postgres. */
+  offers?: Pick<CapabilityOfferStore, 'listAll' | 'upsert' | 'remove'>;
 }
 
 /**
@@ -73,12 +78,19 @@ function operatorCaller(req: Request): CapabilityCaller {
  * @description One capability's section of the listing.
  * @returns The section.
  */
-async function capabilitySection(adapter: CapabilityAdapter, req: Request, rows: CapabilitySwarmRow[], deps: CapabilityProviderRouteDeps) {
+async function capabilitySection(
+  adapter: CapabilityAdapter, req: Request, rows: CapabilitySwarmRow[], offers: CapabilityProviderOffer[], deps: CapabilityProviderRouteDeps,
+) {
   const reader = deps.snapshot() ?? undefined;
+  const options = await listCapabilityOptions(adapter, operatorCaller(req).principal);
   return {
     capability: adapter.capability,
+    priceUnit: CAPABILITY_PRICE_UNITS[adapter.capability],
     swarmDefault: await describeCapabilitySwarmDefault(adapter, reader),
-    providers: await listCapabilityOptions(adapter, operatorCaller(req).principal),
+    providers: options.map((option) => ({
+      ...option,
+      offer: offers.find((offer) => offer.capability === adapter.capability && offer.providerId === option.providerId) ?? null,
+    })),
     rows: rows.filter((row) => row.capability === adapter.capability),
   };
 }
@@ -92,9 +104,10 @@ async function handleList(req: Request, res: Response, deps: CapabilityProviderR
       return;
     }
     const rows = await deps.store.listAll();
+    const offers = deps.offers ? await deps.offers.listAll() : [];
     const adapters = deps.adapters();
     const capabilities = [];
-    for (const capability of CAPABILITIES) capabilities.push(await capabilitySection(adapters[capability], req, rows, deps));
+    for (const capability of CAPABILITIES) capabilities.push(await capabilitySection(adapters[capability], req, rows, offers, deps));
     res.json({ success: true, capabilities, snapshot: deps.snapshot()?.status() ?? null });
   } catch (err) {
     logger.error({ err }, 'Capability provider listing failed');
@@ -183,6 +196,71 @@ async function handleRemove(req: Request, res: Response, deps: CapabilityProvide
   }
 }
 
+/**
+ * @description Validate an offer write: a declared provider, a price that is null or a finite USD
+ * amount of zero or more per unit, and a quota label of at most 120 characters. offeredTo is
+ * refused: the grant control is slice S2.
+ * @returns The refusal, or the clean values.
+ */
+function validateOffer(
+  adapter: CapabilityAdapter,
+  providerId: string,
+  body: Record<string, unknown>,
+): { refusal: Record<string, unknown> } | { unitPriceUsd: number | null; quotaLabel: string | null } {
+  if (!adapter.declarations().some((declaration) => declaration.providerId === providerId)) {
+    return { refusal: { code: 'unknown_provider', error: `"${providerId}" is not a ${adapter.capability} provider on this deployment` } };
+  }
+  if (body.offeredTo !== undefined) return { refusal: { code: 'offered_to_not_supported', error: 'Who a provider is offered to is set from ADR-173 slice S2' } };
+  const price = body.unitPriceUsd;
+  if (price !== null && (typeof price !== 'number' || !Number.isFinite(price) || price < 0)) {
+    return { refusal: { code: 'unit_price_invalid', error: `unitPriceUsd is USD per unit (${CAPABILITY_PRICE_UNITS[adapter.capability]}): a number of zero or more, or null to clear it` } };
+  }
+  const label = body.quotaLabel === null || body.quotaLabel === undefined ? null : String(body.quotaLabel).trim();
+  if (label !== null && (!label || label.length > 120)) return { refusal: { code: 'quota_label_invalid', error: 'quotaLabel is 1 to 120 characters, or null' } };
+  return { unitPriceUsd: price as number | null, quotaLabel: label };
+}
+
+/** @description PUT /offers/:capability/:providerId — set one provider's unit price and quota label. */
+async function handleOfferWrite(req: Request, res: Response, deps: CapabilityProviderRouteDeps): Promise<void> {
+  const startedAt = Date.now();
+  const capability = String(req.params.capability);
+  const providerId = String(req.params.providerId);
+  try {
+    if (!isCapability(capability)) { res.status(400).json({ success: false, applied: false, error: `unknown capability "${capability}"`, accepted: CAPABILITIES }); return; }
+    if (!deps.offers) { res.status(503).json({ success: false, applied: false, error: 'Capability offer store unavailable (no Postgres pool)' }); return; }
+    const checked = validateOffer(deps.adapters()[capability], providerId, (req.body ?? {}) as Record<string, unknown>);
+    if ('refusal' in checked) { res.status(400).json({ success: false, applied: false, ...checked.refusal }); return; }
+    const offer = await deps.offers.upsert(capability, providerId, checked, getCaller(req).sub ?? 'operator');
+    await deps.snapshot()?.refresh();
+    res.json({ success: true, applied: true, offer, priceUnit: CAPABILITY_PRICE_UNITS[capability], snapshot: deps.snapshot()?.status() ?? null });
+  } catch (err) {
+    logger.error({ err, capability, providerId }, 'Capability offer write failed');
+    const code = (err as { code?: string }).code;
+    res.status(code === '42501' ? 403 : code === '23514' ? 400 : 500).json({ success: false, applied: false, error: (err as Error).message });
+  } finally {
+    logger.info({ capability, providerId, statusCode: res.statusCode, durationMs: Date.now() - startedAt }, 'Capability offer write completed');
+  }
+}
+
+/** @description DELETE /offers/:capability/:providerId — clear one provider's offer row. */
+async function handleOfferRemove(req: Request, res: Response, deps: CapabilityProviderRouteDeps): Promise<void> {
+  const startedAt = Date.now();
+  const capability = String(req.params.capability);
+  const providerId = String(req.params.providerId);
+  try {
+    if (!isCapability(capability)) { res.status(400).json({ success: false, applied: false, error: `unknown capability "${capability}"`, accepted: CAPABILITIES }); return; }
+    if (!deps.offers) { res.status(503).json({ success: false, applied: false, error: 'Capability offer store unavailable (no Postgres pool)' }); return; }
+    const removed = await deps.offers.remove(capability, providerId);
+    await deps.snapshot()?.refresh();
+    res.json({ success: true, applied: true, removed, capability, providerId, snapshot: deps.snapshot()?.status() ?? null });
+  } catch (err) {
+    logger.error({ err, capability, providerId }, 'Capability offer removal failed');
+    res.status((err as { code?: string }).code === '42501' ? 403 : 500).json({ success: false, applied: false, error: (err as Error).message });
+  } finally {
+    logger.info({ capability, providerId, statusCode: res.statusCode, durationMs: Date.now() - startedAt }, 'Capability offer removal completed');
+  }
+}
+
 /** @description POST /stt/:providerId/try — transcribe one clip through exactly that provider. */
 async function handleSttTry(req: Request, res: Response, deps: CapabilityProviderRouteDeps): Promise<void> {
   const startedAt = Date.now();
@@ -204,7 +282,8 @@ async function handleSttTry(req: Request, res: Response, deps: CapabilityProvide
  * @description The capability provider operator routes (ADR-173 S1), mounted at
  * /api/capability-providers behind requiresAuth: GET / (defaults, providers with availability,
  * rows, snapshot), PUT /swarm/:capability (write the swarm default), DELETE /swarm/:capability
- * (return to the seed), POST /stt/:providerId/try (prove a provider on one clip). Operator sessions only.
+ * (return to the seed), PUT/DELETE /offers/:capability/:providerId (a provider's unit price and quota
+ * label), POST /stt/:providerId/try (prove a provider on one clip). Operator sessions only.
  * @param deps - Store, snapshot, adapters and the voice service.
  * @returns The router.
  */
@@ -213,6 +292,8 @@ export function createCapabilityProviderRoutes(deps: CapabilityProviderRouteDeps
   router.get('/', requiresOperatorSession, (req, res) => void handleList(req, res, deps));
   router.put('/swarm/:capability', requiresOperatorSession, (req, res) => void handleWrite(req, res, deps));
   router.delete('/swarm/:capability', requiresOperatorSession, (req, res) => void handleRemove(req, res, deps));
+  router.put('/offers/:capability/:providerId', requiresOperatorSession, (req, res) => void handleOfferWrite(req, res, deps));
+  router.delete('/offers/:capability/:providerId', requiresOperatorSession, (req, res) => void handleOfferRemove(req, res, deps));
   router.post('/stt/:providerId/try', requiresOperatorSession, clipUpload, (req, res) => void handleSttTry(req, res, deps));
   return router;
 }
