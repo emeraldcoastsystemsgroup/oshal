@@ -325,7 +325,7 @@ skipping to the portal default (D11).
 - **One swarm table** keyed `(scope_id, capability)`, where `scope_id` is `fleet-default` or an agent id, mirroring
   `oshal_bot_provider_switch` (migration `147`): every identity may read it; the table's own policy lets only the operator
   identity, or server work running under the system identity, write it (`147-bot-provider-switch.sql:63-73`), so the
-  database refuses a signed-in non-operator's write whatever the route does. `updated_by` records who. The voice
+  database refuses a signed-in non-operator's write. `updated_by` records who. The voice
   block of `global-config.json` and the existing selectors become the seed: with no row for a `(scope, capability)`
   pair, the swarm default is the provider the file or the selector names today; D4 and D5 still apply.
 - **A small provider-offer table** keyed `(capability, provider_id)`, holding who a provider is offered to (D4), its unit
