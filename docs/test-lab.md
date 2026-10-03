@@ -368,7 +368,12 @@ the existing image selector names, or why there is none (video has no selector).
 who pays (`free`, `swarm-paid`, `user-paid`) and, when it is not offered to the caller, what is missing:
 not registered, no cost class, no credential, not permitted (the CLI image rails' demo carve) or a
 failed vendor health probe. The list and the resolver ask the same availability function, so an option
-the card shows as offered is one a call resolves. A non-operator is degraded. Read-only.
+the card shows as offered is one a call resolves. It also reports how many paid providers carry a unit price
+(`oshal_capability_provider_offers`, migration 184): a TTS or STT call on a paid provider records its spend
+(`chat_tasks` and `oshal_cost_events`, with the accountable bot and the caller) at units times that price; while no
+price is set it is recorded as a zero-amount row, and the api log line names it unpriced and why. A non-operator is
+degraded. Read-only. The swarm defaults and the prices are written from the Config Admin page (Capability Providers
+section).
 
 The live half is the explicit-only card **Live acceptance: Speech to text** (`live-acceptance-capability-stt`,
 below): it proves `local-stt` on a spoken clip, makes it the swarm STT default with one operator write

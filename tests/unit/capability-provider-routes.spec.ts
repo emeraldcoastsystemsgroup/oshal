@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 guard for the operator route's own branches, over a real express app and the REAL capability adapters (text to speech over a real registry, images and video over their real providers, no credentials, so nothing reaches a network): GET lists all four capabilities with each provider's cost class and availability and the swarm default with its source; an unknown capability, an unknown provider, a voice the provider does not list, a voice on a speech-to-text row and a model are each refused 400 with nothing written; a listed voice is written beside its provider (D9); a table refusal (42501) answers 403; no store answers 503; the speech-to-text try action transcribes through exactly the named provider as the calling operator and refuses a request with no clip; a non-operator is refused on every route. The database boundary itself (the policy, the role, the real snapshot and the end-to-end move of a dictation) is capability-swarm-rows-postgres.spec.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 (round 2): a service secret is never an operator session. The harness mounts the global request-identity middleware as server.ts does (a valid secret makes the DATABASE identity operator-level, so the route guard is the only wall in front of the operator-only table) and a probe shows that both header forms carry a valid secret and the operator's forwarded subject. GET /, PUT and DELETE /swarm/:capability and POST /stt/:providerId/try each refuse that call (403 operator_session_required) in both forms (x-oshal-user-sub and x-oshal-user-sub-b64) and read or write nothing; the try action also refuses a non-operator session and a request with no session, and transcribes nothing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the offer endpoints: a price and quota label written, listed on the provider with the capability's price unit and cleared; an unknown provider, a negative or non-numeric price, an over-long label and an audience (slice S2) refused 400 with nothing written; a non-operator refused.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b (round 2): PUT and DELETE /offers/:capability/:providerId refuse a service secret forwarding the operator, in both header forms (403 operator_session_required), and write nothing; DELETE /offers refuses a non-operator session and removes nothing.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -14,7 +16,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createCapabilityProviderRoutes, type CapabilityProviderRouteDeps } from '@/app/routes/capability-provider-routes';
 import { getCaller, getTrustedServiceUserSub, hasValidServiceSecret, isOperator } from '@/shared/middleware/authz';
 import { getRequestIdentity, runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { CAPABILITY_FLEET_SCOPE, type Capability, type CapabilityAdapter, type CapabilitySwarmRow } from '@/shared/capability-providers';
+import { CAPABILITY_FLEET_SCOPE, type Capability, type CapabilityAdapter, type CapabilityProviderOffer, type CapabilitySwarmRow } from '@/shared/capability-providers';
 import { STTProviderRegistry, TTSProviderRegistry, createSttCapabilityAdapter, createTtsCapabilityAdapter } from '@/features/voice-providers';
 import { createImageCapabilityAdapter, createVideoCapabilityAdapter } from '@/features/video-generation';
 
@@ -46,6 +48,17 @@ let adapters: Record<Capability, CapabilityAdapter>;
 let server: Server;
 let base = '';
 let withStore = true;
+/** In-memory stand-in for the offer store (the real one is proven against Postgres in the spend spec). */
+const offers = new Map<string, CapabilityProviderOffer>();
+const offerStore: NonNullable<CapabilityProviderRouteDeps['offers']> = {
+  listAll: async () => [...offers.values()],
+  upsert: async (capability, providerId, values, updatedBy) => {
+    const offer = { capability, providerId, offeredTo: null, ...values, updatedBy, updatedAt: new Date().toISOString() };
+    offers.set(`${capability}|${providerId}`, offer);
+    return offer;
+  },
+  remove: async (capability, providerId) => offers.delete(`${capability}|${providerId}`),
+};
 
 function session(req: Request, _res: Response, next: NextFunction): void {
   const sub = req.headers['x-test-sub'];
@@ -73,6 +86,7 @@ beforeAll(async () => {
   });
   app.use('/api/capability-providers', createCapabilityProviderRoutes({
     get store() { return withStore ? store : undefined; },
+    get offers() { return withStore ? offerStore : undefined; },
     snapshot: () => null,
     adapters: () => adapters,
     voice: { transcribeAudio } as unknown as CapabilityProviderRouteDeps['voice'],
@@ -88,7 +102,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-beforeEach(() => { rows.clear(); refusal = null; withStore = true; transcribeAudio.mockClear(); });
+beforeEach(() => { rows.clear(); offers.clear(); refusal = null; withStore = true; transcribeAudio.mockClear(); });
 afterEach(() => { refusal = null; });
 
 const call = async (method: string, route: string, body?: unknown, sub: string | null = OPERATOR_SUB) => {
@@ -172,6 +186,37 @@ describe('the capability provider operator routes (ADR-173 S1)', () => {
   });
 });
 
+describe('provider offers: unit prices and quota labels (ADR-173 S1b, D4)', () => {
+  it('writes a price and a quota label, lists them on the provider, and DELETE clears them', async () => {
+    const res = await call('PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0.0004, quotaLabel: 'shared free tier' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ priceUnit: 'audio-seconds', offer: { capability: 'stt', providerId: 'gemini-stt', unitPriceUsd: 0.0004, quotaLabel: 'shared free tier', updatedBy: OPERATOR_SUB } });
+    const listing = await call('GET', '/');
+    const stt = (listing.body.capabilities as Array<{ capability: string; priceUnit: string; providers: Array<{ providerId: string; offer: unknown }> }>)[1];
+    expect(stt.priceUnit).toBe('audio-seconds');
+    expect(stt.providers.find((p) => p.providerId === 'gemini-stt')?.offer).toMatchObject({ unitPriceUsd: 0.0004 });
+    expect((await call('DELETE', '/offers/stt/gemini-stt')).body).toMatchObject({ removed: true });
+    expect(offers.size).toBe(0);
+  });
+
+  it.each([
+    ['an unknown provider', '/offers/stt/whisper', { unitPriceUsd: 0.1 }, 'unknown_provider'],
+    ['a negative price', '/offers/stt/gemini-stt', { unitPriceUsd: -1 }, 'unit_price_invalid'],
+    ['a price that is not a number', '/offers/stt/gemini-stt', { unitPriceUsd: '0.1' }, 'unit_price_invalid'],
+    ['a quota label over 120 characters', '/offers/stt/gemini-stt', { unitPriceUsd: null, quotaLabel: 'x'.repeat(121) }, 'quota_label_invalid'],
+    ['an audience (the grant control is slice S2)', '/offers/tts/gemini-tts', { unitPriceUsd: null, offeredTo: 'everyone' }, 'offered_to_not_supported'],
+  ])('refuses %s with 400 and writes nothing', async (_label, route, body, code) => {
+    const res = await call('PUT', route, body);
+    expect(res).toMatchObject({ status: 400, body: { code } });
+    expect(offers.size).toBe(0);
+  });
+
+  it('a non-operator cannot write a price', async () => {
+    expect((await call('PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0 }, PERSON_SUB)).status).toBe(403);
+    expect(offers.size).toBe(0);
+  });
+});
+
 /** The two ways a service call forwards a subject: the legacy plain header and the canonical base64url one. */
 const SERVICE_HEADERS: Array<[string, Record<string, string>]> = [
   ['x-oshal-user-sub', { 'x-service-secret': SECRET, 'x-oshal-user-sub': OPERATOR_SUB }],
@@ -230,5 +275,35 @@ describe('a service secret is never an operator session (ADR-173 S1)', () => {
     expect(person.text).toContain('Operator privilege required');
     expect(none.text).toContain('operator_session_required');
     expect(transcribeAudio).not.toHaveBeenCalled();
+  });
+});
+
+describe('the offer routes refuse a service secret and a non-operator (ADR-173 S1b)', () => {
+  const OFFER_ROUTES: Array<[string, string, unknown]> = [
+    ['PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0.0004 }],
+    ['DELETE', '/offers/stt/gemini-stt', undefined],
+  ];
+
+  it.each(OFFER_ROUTES)('%s %s refuses a service secret forwarding the operator, in both header forms, and writes nothing', async (method, route, body) => {
+    const spies = [vi.spyOn(offerStore, 'listAll'), vi.spyOn(offerStore, 'upsert'), vi.spyOn(offerStore, 'remove')];
+    try {
+      for (const [, headers] of SERVICE_HEADERS) {
+        const res = await send(method, route, body, headers);
+        expect(res.status).toBe(403);
+        expect(res.text).toContain('operator_session_required');
+      }
+      expect(spies.map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0]);
+      expect(offers.size).toBe(0);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it('DELETE /offers refuses a non-operator session and removes nothing', async () => {
+    expect((await call('PUT', '/offers/stt/gemini-stt', { unitPriceUsd: 0.0004 })).status).toBe(200);
+    const res = await send('DELETE', '/offers/stt/gemini-stt', undefined, { 'x-test-sub': PERSON_SUB });
+    expect(res.status).toBe(403);
+    expect(res.text).toContain('Operator privilege required');
+    expect(offers.size).toBe(1);
   });
 });

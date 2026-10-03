@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1 Test Lab registration guard: the read-only capability-provider card is registered once in the Lab, runs in a run-all (it writes nothing), lists its regression suites (all on disk), and its step judges the REAL route shape over a real loopback listener — a complete listing passes, a non-operator is degraded, and a provider with no cost class, an unexplained unavailable provider or a missing capability fails.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the card reports how many paid providers carry a unit price; a price on a free provider is not counted.
  */
 
 import { existsSync } from 'node:fs';
@@ -56,6 +57,18 @@ describe('capability-provider Test Lab card (ADR-173 S1)', () => {
     expect(out.state).toBe('pass');
     expect(out.detail).toContain('stt: local-stt (row)');
     expect(out.detail).toContain('video: none (none (no video selector exists))');
+  });
+
+  it('reports how many paid providers carry a unit price (ADR-173 S1b)', async () => {
+    reply = { status: 200, body: GOOD };
+    expect((await step()).detail).toContain('0 of 3 paid providers carry a unit price');
+    const priced = structuredClone(GOOD);
+    Object.assign(priced.capabilities[0].providers[1], { offer: { unitPriceUsd: 0.00003, quotaLabel: null } });
+    Object.assign(priced.capabilities[1].providers[0], { offer: { unitPriceUsd: 0, quotaLabel: null } });
+    reply = { status: 200, body: priced };
+    const out = await step();
+    expect(out.state).toBe('pass');
+    expect(out.detail).toContain('1 of 3 paid providers carry a unit price');
   });
 
   it('is degraded for a non-operator', async () => {

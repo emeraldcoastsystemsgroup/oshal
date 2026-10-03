@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Restored barrel import after voice services public API was narrowed to backend-safe exports
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 selectable TTS: GET /providers (every registered provider with LIVE configured status + voices — unconfigured ones ship reason for an honest disabled UI), GET/POST /prefs (per-user provider+voice persisted in voice_user_prefs; POST rejects any provider whose getStatus is not configured — never selectable), and the synthesize path now honors the caller's saved selection via the controller's prefs resolver. createVoiceRoutes takes the AppContext (pool) — omitted (tests/legacy) → prefs endpoints answer 503 and synthesize keeps the swarm-default flow.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1: voiceRouteCaller(req) says whose call each voice request is (D8): the signed-in person (guest and operator facts included), the voice rail's accountable bot (the Jarvis bot, as vision describe attributes, until S4 has each surface name its own) and no application; the controller passes it on every synthesize and transcribe, so /api/voice/transcribe resolves the swarm STT default through the shared resolver and reports the rung. GET /providers lists each provider's cost class and availability for the caller from the same availability function the resolver asks (D3).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: /transcribe re-enters the caller's request identity after multer (preserveRequestIdentity), so the speech-to-text spend row the call now writes lands as the caller's own under row-level security even when the upload's last bytes arrive on a later socket chunk.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -16,6 +17,7 @@ import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub, isOperator } from '@/shared/middleware/authz';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
+import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
 import { routeCapabilityPrincipal, type CapabilityCaller } from '@/shared/capability-providers';
 import { VoiceController, VoiceService } from '@/features/voice';
 import { VoicePrefsStore, getTTSProviderRegistry } from '@/features/voice-providers';
@@ -104,7 +106,9 @@ export function createVoiceRoutes(ctx?: AppContext): Router {
   }, voiceRouteCaller);
 
   // Register routes with controller handlers
-  router.post('/transcribe', upload.single('audio'), controller.transcribe);
+  // The caller's request identity re-entered after multer, so the spend row the call writes is
+  // theirs under row-level security (ADR-173 S1b), whichever socket chunk the upload ended on.
+  router.post('/transcribe', preserveRequestIdentity(upload.single('audio')), controller.transcribe);
   router.post('/synthesize', controller.synthesize);
   router.get('/voices', controller.getVoices);
 
