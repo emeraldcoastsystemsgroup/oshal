@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 47 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 37 | maintainer@emeraldcoastsystemsgroup.com | Initialize authoritative manifest bot runtime records before activation; preserve stored provider/model choices.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Publish installed smoke tests after successful activation and retract them before reload/deactivation; extract stateless artifact registration to keep lifecycle orchestration within its module size limit.
  * -----------------------------------------------------------------------------
@@ -58,6 +59,7 @@ import { resolve, dirname } from 'path';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
 import { connectorAllowList, optionalAppDependencies, requiredAppDependencies } from '@/shared/app-dependencies';
+import { resolveExperienceSurfaces, type ExperienceDeclaration } from '@/shared/experience-contract';
 import {
   registerDynamicToolUI,
   deregisterDynamicToolUI,
@@ -100,6 +102,7 @@ import {
   resolveManifestConciergeAgent,
 } from './swarm-app-concierge';
 import { firstAppIcon, isVisibleToCaller, maySeeOwnerIdentity, toSummary, type SummaryViewer } from './swarm-app-record-view';
+import { experienceCandidates, activeExperienceMembers } from './swarm-app-experience';
 import {
   interpolate,
   manifestToolToCreateInput,
@@ -502,6 +505,11 @@ export class SwarmAppService {
     return this.repo.findByName(name);
   }
 
+  /** Installation/scope candidates only; the request boundary applies current authorization. */
+  async listExperiences(viewer: SummaryViewer) {
+    return experienceCandidates(await this.repo.list('active'), viewer);
+  }
+
   /**
    * @description Fetch one app AS A GIVEN VIEWER may see it — the request-scoped counterpart to
    * {@link getApp}. Returns null both when the app does not exist and when it exists but this
@@ -533,7 +541,7 @@ export class SwarmAppService {
    */
   async findActiveAppByTheme(themeId: string): Promise<SwarmApplicationRecord | null> {
     const records = await this.repo.list('active');
-    return records.find((r) => r.manifest.theme === themeId) ?? null;
+    return records.find((r) => (r.manifest.experience?.skin ?? r.manifest.theme) === themeId) ?? null;
   }
 
   /**
@@ -737,6 +745,7 @@ export class SwarmAppService {
       dynamicTools: { allow: string[]; section?: 'top' | 'bottom' };
     };
     defaultView?: string;
+    experience?: ExperienceDeclaration;
     /** When true, the cockpit hides its right-rail chat panel for this app
      *  (apps that are themselves the chat surface, e.g. Jarvis). */
     hideChatPanel?: boolean;
@@ -837,8 +846,9 @@ export class SwarmAppService {
     // manifest, the cockpit loads it from the theme.css route instead of requiring
     // the skin to be registered in core's COCKPIT_THEMES.
     let themeCssUrl: string | undefined;
-    if (manifest.theme && /^[a-z0-9-]+$/i.test(manifest.theme)) {
-      const cssPath = resolve(dirname(record.manifestPath), 'ui', `${manifest.theme}.css`);
+    const theme = manifest.experience?.skin ?? manifest.theme;
+    if (theme && /^[a-z0-9-]+$/i.test(theme)) {
+      const cssPath = resolve(dirname(record.manifestPath), 'ui', `${theme}.css`);
       if (existsSync(cssPath)) themeCssUrl = `/api/swarm/apps/${manifest.name}/theme.css`;
     }
 
@@ -851,11 +861,12 @@ export class SwarmAppService {
       name: manifest.name,
       displayName: manifest.displayName,
       description: manifest.description,
+      experience: manifest.experience,
       hideChatPanel: ribbon.hideChatPanel === true ? true : undefined,
       hideStatusBar: ribbon.hideStatusBar === true ? true : undefined,
       hideAssistant: ribbon.hideAssistant === true ? true : undefined,
       chatAgent,
-      theme: manifest.theme,
+      theme,
       themeCssUrl,
       assistant,
       chatBots: chatBots.length ? chatBots : undefined,
@@ -892,6 +903,11 @@ export class SwarmAppService {
    * @returns Static surfaces in ribbon order.
    */
   private async ribbonSurfaces(record: SwarmApplicationRecord): Promise<SwarmAppStaticUi[]> {
+    if (record.manifest.experience) {
+      const members = await activeExperienceMembers(record.manifest, name => this.repo.findByName(name));
+      const resolved = resolveExperienceSurfaces(record.manifest, members);
+      return [...(record.manifest.ui?.static ?? []), ...resolved.surfaces];
+    }
     if (!isGroupManifest(record.manifest)) return record.manifest.ui?.static ?? [];
     const { tiles, missing } = resolveGroupToolbar(record.manifest, await this.activeMembers(record.manifest));
     if (missing.length) logger.warn({ group: record.name, missing }, 'Group toolbar references did not resolve — tiles omitted');
@@ -912,6 +928,7 @@ export class SwarmAppService {
     }
     return members;
   }
+
 
   /**
    * @description The setup-dashboard plan for an ADR-141 group: its steps with each member's
@@ -952,6 +969,7 @@ export class SwarmAppService {
   // ── Internal: activation / deactivation primitives ─────────────────────
 
   private async activate(record: SwarmApplicationRecord): Promise<void> {
+    if (record.manifest.experience) resolveExperienceSurfaces(record.manifest, await activeExperienceMembers(record.manifest, name => this.repo.findByName(name)));
     this.testLabCatalog.unregister(record.name);
     await this.authorizationRegistrar?.start(record);
     // ADR-141 D2/D3: a group activates only when every borrowed surface and every setup readiness

@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -123,6 +124,7 @@ export * as packageCallbacks from '@/shared/package-callbacks';
 export * as packageAnonymousRoutes from '@/shared/package-anonymous-routes';
 export * as packageTesting from '@/shared/package-testing';
 export * as appDependencies from '@/shared/app-dependencies';
+export * as experience from '@/shared/experience-contract';
 export * as specialistContext from '@/shared/specialist-context';
 
 export * as jarvisBriefings from '@/shared/briefings';

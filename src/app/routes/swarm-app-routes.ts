@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -28,7 +29,8 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | DELETE /:name removes the app's schedule overrides after the app is removed (clearManifestOverridesFor), so a reinstall starts from the manifest; a toggle keeps them. A failure to clear is logged and does not fail the uninstall.
  */
 
-/** CHANGE LOG 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
+/** CHANGE LOG
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets. 18 | maintainer@emeraldcoastsystemsgroup.com | Resolve and clear exact principals; require current swarm operator authority for package lifecycle changes. */
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import multer from 'multer';
 import fs from 'fs';
@@ -217,7 +219,12 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
       // is a no-op for existing apps until person-scoped publishing stamps an owner.
       const { sub } = getCaller(req);
       const apps = await service.listApps(filter, { ownerSub: sub, isOperator: isOperator(req) });
-      res.json({ apps });
+      if (isOperator(req)) { res.json({ apps }); return; }
+      let actor: AuthorizationActor | undefined;
+      try { actor = await options.authorization.resolveActor(req); } catch { /* No principal means no protected catalog. */ }
+      const discoverable = [];
+      for (const app of apps) if (await options.authorization.canDiscover(app.name, actor)) discoverable.push(app);
+      res.json({ apps: discoverable });
     } catch (err: any) {
       logger.error({ err }, 'Failed to list swarm apps');
       res.status(500).json({ error: err.message });
@@ -661,11 +668,12 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
     const name = String(req.params.name);
     try {
       const app = await service.getApp(name);
-      if (!app || app.status !== 'active' || !app.manifest.theme || !/^[a-z0-9-]+$/i.test(app.manifest.theme)) {
+      const theme = app?.manifest.experience?.skin ?? app?.manifest.theme;
+      if (!app || app.status !== 'active' || !theme || !/^[a-z0-9-]+$/i.test(theme)) {
         res.status(404).type('text/plain').send('no bundled theme');
         return;
       }
-      const cssPath = path.resolve(path.dirname(app.manifestPath), 'ui', `${app.manifest.theme}.css`);
+      const cssPath = path.resolve(path.dirname(app.manifestPath), 'ui', `${theme}.css`);
       if (!cssPath.startsWith(path.resolve(path.dirname(app.manifestPath), 'ui')) || !fs.existsSync(cssPath)) {
         res.status(404).type('text/plain').send('no bundled theme');
         return;

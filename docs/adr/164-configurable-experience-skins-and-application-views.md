@@ -596,8 +596,49 @@ Business, Classroom) and the core entry pages become the first experience packag
    holding its role and not for one who does not, renders full-bleed in its skin, and the
    hardcoded header links are gone.
 3. **Built-in experiences become packages.** Home, Business, Classroom, Studio, Jarvis, Orbit,
-   Commons and Nexus ship as experience packages (reference implementations); `src/experience/`
+   and Commons ship as experience packages (reference implementations); Nexus retains its current
+   behavior outside the approved seven-experience migration; `src/experience/`
    keeps only shell engines. Done when: the core cockpit lists no experience it did not install.
 
 Changes to backend behaviour, permission policy or shared persistence remain outside this
 amendment, as the ADR states.
+
+## Delivery amendment — seven application experiences (operator, 2026-10-03)
+
+**Status:** Approved delivery direction; declaration validation implemented; package hosting,
+discovery, composite-role assignment and installed migration acceptance remain pending.
+
+Scope is Studio, Jarvis, Orbit, Commons, Home/Family, Classroom and Business. Nexus and Simple
+chat are preserved outside this migration. The Finance and Education packages are the hosting
+baseline: package-owned screens, existing manifest profiles/ribbon, member dependencies and
+caller-filtered navigation. Add only demonstrated platform gaps, not another navigation engine.
+
+[The integration contract](../architecture/experience-application-integration.md) records the
+source/surface inventory, required/optional dependency decisions, supported member-surface
+references, direct-entry/discovery boundaries, operational UX and E1–E6 release criteria.
+Experiences remain ordinary applications; member screens, data and resource permissions remain
+in their owning packages. Home uses a distinct `home-experience` package; `home` remains Smart Home.
+
+The manifest loader now validates declared experience shape, owned authenticated entry paths,
+authorization-catalog declaration and explicit member references. The `experience` compatibility
+floor is deliberately not registered until hosting/discovery exist; these checks must not be
+misreported as runnable experience packages. Packaged-skin registration remains an E2b deliverable.
+
+Composite-role lifecycle follows the corresponding ADR-149 delivery amendment. The approved
+work may extend assignment persistence for provenance and reviewed template upgrades, but does
+not change the member applications' resource-sharing policy or bypass their current catalogs.
+No human assignments are created by installation, audience selection or household membership.
+
+Home is the reference pilot, then Business, Classroom, Studio, Jarvis, Orbit and Commons. Each
+release requires actual installed browser/API/database acceptance and cleanup receipts. Keep the
+existing extended-UX backlog open until that evidence exists; preserve preview/gallery styling
+while running pages use compact operational headings and useful source-backed status.
+
+E2b implementation now registers the `experience` compatibility floor, resolves named member
+surfaces at activation and synthesizes existing focused profiles, with member visibility retained.
+The installed experience list and open route use current authorization, require a named
+`app.open` entry binding and refuse policy outages or a changed installation. Portal and cockpit
+choices consume discovery; package palettes use the existing theme hooks. Local tests cover two
+packages, distinct callers, denied entry and private installation scope; the full-swarm browser
+suite passes 36 cases. Deployed acceptance, composite assignments and the seven package releases
+remain separate open gates in the integration contract.

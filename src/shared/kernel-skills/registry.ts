@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -46,6 +47,7 @@ export type KernelSkillId =
   | 'test-catalog'
   | 'jarvis-briefings'
   | 'app-dependencies'
+  | 'experience'
   | 'specialist-context'
   | 'spatial-mapping'
   | 'google-calendar'
@@ -102,6 +104,9 @@ export interface KernelSkillDeclaration {
  * docs/apps/kernel-skills.md. The CI guard then enforces it forever.
  */
 export const KERNEL_SKILLS: readonly KernelSkillDeclaration[] = [
+  { id: 'experience', title: 'Experience application hosting',
+    why: 'Installed and authorized package discovery, page/focused-rail entry and named member-surface composition share the platform hosting and policy boundaries (ADR-164).',
+    modules: [{ specifier: '@/shared/experience-contract', distFile: 'dist/shared/experience-contract/index.js' }] },
   { id: 'location', title: 'Location, places and proximity',
     why: 'One consented, owner-scoped location and places store (ADR-169) instead of a copy in every package that needs a position: eats, rides, purchasing, home, drone and spaces. Its tables carry no operator bypass, history is kept until its owner purges it, and packages reach it only through this skill, on the server.',
     modules: [{ specifier: '@/features/location', distFile: 'dist/features/location/index.js' }] },

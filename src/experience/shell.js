@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -30,7 +31,7 @@
   const badge = (text, neutral = false) => `<span class="badge${neutral ? ' neutral' : ''}">${esc(text)}</span>`;
 
   /** The selectable experiences. Order is the chooser order; `skin` is the palette each opens with. */
-  const EXPERIENCES = [
+  const LEGACY_EXPERIENCES = [
     { id: 'studio', label: 'Studio', href: '/studio', skin: 'studio', family: 'full', tagline: 'Conversation first', palette: 'Graphite & mint' },
     { id: 'jarvis', label: 'Jarvis', href: '/jarvis', skin: 'jarvis', family: 'full', tagline: 'Assistant first', palette: 'Parchment & ember' },
     { id: 'orbit', label: 'Orbit', href: '/orbit', skin: 'orbit', family: 'full', tagline: 'Connections first', palette: 'Arctic & cobalt' },
@@ -41,13 +42,33 @@
     { id: 'nexus', label: 'Central assistant', href: '/nexus', skin: 'nexus', family: 'assistant', tagline: 'Intent first', palette: 'Luminous cyan' },
     { id: 'simple', label: 'Simple chat', href: '/simple', skin: 'simple', family: 'assistant', tagline: 'Just type', palette: 'Your theme' }
   ];
-  const experienceFor = id => EXPERIENCES.find(e => e.id === id) || null;
+  const EXPERIENCES = [];
+  const readyExperiences = fetch('/api/ui/experiences', { credentials: 'same-origin', cache: 'no-store' })
+    .then(async response => {
+      if (!response.ok) throw new Error('Experience discovery unavailable');
+      const data = await response.json();
+      if (!Array.isArray(data.experiences)) throw new Error('Invalid experience discovery');
+      for (const row of data.experiences) {
+        if (typeof row.app !== 'string' || typeof row.label !== 'string' || typeof row.skin !== 'string') continue;
+        const style = LEGACY_EXPERIENCES.find(e => e.skin === row.skin);
+        EXPERIENCES.push({ ...style, id: row.app, label: row.label, skin: row.skin,
+          href: `/api/ui/experiences/${encodeURIComponent(row.app)}/open`, skinCssUrl: LIVE.localHref(row.skinCssUrl || '') });
+      }
+      window.dispatchEvent(new CustomEvent('oshal-experiences-ready', { detail: EXPERIENCES }));
+      document.querySelectorAll('[data-role="experience-picker"]').forEach(picker => {
+        const selected = currentExperience();
+        picker.outerHTML = pickerMarkup(selected?.id || '', picker.id);
+      });
+      return EXPERIENCES;
+    }).catch(() => null);
+  const experienceFor = id => EXPERIENCES.find(e => e.id === id || e.skin === id) || null;
   function currentExperience() {
     const preset = new URLSearchParams(location.search).get('preset');
     return experienceFor(preset || document.body.dataset.layout || '');
   }
   function pickerMarkup(currentId, id = 'experience-picker') {
-    return `<label class="screenreader" for="${id}">Experience</label><select id="${id}" class="layout-picker" data-role="experience-picker">${EXPERIENCES.map(e => `<option value="${e.id}"${e.id === currentId ? ' selected' : ''}>${esc(e.label)}</option>`).join('')}</select>`;
+    const options = EXPERIENCES.map(e => `<option value="${esc(e.id)}"${e.id === currentId ? ' selected' : ''}>${esc(e.label)}</option>`).join('');
+    return `<select aria-label="Experience" id="${id}" class="layout-picker" data-role="experience-picker"${EXPERIENCES.length < 2 ? ' hidden' : ''}>${options}</select>`;
   }
   function skinPicker(currentSkin) {
     const switcher = window.OSHAL_STYLE_SWITCHER;
@@ -595,5 +616,5 @@ ${workExtras(item)}
       gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard, fillPeople, membershipSlot, membership: () => state.membership };
   }
 
-  window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
+  window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, readyExperiences, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };
 })();

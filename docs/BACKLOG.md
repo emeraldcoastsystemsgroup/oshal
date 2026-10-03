@@ -94,6 +94,15 @@ from preparation or unit tests alone.
 
 **Status:** open — slice 1 (the shell lock) shipped; slices 2 and 3 are this entry.
 
+**Approved continuation (2026-10-03):** [Experience application integration](architecture/experience-application-integration.md)
+records the seven-experience source inventory and E1–E6 delivery contract. Reuse Finance/Education
+package-owned screens and manifest navigation. Declaration validation is implemented; hosting,
+discovery and composite-role assignment are still pending. Keep this item open. Work packets:
+E2 hosting/skins/authorized discovery; E3 exact-role preview, provenance, overlap-safe revocation,
+expiry and reviewed upgrades; E4 Home pilot; E5 Business, Classroom, Studio, Jarvis, Orbit and
+Commons; E6 installed Test Lab/browser/API/database acceptance. Home uses a distinct package ID;
+Smart Home remains `home`. Nexus is outside this approved seven-experience migration.
+
 An experience is an application a developer installs: its own screens, skin and member
 dependencies, exposed through an `experience:` manifest block behind the `experience` kernel
 skill (ADR-164 D11–D13). Today the Experiences menu and the shells are core-resident and offered
@@ -106,7 +115,7 @@ to every signed-in person on every deployment.
   does not, renders its entry full-bleed in its skin, and the hardcoded Experiences links in
   `src/pages/cockpit/index.html` are gone; `GET /api/swarm/apps` and `/applications` list only
   discoverable packages to a non-operator; the developer guide carries a worked example package.
-- Slice 3 — Home, Business, Classroom, Studio, Jarvis, Orbit, Commons and Nexus ship as
+- Slice 3 — Home, Business, Classroom, Studio, Jarvis, Orbit and Commons ship as
   experience packages; `src/experience/` holds shell engines only; the core cockpit lists no
   experience it did not install. Live proof on a box with two installed experiences and two
   throwaway users holding one role each.
@@ -173,7 +182,7 @@ to every signed-in person on every deployment.
 - **Status:** OPEN — needs live proof
 
 - **Implemented:** the workspace navigation and earlier installed checkpoints are documented in [the navigation backlog](backlog/cockpit-workspace-navigation.md) and the September 11–13 release records. The latest closure cited only local route/model tests; the earlier records need reconciliation against the complete current acceptance.
-- **Remaining:** record current desktop and mobile direct-navigation, reload/context, authorization-boundary and AI Test Lab registration evidence for the complete application set.
+- **Remaining:** record current desktop and mobile direct-navigation, reload/context, authorization-boundary and AI Test Lab registration evidence for the complete application set. The 2026-09-29 PAT sweep covered current pages and audience views but could not exercise the browser session-cookie Test Lab boundary, so it is supporting evidence rather than closure. Preserve the handover's all-page/audience/Create, first-page and Test Lab acceptance runners in a durable repository location instead of relying on the ephemeral session scratchpad before the next full run.
 - **Done when:** desktop and mobile users can switch directly into permitted complete applications, use existing pages, recover context after reload, and reach the remaining apps without a crowded top bar; hidden or unavailable destinations remain enforced at the application boundary; actual implementation tests register with AI Test Lab.
 
 ### Trading — timed orders: the STORE half of the D4 follow-ups (ADR-136 D4)

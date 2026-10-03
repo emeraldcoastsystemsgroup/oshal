@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -159,6 +160,39 @@ async function landing(name: string, user = 'alice'): Promise<string | undefined
 }
 
 describe('ADR-149 rail discoverability — the profile route, the real service and the real runtime', () => {
+  it('two installed experiences discover and open only for their current assigned callers', async () => {
+    await installFixture();
+    for (const name of ['home-experience', 'business-experience']) {
+      const m = manifest(name, [tile(`${name}-home`, `/api/${name}/app`)], true);
+      m.uses = ['application-authorization', 'app-dependencies', 'experience'];
+      m.dependencies = { required: { apps: ['studio'] }, optional: { apps: ['optional-missing'] } };
+      m.experience = { version: 1, entry: `/api/${name}/app`, shell: 'page', skin: name === 'home-experience' ? 'family' : 'company', label: name,
+        surfaces: [{ app: 'studio', surface: 'studio-home' }, { app: 'optional-missing', surface: 'optional-home' }] };
+      await install(m);
+    }
+    const get = (path: string, user = 'alice') => fetch(base + path, { headers: { 'x-fixture-user': user }, redirect: 'manual' });
+    expect((await get('/api/ui/experiences/home-experience/open')).status).toBe(404);
+    expect((await rail('home-experience')).status).toBe(404);
+    await grantOpener('home-experience'); await grantOpener('business-experience', admin);
+    const aliceList = await (await get('/api/ui/experiences')).json();
+    const adminList = await (await get('/api/ui/experiences', 'administrator')).json();
+    expect(aliceList.experiences.map((row: { app: string }) => row.app)).toEqual(['home-experience']);
+    expect(adminList.experiences.map((row: { app: string }) => row.app)).toEqual(['business-experience']);
+    expect((await get('/api/ui/experiences/home-experience/open')).status).toBe(403); // Discovery cannot replace the named resource adapter.
+    policy.registerResourceAdapter('home-experience', 'records', { authorize: async ({ operation, grant }) => operation.path === '/app' && grant.scope === 'own' });
+    const opened = await get('/api/ui/experiences/home-experience/open');
+    expect(opened.status).toBe(302); expect(opened.headers.get('location')).toBe('/api/home-experience/app');
+    expect((await get('/api/ui/experiences/business-experience/open')).status).toBe(404);
+    const profile = await rail('home-experience');
+    expect(byId(profile.items, 'tool-studio--studio-home')?.locked?.app).toBe('studio');
+    expect(profile.items.some(row => row.id.includes('optional-home'))).toBe(false);
+    await grantOpener('studio');
+    expect(byId((await rail('home-experience')).items, 'tool-studio--studio-home')?.locked).toBeUndefined();
+    const installed = records.get('home-experience')!;
+    installed.scope = 'person'; installed.ownerSub = 'another-user';
+    expect((await rail('home-experience')).status).toBe(404);
+    expect((await get('/api/ui/experiences/home-experience/open')).status).toBe(404);
+  });
   it('locks a tile whose target this person cannot discover, in place and with the role-guidance link; a grant restores it', async () => {
     await installFixture();
     const before = await rail('launcher');

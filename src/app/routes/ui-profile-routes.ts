@@ -1,5 +1,6 @@
 /**
  * CHANGE LOG
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
@@ -19,12 +20,13 @@ import type { AuthorizationActor } from '@/shared/application-authorization';
 import type { ApplicationAuthorizationRuntime } from '@/app/composition/application-authorization-runtime';
 import { roleGuidance } from '@/app/composition/application-navigation-authorization';
 import { filterToolsForCaller } from './tool-routes';
+import { createExperiencePackageRoutes } from './experience-package-routes';
 
 const logger = createChildLogger({ module: 'ui-profile-routes' });
 
 /** The per-person ports the profile route needs to follow another package's discoverability (ADR-149). */
 export interface UiProfileDiscoveryPorts {
-  runtime: Pick<ApplicationAuthorizationRuntime, 'canDiscover'>;
+  runtime: Pick<ApplicationAuthorizationRuntime, 'canDiscover'> & Partial<Pick<ApplicationAuthorizationRuntime, 'canNavigateHttpPath'>>;
   resolveActor(req: Request): Promise<AuthorizationActor>;
 }
 
@@ -63,7 +65,8 @@ async function bindTileDiscovery(req: Request, ports: UiProfileDiscoveryPorts): 
 async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<T[]> {
   const candidates = items.map((item, index) => {
     const id = item && typeof item === 'object' ? (item as { id?: unknown }).id : undefined;
-    return { item, index, toolName: typeof id === 'string' && id.startsWith('tool-') ? id.slice('tool-'.length) : '' };
+    const borrowedName = item && typeof item === 'object' ? (item as { toolUi?: { visibilityToolName?: string } }).toolUi?.visibilityToolName : undefined;
+    return { item, index, toolName: borrowedName || (typeof id === 'string' && id.startsWith('tool-') ? id.slice('tool-'.length) : '') };
   });
   const tools = candidates.filter(c => c.toolName);
   if (tools.length === 0) return items;
@@ -97,6 +100,7 @@ async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<
  */
 export function createUiProfileRoutes(service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts, shell?: UiProfileShellPorts): Router {
   const router = Router();
+  router.use(createExperiencePackageRoutes({ apps: swarmApps, authorization: discovery }));
 
   router.get('/profile', async (req: Request, res: Response) => {
     const requested = typeof req.query.name === 'string' ? req.query.name.trim() : '';
@@ -111,9 +115,20 @@ export function createUiProfileRoutes(service: UIProfileService, swarmApps?: Swa
       // disk profile JSON and loses the manifest's tool-* prefixed IDs and
       // focused ribbon.
       if (selected && swarmApps) {
+        if (discovery) {
+          const installed = await swarmApps.getApp(selected);
+          if (installed?.manifest.experience) {
+            const actor = await discovery.resolveActor(req);
+            const record = await swarmApps.getAppForViewer(selected, { ownerSub: actor.sub, isOperator: actor.isSwarmAdmin });
+            if (!record || record.status !== 'active' || !actor.isActive || !(await discovery.runtime.canDiscover(selected, actor))) {
+              res.status(404).json({ error: 'experience_unavailable' }); return;
+            }
+          }
+        }
         const port = discovery ? await bindTileDiscovery(req, discovery) : undefined;
         const synthetic = await swarmApps.synthesiseProfile(selected, port);
         if (synthetic) {
+          if (synthetic.experience && !discovery) { res.status(503).json({ error: 'experience_discovery_unavailable' }); return; }
           synthetic.ribbon.items = await filterRibbonItemsForCaller(synthetic.ribbon.items, req);
           logger.debug({ selected, source: requested ? 'query' : 'env' }, 'Serving synthesised profile from swarm-app manifest');
           res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName(), ...lock });
