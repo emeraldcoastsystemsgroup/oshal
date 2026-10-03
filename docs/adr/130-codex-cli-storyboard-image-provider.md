@@ -182,10 +182,14 @@ added a mark nobody asked for.
     but did not finish, or reached DONE with no acceptable file) and then, behind a fixed marker,
     gives the bot's untrusted diagnostic: the ERROR step's own error text and the model's final
     reply, each with control characters turned into spaces and bounded to 200 characters. The bot
-    logs the same. The api keeps that diagnostic off the render error's message and carries it
-    beside it as `diagnostic`, because the storyboard frame stage and Portrait Studio decide a retry
-    from the message (and Switchboard its not-configured answer); the Lab card shows it. What Guard A
-    accepts did not change.
+    logs the same. Neither side lets that diagnostic into a message it classifies. On the node the
+    Antigravity provider keeps it off the error's message and stderr, which the node's provider
+    failover reads (a throttle word in the tool's or the model's text would otherwise send the
+    render to the fallback rung), and the handler re-attaches it only where the error leaves the
+    node. The api keeps it off the render error's message and carries it beside it as `diagnostic`,
+    because the storyboard frame stage and Portrait Studio decide a retry from the message (and
+    Switchboard its not-configured answer). The Lab card shows it. What Guard A accepts did not
+    change.
 - **Store Create and Portrait Studio** accept the operator-only `antigravity-cli` rail (operator
   decisions 2026-10-02, "Allow it for me now" and "it should just be the same everywhere"): each
   needs the provider to report itself available for the caller, so anyone but the operator is told

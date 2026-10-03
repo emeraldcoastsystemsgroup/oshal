@@ -5,7 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | antigravity-cli storyboard image provider (ADR-130 amendment 2026-10-02): renders on the render bot's own Antigravity harness (chosen when that bot's own effective provider is antigravity-cli; the dispatch never switches the bot) through the same boot-registered bot-node executor and the same ADR-127 demo carve as codex-cli (DEMO_MODE + an operator caller, decided again at the bot). Proven headless 2026-10-02 (agy 1.2.8): generate_image edits an image named by an absolute ImagePaths entry and writes a JPEG into agy's private HOME, and a prompt that does not name the tool gets an image drawn with code instead. So the prompt names generate_image, passes the staged anchor's absolute path, and forbids code, commands, files and anything the brief does not ask for (the proof's edit added an unrequested crosshair). The bot hands the tool's image back as output.png or output.jpg with a receipt (agy-image-turn.js); this provider accepts exactly one output, verifies it against the receipt (tool generate_image, state DONE, same file, same sha256, bytes of the stated format), converts a JPEG to PNG because the storyboard cropper decodes PNG, and reports the real source format, the provider the bot ran on and what its ADR-034 reconcile did.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the render prompt no longer embeds the brief. buildAntigravityRenderPrompt takes only the anchor path and tells the model that the Prompt input is the "content" value of the UNTRUSTED_CONTENT record below (source ticket-or-user-body), to be passed verbatim as data; the brief rides to the executor as the separate `brief` field, which the wiring sends as the bot's untrusted text, while the instruction is sent as renderInstruction and filed under TRUSTED CONFIGURATION with generate_image named in the rebind. The 2026-10-02 19:00 live turn was refused by the model because the whole render sat inside the data-only record under an authority of [attempt_completion].
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Clearer Guard A refusals (operator decision 2026-10-03, diagnostic only). The bot's refusal now ends with an untrusted diagnostic (the image tool's own error text and the model's final reply, bounded on the bot) behind IMAGE_TURN_DIAGNOSTIC_MARKER. A failed render's error keeps the bot's own words as its message, cut at 300 characters as before, and carries that diagnostic beside it as `diagnostic` (an own enumerable property, so a logged { err } shows it), never in the message: the storyboard frame stage and Portrait Studio retry when a render error's message reads transient, and Switchboard answers 503 when it reads not-configured, so tool or model text must not decide any of those (D&D and Switchboard also show the message to their users). Every other failure is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Clearer Guard A refusals (operator decision 2026-10-03, diagnostic only). The bot's refusal now ends with an untrusted diagnostic (the image tool's own error text and the model's final reply, bounded on the bot) behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER. A failed render's error keeps the bot's own words as its message, cut at 300 characters as before, and carries that diagnostic beside it as `diagnostic` (an own enumerable property, so a logged { err } shows it), never in the message: the storyboard frame stage and Portrait Studio retry when a render error's message reads transient, and Switchboard answers 503 when it reads not-configured, so tool or model text must not decide any of those (D&D and Switchboard also show the message to their users). Every other failure is unchanged.
  */
 /**
  * @description The antigravity-cli storyboard image rail: the swarm's Antigravity harness rendering
@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createHash, randomUUID } from 'crypto';
 import { createChildLogger } from '@/shared/logger';
+import { ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER } from '@/shared/llm-runtime';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { RENDER_BRIEF_RECORD_SOURCE, resolveCliStoryboardImageExecutor } from './storyboard-cli-image-executor';
@@ -33,11 +34,6 @@ export const ANTIGRAVITY_IMAGE_RECEIPT = 'output.image-turn.json';
 const OUTPUT_BY_MIME: Readonly<Record<'image/png' | 'image/jpeg', string>> = Object.freeze({ 'image/png': 'output.png', 'image/jpeg': 'output.jpg' });
 /** A task workspace id this rail mints or accepts: canonical, as the bot node requires. */
 const RENDER_TASK_ID = /^sbimg-[a-z0-9-]{8,80}$/;
-/**
- * Where the bot's own words end in an image-turn refusal and its untrusted diagnostic begins
- * (DIAGNOSTIC_MARKER in any-bot/server/services/codebase/agy-image-turn.js).
- */
-export const IMAGE_TURN_DIAGNOSTIC_MARKER = ' | untrusted diagnostic: ';
 /** The most of the bot's own words a render error's message carries (unchanged from before the diagnostic). */
 const MAX_RENDER_ERROR_CHARS = 300;
 /** The most of the bot's untrusted diagnostic a render error carries; the bot bounds it well below this. */
@@ -48,7 +44,7 @@ type AntigravityRenderError = Error & { diagnostic?: string };
 
 /**
  * @description The error a failed render throws. The bot's own words become the message; the untrusted
- * diagnostic after IMAGE_TURN_DIAGNOSTIC_MARKER (the image tool's error text, the model's reply) rides
+ * diagnostic after ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER (the image tool's error text, the model's reply) rides
  * beside it as `diagnostic`, never in the message, because callers classify a render error by its
  * message (the storyboard frame stage's and Portrait Studio's transient retry, Switchboard's
  * not-configured answer) and tool or model text must not steer them.
@@ -56,10 +52,10 @@ type AntigravityRenderError = Error & { diagnostic?: string };
  * @returns {AntigravityRenderError} The error to throw.
  */
 function antigravityRenderFailure(detail: string): AntigravityRenderError {
-  const at = detail.indexOf(IMAGE_TURN_DIAGNOSTIC_MARKER);
+  const at = detail.indexOf(ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER);
   const own = at < 0 ? detail : detail.slice(0, at);
   const error: AntigravityRenderError = new Error(`antigravity-cli image provider: render task failed — ${own.slice(0, MAX_RENDER_ERROR_CHARS)}`);
-  if (at >= 0) error.diagnostic = detail.slice(at + IMAGE_TURN_DIAGNOSTIC_MARKER.length).slice(0, MAX_DIAGNOSTIC_CHARS);
+  if (at >= 0) error.diagnostic = detail.slice(at + ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER.length).slice(0, MAX_DIAGNOSTIC_CHARS);
   return error;
 }
 

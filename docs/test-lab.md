@@ -322,8 +322,9 @@ stand-in replays the stream-json and file layout of the 2026-10-02 headless proo
 end to end through the real wiring and the handler's real ADR-034 reconcile, plus one where the bot
 is found on a stale default and corrected onto its own setting. Its Guard A cases pin each refusal's
 words and diagnostic (including the 2026-10-03 replay shape, a `TOOL_ERROR` followed by
-`NO_IMAGE_CAPABILITY`), and one crosses the real storyboard frame stage to show that a refusal is
-not retried on the tool's or the model's words. The framing suite
+`NO_IMAGE_CAPABILITY`), one crosses the real storyboard frame stage to show that a refusal is not
+retried on the tool's or the model's words, and three run inside the bot node's real provider
+failover to show that such a refusal never reaches the fallback rung. The framing suite
 (`image-turn-prompt-framing`) captures the exact text agy is handed on an image turn through that same
 chain: the server-authored render instruction as `TRUSTED CONFIGURATION`, `generate_image` beside
 `attempt_completion` in the authority rebind, the brief inside the `UNTRUSTED_CONTENT` record and

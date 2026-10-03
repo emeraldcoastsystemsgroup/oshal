@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Image-turn collection for the Antigravity storyboard rail (ADR-130 amendment 2026-10-02). agy's generate_image tool writes its image into the invocation's private HOME (`.gemini/antigravity-cli/brain/<conversation>/<name>_<epoch-ms>.jpg`, proven headless on 2026-10-02 with agy 1.2.8), and the wrapper deletes that HOME when the turn ends. Before the cleanup, an image turn copies that one image into the task workspace as output.png or output.jpg (named by its real format) with a receipt beside it, the way the codex-cli rail leaves output.png. Guard A: nothing is collected unless the turn's stream-json shows a generate_image tool step that reached DONE, the file sits inside the private brain directory, is a regular file written during the turn, and is a PNG or JPEG by its bytes. The workspace must not already hold an output or a receipt, so a file the model drew with code or wrote itself can never be passed off as the tool's.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Clearer refusals (operator decision 2026-10-03; diagnostic only, what Guard A accepts is unchanged). One reason used to cover a turn whose generate_image never ran and one whose generate_image ran and ended in ERROR; the 2026-10-03 storyboard replays showed the tool answering TOOL_ERROR "no image generated in response" and the model then replying NO_IMAGE_CAPABILITY, and the live refusals could not say which had happened. A no-DONE refusal now keeps its old words as its start and adds which way the tool went: never ran, ran and ended in ERROR, or ran but did not finish (its last state); a DONE step with no acceptable file keeps its own reasons. After Guard A's words, behind DIAGNOSTIC_MARKER, comes the untrusted diagnostic: the last ERROR step's own error text and the model's final reply (the wrapper passes it as `reply`), each with control characters (C0, DEL, C1, bidirectional controls) turned into spaces, bounded to 200 characters and JSON-quoted. It is tool and model output, diagnostic text only and never prompt material; the api keeps it out of the error message its callers classify (storyboard-antigravity-image-provider.ts). Every refusal is also logged on the bot (warn, "image turn refused") with the reason, the tool error and the model reply as fields.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard A's own words carry no text from the stream and no number (verifier finding on core PR #1031: the reason reaches the error the node's provider failover classifies, so a stream state such as RESOURCE_EXHAUSTED, or an ERROR count of 429, would have read as a throttle). "ran but did not finish" no longer names the last state in the reason, and "ran and ended in ERROR" no longer counts; the last state moves into the diagnostic (`generate_image last state "..."`, bounded like the rest). AntigravityProvider keeps the whole diagnostic off the error's message and stderr.
  */
 
 'use strict';
@@ -36,14 +37,12 @@ const DIAGNOSTIC_MARKER = ' | untrusted diagnostic: ';
 const NO_DONE_STEP = `the event stream shows no ${IMAGE_TOOL} tool step that reached DONE`;
 /** The most of the model's final reply, and of a tool step's error message, a refusal quotes. */
 const MAX_QUOTED_CHARS = 200;
-/** The most of a tool step's error type a refusal quotes. */
+/** The most of a tool step's error type, or of its state name, a refusal quotes. */
 const MAX_ERROR_TYPE_CHARS = 40;
 /** Control characters: C0, DEL, C1 and the bidirectional controls, which can reorder a displayed line. */
 const CONTROL_CHARS = /[\p{Cc}\p{Bidi_Control}]+/gu;
 /** One half of a UTF-16 surrogate pair without its other half. */
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
-/** A step state as agy names them (ACTIVE, DONE, ERROR); anything else is not repeated in a reason. */
-const STATE_NAME = /^[A-Z_]{1,24}$/;
 
 /**
  * @description The real image format of a buffer, by its leading bytes.
@@ -100,7 +99,7 @@ function imageToolOutcome(stdout) {
     const step = event && event.event === 'step_update' ? event.step_update : null;
     if (!step || step.step_type !== 'tool' || step.tool_name !== IMAGE_TOOL) continue;
     outcome.ran = true;
-    outcome.lastState = STATE_NAME.test(String(step.state)) ? step.state : 'unnamed';
+    outcome.lastState = diagnosticLine(step.state, MAX_ERROR_TYPE_CHARS);
     if (step.state === 'DONE') outcome.done = true;
     if (step.state === 'ERROR') { outcome.errors += 1; outcome.lastError = stepErrorText(step); }
   }
@@ -119,26 +118,31 @@ function imageToolReachedDone(stdout) {
 
 /**
  * @description Why a turn with no DONE generate_image step is refused: Guard A's first half, then which
- * way the tool went. Guard A's own words only; the tool's error text belongs to the diagnostic.
- * @param {{ran: boolean, errors: number, lastState: string}} outcome - The turn's generate_image outcome.
+ * way the tool went. Fixed words only, no text from the stream and no number: the reason reaches the
+ * error message the node's provider failover classifies, and everything the tool or the model said
+ * belongs to the diagnostic.
+ * @param {{ran: boolean, errors: number}} outcome - The turn's generate_image outcome.
  * @returns {string} The reason.
  */
 function notDoneReason(outcome) {
   if (!outcome.ran) return `${NO_DONE_STEP}: ${IMAGE_TOOL} never ran in this turn`;
-  if (outcome.errors) return `${NO_DONE_STEP}: ${IMAGE_TOOL} ran and ended in ERROR${outcome.errors > 1 ? `, ${outcome.errors} times` : ''}`;
-  return `${NO_DONE_STEP}: ${IMAGE_TOOL} ran but did not finish (its last state was ${outcome.lastState})`;
+  if (outcome.errors) return `${NO_DONE_STEP}: ${IMAGE_TOOL} ran and ended in ERROR`;
+  return `${NO_DONE_STEP}: ${IMAGE_TOOL} ran but did not finish`;
 }
 
 /**
  * @description The untrusted diagnostic after DIAGNOSTIC_MARKER: the last ERROR step's own error text when
- * the tool ended in ERROR, and the model's final reply, each bounded and JSON-quoted.
- * @param {{errors: number, lastError: string}} outcome - The turn's generate_image outcome.
+ * the tool ended in ERROR, the state its last step reported when it ran but did not finish, and the
+ * model's final reply, each bounded and JSON-quoted.
+ * @param {{done: boolean, ran: boolean, errors: number, lastError: string, lastState: string}} outcome - The turn's generate_image outcome.
  * @param {string} reply - The model's final reply.
  * @returns {string} The diagnostic.
  */
 function diagnosticFor(outcome, reply) {
   const said = diagnosticLine(reply, MAX_QUOTED_CHARS);
-  const parts = outcome.errors ? [`${IMAGE_TOOL} error ${outcome.lastError ? JSON.stringify(outcome.lastError) : '(none reported)'}`] : [];
+  const parts = [];
+  if (outcome.errors) parts.push(`${IMAGE_TOOL} error ${outcome.lastError ? JSON.stringify(outcome.lastError) : '(none reported)'}`);
+  else if (outcome.ran && !outcome.done) parts.push(`${IMAGE_TOOL} last state ${JSON.stringify(outcome.lastState || 'unreported')}`);
   parts.push(`model reply ${said ? JSON.stringify(said) : '(empty)'}`);
   return parts.join('; ');
 }

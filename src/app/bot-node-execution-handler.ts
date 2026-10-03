@@ -37,6 +37,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Resolve zero-cost runtime usage through the shared provider/model pricing registry before recording or relaying it. Protected Gemini single-shot usage now reaches the ledger as a catalog estimate with an input/output split, while an actual nonzero provider total still wins and an unknown model remains zero instead of receiving an invented rate; execution attribution stays on the actual runtime provider.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward the payload's imageTurn marker into the TaskController options (ADR-130 amendment 2026-10-02). Only a literal true is forwarded. It is set by the storyboard render executor; the Antigravity wrapper uses it to collect generate_image's output from its private HOME into the task workspace before the HOME is removed, and refuses it on a host-tools-only or bridged turn. Every other provider ignores it. An image turn's prompt is also assembled verbatim, like a direct call (no persona layers, swarm memory, handover or ticket scaffolding, which told the render to write handovers and deliverables while its own prompt forbids creating files), but it is NOT marked hostToolsOnly: the image tool is the CLI's own.
  * 34 | maintainer@emeraldcoastsystemsgroup.com | SEC-05 carve for image turns, server-authored instruction only (operator decision 2026-10-02 b; ADR-130 amendment). The live render of 2026-10-02 19:00 was refused by the model: the only text naming generate_image sat inside the data-only UNTRUSTED_CONTENT record, under an authority rebind of ["attempt_completion"], so the model read the render as an injection and never called the tool (the same text rendered in a repro after three turns of deliberation: variance, not a rule). On an image turn the render instruction now arrives in its own carrier (payload.renderInstruction, written by the storyboard providers in the api process and validated at the HTTP boundary), is placed under TRUSTED CONFIGURATION as [trusted-config source="image-render-instruction"], and the harness's own image tool (anyBotImageTurnToolFor: generate_image on antigravity-cli) joins attempt_completion in that turn's allowed_tools and authorized_scopes. The brief, the one user-originated field, still travels as payload.text and stays inside the UNTRUSTED record; the instruction tells the model to read it from there as data. An image turn without the carrier is refused before any task exists, and no other turn reads either field. Guard: tests/unit/image-turn-prompt-framing.spec.ts.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | Where a failed execution leaves the node, an error's untrusted diagnostic (error.diagnostic: an Antigravity image-turn refusal's image-tool error and model reply) is re-attached to the error text behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER. AntigravityProvider keeps it off the error's message and stderr so the node's provider failover never classifies tool or model text (verifier finding on core PR #1031: a throttle word in either sent the render to the fallback rung); the api's render provider splits it off again for its own callers. Every other failure's text is unchanged.
  */
 
 /**
@@ -94,7 +95,7 @@ import {
   type DispatchConfigRuntime,
 } from './bot-node-dispatch-config';
 import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mode';
-import { anyBotImageTurnToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
+import { ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, anyBotImageTurnToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
 import { isUnbrokeredAutonomousProvider, resolveUsageCost } from '@/features/llm-provider';
 import { getProtectedBotExecution } from './bot-node-protected-context';
 
@@ -734,7 +735,7 @@ export function createBotNodeExecutionHandler(
       );
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown execution error',
+        error: failureLeavingNode(error),
       };
     } finally {
       activeExecutions -= 1;
@@ -742,6 +743,21 @@ export function createBotNodeExecutionHandler(
   };
   return envelope => deps.runApplicationExecution
     ? deps.runApplicationExecution(envelope, () => execute(envelope)) : execute(envelope);
+}
+
+/**
+ * @description The error text a failed execution leaves the node with. An Antigravity image-turn
+ * refusal carries its untrusted diagnostic (the image tool's error, the model's reply) on
+ * `error.diagnostic`, off the message every classifier on the node reads (provider failover among
+ * them); it is re-attached here, behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, so the api's render
+ * provider can split it off again. Any other error leaves with its message, as before.
+ * @param error - What the execution threw.
+ * @returns The error text for the response.
+ */
+function failureLeavingNode(error: unknown): string {
+  if (!(error instanceof Error)) return 'Unknown execution error';
+  const diagnostic = (error as Error & { diagnostic?: unknown }).diagnostic;
+  return typeof diagnostic === 'string' && diagnostic ? `${error.message}${ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER}${diagnostic}` : error.message;
 }
 
 /**
