@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Image-turn collection for the Antigravity storyboard rail (ADR-130 amendment 2026-10-02). agy's generate_image tool writes its image into the invocation's private HOME (`.gemini/antigravity-cli/brain/<conversation>/<name>_<epoch-ms>.jpg`, proven headless on 2026-10-02 with agy 1.2.8), and the wrapper deletes that HOME when the turn ends. Before the cleanup, an image turn copies that one image into the task workspace as output.png or output.jpg (named by its real format) with a receipt beside it, the way the codex-cli rail leaves output.png. Guard A: nothing is collected unless the turn's stream-json shows a generate_image tool step that reached DONE, the file sits inside the private brain directory, is a regular file written during the turn, and is a PNG or JPEG by its bytes. The workspace must not already hold an output or a receipt, so a file the model drew with code or wrote itself can never be passed off as the tool's.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Clearer refusals (operator decision 2026-10-03; diagnostic only, what Guard A accepts is unchanged). One reason used to cover a turn whose generate_image never ran and one whose generate_image ran and ended in ERROR; the 2026-10-03 storyboard replays showed the tool answering TOOL_ERROR "no image generated in response" and the model then replying NO_IMAGE_CAPABILITY, and the live refusals could not say which had happened. A no-DONE refusal now keeps its old words as its start and adds which way the tool went: never ran, ran and ended in ERROR, or ran but did not finish (its last state); a DONE step with no acceptable file keeps its own reasons. After Guard A's words, behind DIAGNOSTIC_MARKER, comes the untrusted diagnostic: the last ERROR step's own error text and the model's final reply (the wrapper passes it as `reply`), each with control characters (C0, DEL, C1, bidirectional controls) turned into spaces, bounded to 200 characters and JSON-quoted. It is tool and model output, diagnostic text only and never prompt material; the api keeps it out of the error message its callers classify (storyboard-antigravity-image-provider.ts). Every refusal is also logged on the bot (warn, "image turn refused") with the reason, the tool error and the model reply as fields.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard A's own words carry no text from the stream and no number (verifier finding on core PR #1031: the reason reaches the error the node's provider failover classifies, so a stream state such as RESOURCE_EXHAUSTED, or an ERROR count of 429, would have read as a throttle). "ran but did not finish" no longer names the last state in the reason, and "ran and ended in ERROR" no longer counts; the last state moves into the diagnostic (`generate_image last state "..."`, bounded like the rest). AntigravityProvider keeps the whole diagnostic off the error's message and stderr.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for image renders (operator decision 2026-10-03: "Retry, max 3, fresh turns", "Throttle image renders"). The api retries a render as a fresh turn only when its error message ends with Guard A's fixed "ran and ended in ERROR" words (exported here as ENDED_IN_ERROR_REFUSAL, pinned equal to ANY_BOT_IMAGE_TURN_ERROR_REFUSAL in src/shared/llm-runtime), and waits longer when Guard A appends its own fixed category BACKOFF_CATEGORY (" [backoff]"): Guard A adds it when the ERROR step's own error text reads as a quota or rate limit by the provider failover classifier's throttle vocabulary (isProviderThrottle). Only the tool's error is read for that, never the model's reply, and the category is Guard A's own token, chosen to match none of the failover classifier's patterns, because the reason reaches the error the node's provider failover classifies. The tool's text itself still rides only in the diagnostic. The DIAGNOSTIC_MARKER comment named a constant that does not exist; it now names ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER in src/shared/llm-runtime.
  */
 
 'use strict';
@@ -14,6 +15,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../../utils/logger').child({ module: 'agy-image-turn' });
+const { isProviderThrottle } = require('../llm/providerFailureClassifier');
 
 /** The agy tool whose output an image turn hands back. */
 const IMAGE_TOOL = 'generate_image';
@@ -28,13 +30,29 @@ const RECEIPT_NAME = 'output.image-turn.json';
 /** File times are coarse on some filesystems; a file this close to the turn start still counts as the turn's. */
 const MTIME_SLACK_MS = 2000;
 /**
- * Where Guard A's own words end in a refusal and the untrusted diagnostic begins. The api splits on it
- * (IMAGE_TURN_DIAGNOSTIC_MARKER in storyboard-antigravity-image-provider.ts), so tool and model text never
- * reaches the error message its callers classify.
+ * Where Guard A's own words end in a refusal and the untrusted diagnostic begins: the same string as
+ * ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER in src/shared/llm-runtime (any-bot-runtime-capabilities.ts), which
+ * AntigravityProvider splits on, the bot-node handler re-attaches behind, and the api's render provider
+ * splits on again, so tool and model text never reaches the error message its callers classify.
  */
 const DIAGNOSTIC_MARKER = ' | untrusted diagnostic: ';
+/** What every refusal begins with. */
+const REFUSED = 'image turn refused: ';
 /** Guard A's first half, as every refusal of a turn with no DONE generate_image step has always begun. */
 const NO_DONE_STEP = `the event stream shows no ${IMAGE_TOOL} tool step that reached DONE`;
+/** Guard A's reason for a turn whose generate_image ran and ended in ERROR. */
+const ENDED_IN_ERROR = `${NO_DONE_STEP}: ${IMAGE_TOOL} ran and ended in ERROR`;
+/**
+ * That refusal's words up to its category: the api's render provider retries a render as a fresh turn only
+ * when a failed attempt's error message ends with them (ANY_BOT_IMAGE_TURN_ERROR_REFUSAL in src/shared/llm-runtime).
+ */
+const ENDED_IN_ERROR_REFUSAL = `${REFUSED}${ENDED_IN_ERROR}`;
+/**
+ * Guard A's own category for an ERROR whose image tool error reads as a quota or rate limit; the api then
+ * waits longer before its fresh retry. Its words match none of the provider failover classifier's
+ * patterns, because the reason reaches the error the node's provider failover classifies.
+ */
+const BACKOFF_CATEGORY = ' [backoff]';
 /** The most of the model's final reply, and of a tool step's error message, a refusal quotes. */
 const MAX_QUOTED_CHARS = 200;
 /** The most of a tool step's error type, or of its state name, a refusal quotes. */
@@ -84,13 +102,15 @@ function stepErrorText(step) {
 
 /**
  * @description What this turn's stream-json says about generate_image: whether one of its tool steps
- * reached DONE (Guard A's first half, the only part that decides anything), whether it ran at all, how
- * many of its steps ended in ERROR and the last one's error, and the state its last step update named.
+ * reached DONE (Guard A's first half, the only part that decides what is collected), whether it ran at
+ * all, how many of its steps ended in ERROR and the last one's error, whether an ERROR step's own error
+ * text reads as a quota or rate limit (the [backoff] category; the model's reply is never read for it),
+ * and the state its last step update named.
  * @param {string} stdout - The turn's stream-json output.
- * @returns {{done: boolean, ran: boolean, errors: number, lastError: string, lastState: string}} The outcome.
+ * @returns {{done: boolean, ran: boolean, errors: number, lastError: string, throttled: boolean, lastState: string}} The outcome.
  */
 function imageToolOutcome(stdout) {
-  const outcome = { done: false, ran: false, errors: 0, lastError: '', lastState: '' };
+  const outcome = { done: false, ran: false, errors: 0, lastError: '', throttled: false, lastState: '' };
   for (const line of String(stdout || '').split('\n')) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
@@ -101,7 +121,11 @@ function imageToolOutcome(stdout) {
     outcome.ran = true;
     outcome.lastState = diagnosticLine(step.state, MAX_ERROR_TYPE_CHARS);
     if (step.state === 'DONE') outcome.done = true;
-    if (step.state === 'ERROR') { outcome.errors += 1; outcome.lastError = stepErrorText(step); }
+    if (step.state === 'ERROR') {
+      outcome.errors += 1;
+      outcome.lastError = stepErrorText(step);
+      if (outcome.lastError && isProviderThrottle(outcome.lastError)) outcome.throttled = true;
+    }
   }
   return outcome;
 }
@@ -118,15 +142,16 @@ function imageToolReachedDone(stdout) {
 
 /**
  * @description Why a turn with no DONE generate_image step is refused: Guard A's first half, then which
- * way the tool went. Fixed words only, no text from the stream and no number: the reason reaches the
+ * way the tool went, and for an ERROR whose tool error reads as a quota or rate limit Guard A's own
+ * [backoff] category. Fixed words only, no text from the stream and no number: the reason reaches the
  * error message the node's provider failover classifies, and everything the tool or the model said
  * belongs to the diagnostic.
- * @param {{ran: boolean, errors: number}} outcome - The turn's generate_image outcome.
+ * @param {{ran: boolean, errors: number, throttled: boolean}} outcome - The turn's generate_image outcome.
  * @returns {string} The reason.
  */
 function notDoneReason(outcome) {
   if (!outcome.ran) return `${NO_DONE_STEP}: ${IMAGE_TOOL} never ran in this turn`;
-  if (outcome.errors) return `${NO_DONE_STEP}: ${IMAGE_TOOL} ran and ended in ERROR`;
+  if (outcome.errors) return `${ENDED_IN_ERROR}${outcome.throttled ? BACKOFF_CATEGORY : ''}`;
   return `${NO_DONE_STEP}: ${IMAGE_TOOL} ran but did not finish`;
 }
 
@@ -234,7 +259,7 @@ function locateByScan(brain, brainReal, startedAtMs) {
 function refused(reason, { outcome, reply, workspaceDir }) {
   logger.warn({ workspaceDir, reason, toolError: outcome.errors ? outcome.lastError : undefined,
     modelReply: diagnosticLine(reply, MAX_QUOTED_CHARS) }, 'image turn refused');
-  return { ok: false, reason: `image turn refused: ${reason}${DIAGNOSTIC_MARKER}${diagnosticFor(outcome, reply)}` };
+  return { ok: false, reason: `${REFUSED}${reason}${DIAGNOSTIC_MARKER}${diagnosticFor(outcome, reply)}` };
 }
 
 /**
@@ -283,7 +308,9 @@ function collectImageTurnOutput({ home, workspaceDir, stdout, startedAtMs, reply
 }
 
 module.exports = {
+  BACKOFF_CATEGORY,
   DIAGNOSTIC_MARKER,
+  ENDED_IN_ERROR_REFUSAL,
   IMAGE_TOOL,
   OUTPUT_NAMES,
   RECEIPT_NAME,

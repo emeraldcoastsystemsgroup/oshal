@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-02 (the bot-level rule: the render bot's own effective harness picks the image rail). The rail readback now awaits selectStoryboardImageProvider - the function the resolver itself uses - instead of re-deriving the default, so it names the render bot and the harness it followed and reports a refused selection ("<bot> runs <harness>, which cannot make images") as a fail. New explicit-only card storyboard-antigravity-render: as the signed-in caller, it requires the resolved rail to be antigravity-cli, renders ONE frame through it (a generated 256 x 256 red-circle anchor and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, requires a real PNG back plus the bot's receipt that generate_image reached DONE, and removes exactly that workspace (proven gone). It spends one model turn on the operator's subscription, so it never runs from "run all". The new guards are attached as regressionTests.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The render card lists tests/unit/image-turn-prompt-framing.spec.ts among its regressionTests: the card renders through the framed image turn (the SEC-05 carve for image turns, ADR-130 amendment b), and only the live case module's REGRESSION_TESTS carried that guard.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a render never moves the bot off its own setting, and a bot found on a stale default is first corrected onto it (ADR-034). On 2026-10-03 00:24 the first render after a deploy produced its frame but this card failed it: general-bot had booted on its env fallback (openai-codex) and the render's dispatch corrected it onto its own antigravity-cli ('corrected'). The card now accepts 'match' or 'corrected' when the turn ran on the render bot's own harness (the selection's harness; with an explicit STORYBOARD_IMAGE_PROVIDER the selection names no bot, and the wiring dispatches the antigravity rail only to a bot whose own harness is antigravity-cli), and still fails any other reconcile or a turn that ran elsewhere. A refused render's failure detail and output now carry the bot's untrusted diagnostic (the image tool's error text and the model's reply), which the provider keeps off the error message.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for image renders (operator decision 2026-10-03: "Retry, max 3, fresh turns", "Throttle image renders"). The render card holds the provider to the CLI render budget (cliStoryboardRenderBudgetMs: STORYBOARD_CLI_IMAGE_TIMEOUT_MS, 420 s when unset), the budget the live case storyboard-agy's one blocking call already carries plus its margin, so the whole render, its waits for the render bot and up to three fresh turns, fits inside it. A retried render works in its own -a2 and -a3 task workspaces; the cleanup removes the tagged workspace and each attempt's, reports them (cleanup.workspaces), and counts the cleanup removed only when every one is gone. The verdict names the attempt that rendered the frame.
  *
  * @module routes/test-lab-storyboard-scenarios
  */
@@ -15,10 +16,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import {
+  antigravityRenderTaskIds,
+  cliStoryboardRenderBudgetMs,
   createAntigravityCliImageProvider,
   createComfyUiImageProvider,
   resolveStoryboardImageProvider,
   selectStoryboardImageProvider,
+  ANTIGRAVITY_RENDER_MAX_ATTEMPTS,
   type StoryboardImageResult,
 } from '@/features/video-generation';
 import { createChildLogger } from '@/shared/logger';
@@ -31,8 +35,8 @@ const LABEL = 'Storyboard image rail';
 const RENDER_LABEL = 'Render one frame on the render bot\'s antigravity rail';
 /** The brief the live render sends: an edit whose correct answer is easy to see and hard to fake. */
 const RENDER_BRIEF = 'Make the red circle blue. Keep the white background and the circle\'s size and position exactly as they are.';
-/** The live render's own task workspaces, and nothing else, are what its cleanup may remove. */
-const RENDER_TASK = /^sbimg-testlab-live-storyboard-[0-9a-f]{8}$/;
+/** The live render's own task workspaces (its tagged one and a retry's -a2/-a3), and nothing else, are what its cleanup may remove. */
+const RENDER_TASK = /^sbimg-testlab-live-storyboard-[0-9a-f]{8}(?:-a[0-9])?$/;
 
 /** The rails that bill the caller per image; selecting one is a spend decision, not a default. */
 const PAID_RAILS = new Set(['codex', 'vertex', 'openrouter']);
@@ -104,21 +108,36 @@ function pngSize(png: Buffer): { width: number; height: number } | null {
 }
 
 /**
- * @description Remove exactly the live render's task workspace and prove it is gone.
- * @param {string} taskId - The tagged render task id.
- * @returns {{taskId: string, removed: boolean, error?: string}} The cleanup fact.
+ * @description Remove one of the live render's task workspaces and prove it is gone.
+ * @param {string} root - The shared workspace root.
+ * @param {string} id - The workspace's task id.
+ * @returns {{existed: boolean, gone: boolean, error?: string}} The fact for that workspace.
  */
-function removeRenderWorkspace(taskId: string): { taskId: string; removed: boolean; error?: string } {
-  const root = resolveSharedWorkspaceRoot();
-  const dir = path.join(root, taskId);
-  if (!RENDER_TASK.test(taskId) || path.dirname(dir) !== root) return { taskId, removed: false, error: 'not a live-render task workspace' };
+function removeOneRenderWorkspace(root: string, id: string): { existed: boolean; gone: boolean; error?: string } {
+  const dir = path.join(root, id);
+  if (!RENDER_TASK.test(id) || path.dirname(dir) !== root) return { existed: false, gone: false, error: 'not a live-render task workspace' };
+  const existed = fs.existsSync(dir);
   try {
     fs.rmSync(dir, { recursive: true, force: true });
-    return { taskId, removed: !fs.existsSync(dir) };
+    return { existed, gone: !fs.existsSync(dir) };
   } catch (err) {
-    logger.error({ err, stack: (err as Error).stack, taskId }, 'live storyboard render workspace could not be removed');
-    return { taskId, removed: false, error: err instanceof Error ? err.message : String(err) };
+    logger.error({ err, stack: (err as Error).stack, taskId: id }, 'live storyboard render workspace could not be removed');
+    return { existed, gone: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * @description Remove exactly the live render's task workspaces, its tagged one and each retry
+ * attempt's (-a2, -a3), and prove every one is gone.
+ * @param {string} taskId - The tagged render task id.
+ * @returns {{taskId: string, removed: boolean, workspaces: string[], error?: string}} The cleanup fact: the
+ *   tagged id, whether all are gone, the workspaces that existed, and the first error.
+ */
+function removeRenderWorkspace(taskId: string): { taskId: string; removed: boolean; workspaces: string[]; error?: string } {
+  const root = resolveSharedWorkspaceRoot();
+  const facts = antigravityRenderTaskIds(taskId).map((id) => ({ id, ...removeOneRenderWorkspace(root, id) }));
+  const error = facts.find((fact) => fact.error)?.error;
+  return { taskId, removed: facts.every((fact) => fact.gone), workspaces: facts.filter((fact) => fact.existed).map((fact) => fact.id), ...(error ? { error } : {}) };
 }
 
 /**
@@ -154,7 +173,7 @@ function judgeRender(rendered: StoryboardImageResult, cleanup: { removed: boolea
     ...reconcileProblems(receipt, ownHarness),
     ...(cleanup.removed ? [] : ['the render workspace was not removed']),
   ];
-  const facts = `${size ? `${size.width} x ${size.height} PNG` : 'no PNG'} from ${rendered.sourceMimeType ?? 'an unreported format'}, model ${rendered.model}, ran on ${receipt?.ranOn ?? 'unreported'} (reconcile ${receipt?.providerConfigAction ?? 'unreported'}), located by ${receipt?.locator ?? 'nothing'}`;
+  const facts = `${size ? `${size.width} x ${size.height} PNG` : 'no PNG'} from ${rendered.sourceMimeType ?? 'an unreported format'}, model ${rendered.model}, ran on ${receipt?.ranOn ?? 'unreported'} (reconcile ${receipt?.providerConfigAction ?? 'unreported'}), located by ${receipt?.locator ?? 'nothing'}, attempt ${receipt?.attempt ?? 'unreported'} of ${ANTIGRAVITY_RENDER_MAX_ATTEMPTS}`;
   return problems.length ? { state: 'fail', detail: `${problems.join('; ')} (${facts}).` } : { state: 'pass', detail: `The render bot's antigravity rail rendered the frame: ${facts}; generate_image reached DONE; workspace removed.` };
 }
 
@@ -184,7 +203,9 @@ async function renderStep(_cookie: string, _prior: Record<string, unknown>, runt
   let failure = '';
   let diagnostic: string | null = null;
   try {
-    rendered = await createAntigravityCliImageProvider(runtime.ownerSub, { taskId }).generateWithMeta!(RENDER_BRIEF, await circleAnchor());
+    // The whole render (its waits for the render bot, up to three fresh turns) fits the CLI render budget the live case's call carries.
+    const provider = createAntigravityCliImageProvider(runtime.ownerSub, { taskId, deadlineMs: cliStoryboardRenderBudgetMs() });
+    rendered = await provider.generateWithMeta!(RENDER_BRIEF, await circleAnchor());
   } catch (err) {
     logger.error({ err, stack: (err as Error).stack, taskId }, 'live storyboard render failed');
     failure = err instanceof Error ? err.message : String(err);
@@ -225,10 +246,12 @@ export const STORYBOARD_SCENARIOS: Scenario[] = [{
   title: 'Storyboard stills — render one frame on the render bot\'s antigravity rail',
   group: 'tool',
   explicitOnly: true,
-  description: 'As you, requires the resolved storyboard image rail to be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), renders ONE frame through it (a generated red-circle reference and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, and requires a real PNG back with the bot\'s receipt that generate_image reached DONE. A render never moves the render bot off its own setting: its provider reconcile must be a match on its own harness, or a correction onto it when the bot was found on a stale default (ADR-034); any other reconcile, or a turn that ran on another harness, fails. A refused render says which way Guard A refused it (generate_image never ran, ended in ERROR, or reached DONE with no file) and shows the bot\'s untrusted diagnostic (the image tool\'s error text and the model\'s reply) beside it. Removes exactly that workspace and proves it gone; the render bot\'s task record and usage row stay as the audit trail. Serves only the deployment operator in demo mode. Spends one model turn on the operator\'s subscription.',
+  description: 'As you, requires the resolved storyboard image rail to be antigravity-cli (the render bot runs antigravity-cli, by its own row or the swarm default), renders ONE frame through it (a generated red-circle reference and a "make the circle blue, change nothing else" brief) on a tagged sbimg-testlab-live-storyboard-<8 hex> task workspace, and requires a real PNG back with the bot\'s receipt that generate_image reached DONE. A render whose generate_image ran and ended in ERROR runs again as a fresh turn on its own -a2, then -a3 workspace, at most three attempts inside the CLI render budget (STORYBOARD_CLI_IMAGE_TIMEOUT_MS, 420 s), and the render bot takes one image turn at a time; the verdict names the attempt that rendered the frame. A render never moves the render bot off its own setting: its provider reconcile must be a match on its own harness, or a correction onto it when the bot was found on a stale default (ADR-034); any other reconcile, or a turn that ran on another harness, fails. A refused render says which way Guard A refused it (generate_image never ran, ended in ERROR, or reached DONE with no file) and shows the bot\'s untrusted diagnostic (the image tool\'s error text and the model\'s reply) beside it; a render that stopped retrying says why (render retries exhausted, image renders are busy). Removes exactly its workspaces and proves them gone; the render bot\'s task record and usage row stay as the audit trail. Serves only the deployment operator in demo mode. Spends one model turn on the operator\'s subscription per attempt.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/storyboard-image-default.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-antigravity-image-turn.spec.ts' },
+    { level: 'unit', path: 'tests/unit/storyboard-antigravity-render-retry.spec.ts' },
+    { level: 'unit', path: 'tests/unit/storyboard-image-turn-queue.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-cli-image-wiring.spec.ts' },
     { level: 'unit', path: 'tests/unit/storyboard-test-lab-render.spec.ts' },
     { level: 'unit', path: 'tests/unit/image-turn-prompt-framing.spec.ts' },

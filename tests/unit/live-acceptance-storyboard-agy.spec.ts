@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Judge and ledger of the storyboard-agy live-acceptance case (ADR-130 amendment 2026-10-02, the bot-level rule), over a fake api port. Pass needs the card's step to pass with a PNG of at least 64 x 64 from antigravity-cli, a generate_image DONE receipt, the bot's report that it ran antigravity-cli and a 'match' reconcile (its own setting, never switched); a degraded card (the render bot on another rail, or not the operator) is unavailable; a missing receipt, a non-PNG, another provider, a 'corrected' or unreported reconcile, or a card that failed is a fail; a render workspace the card did not remove turns the case red, and a workspace outside the card's tag is a cleanup error. The case posts exactly one Lab run for the card and nothing else.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The case's one POST /api/test-lab/run carries the render dispatch budget plus the margin as its own `timeoutMs` (480 s by default; STORYBOARD_CLI_IMAGE_TIMEOUT_MS when set; a non-positive or non-numeric value falls back), and names the image-turn framing suite among its regression tests.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-130 amendment 2026-10-03 (operator decision): a 'corrected' reconcile on the render bot's own harness (the card's botHarness; antigravity-cli when the selection named no bot) passes like a 'match'. A correction onto another harness (either way round), an 'absent' or unreported reconcile, and a turn run elsewhere still fail. The pass fixture carries the card's renderBot and botHarness as the card reports them.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Retry and throttle for image renders (operator decision 2026-10-03): the PASS line names the attempt that rendered the frame when the card reports it ("rendered on attempt 2 of 3"), and says nothing of attempts for a card that does not; the case lists the retry and queue suites among its regression tests.
  */
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
@@ -41,6 +42,18 @@ describe('storyboard-agy live acceptance', () => {
     expect(api.calls[0].body).toEqual({ scenarioId: 'storyboard-antigravity-render' });
     // The one call blocks for the whole render: it carries the render budget plus the margin, not the runner's 30 s default.
     expect(api.calls[0].options).toEqual({ timeoutMs: 480_000 });
+    expect(result.detail, 'a card that reports no attempt gets no attempt in the PASS line').not.toContain('attempt');
+  });
+
+  it('names the attempt that rendered the frame, so a measured run shows what a fresh-turn retry rescued', async () => {
+    const retried = passOutput({ cliRender: { ...passOutput().cliRender, taskId: `${TASK}-a2`, attempt: 2 } });
+    const result = await agy.run({ api: world({ state: 'pass', output: retried }).api });
+    expect(result.state, result.detail).toBe('pass');
+    expect(result.detail).toContain('ran on the bot\'s own antigravity-cli (reconcile match), rendered on attempt 2 of 3');
+    // The card's cleanup reports its tagged id; the attempt workspaces are removed by the card before it says removed.
+    expect(result.cleanup).toMatchObject({ removed: [`render-workspace ${TASK}`], outstanding: [], errors: [] });
+    expect(agy.REGRESSION_TESTS.map((t: { path: string }) => t.path)).toEqual(expect.arrayContaining([
+      'tests/unit/storyboard-antigravity-render-retry.spec.ts', 'tests/unit/storyboard-image-turn-queue.spec.ts']));
   });
 
   it('passes a render bot found on a stale default and corrected onto its own harness, as the 2026-10-03 00:24 render was', async () => {

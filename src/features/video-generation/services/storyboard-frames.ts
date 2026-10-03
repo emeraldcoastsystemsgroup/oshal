@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Storyboard frames: turn a screenwriter's per-scene camera line into the still image the renderer animates. Cast consistency via an anchor frame; white-page margins cropped; near-duplicate scenes rejected before any video credit is spent.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Carry the owning user's sub on the context and into the provider resolve. The ADR-130 codex-cli rail authorizes per caller (the SEC-05 demo carve at the bot node), so a resolve with no identity reads unavailable and the whole stage failed closed with the carve hint under the demo default. The vendor-API siblings ignore the field.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The resolve names the stage's own deadline for one frame, the CLI render budget (cliStoryboardRenderBudgetMs: STORYBOARD_CLI_IMAGE_TIMEOUT_MS, 420 s when unset), so the antigravity-cli rail's fresh-turn retries and its wait for the render bot stay inside the 420 s one dispatch was already allowed (operator decision 2026-10-03: retry, max 3, fresh turns; throttle image renders). The vendor-API siblings ignore it; the stage's own transient retry is unchanged.
  */
 /**
  * @description Storyboard frames — the missing stage between WRITE and RENDER.
@@ -37,6 +38,7 @@
 import * as zlib from 'zlib';
 import { createChildLogger } from '@/shared/logger';
 import { resolveStoryboardImageProvider, type StoryboardImageProvider } from './storyboard-image-providers';
+import { cliStoryboardRenderBudgetMs } from './storyboard-cli-image-executor';
 
 const logger = createChildLogger({ module: 'storyboard-frames' });
 
@@ -290,7 +292,7 @@ export async function generateStoryboardFrame(
   ctx: StoryboardContext,
   anchor: Buffer | null,
 ): Promise<StoryboardFrame> {
-  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub });
+  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub, deadlineMs: cliStoryboardRenderBudgetMs() });
 
   const castLock = ctx.cast.map((c) => `${c.name} = ${c.description}`).join(' | ');
   const prompt = anchor
@@ -334,7 +336,7 @@ export async function generateEpisodeStoryboard(
 ): Promise<{ frames: StoryboardFrame[]; distinct: { ok: boolean; duplicates: string[] } }> {
   if (!scenes.length) throw new Error('no scenes to storyboard');
   // Resolve once: a misconfigured provider should fail before the first image, not on scene three.
-  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub });
+  const provider = ctx.provider ?? await resolveStoryboardImageProvider({ vertexToken: ctx.vertexToken, userSub: ctx.userSub, deadlineMs: cliStoryboardRenderBudgetMs() });
   const withProvider: StoryboardContext = { ...ctx, provider };
 
   const frames: StoryboardFrame[] = [];

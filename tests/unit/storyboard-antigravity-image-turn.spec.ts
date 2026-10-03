@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 carve for image turns (operator decision 2026-10-02 b): the render instruction now reaches agy as the TRUSTED CONFIGURATION section (source image-render-instruction), the brief as the one data record, and the dispatch body carries the brief as `text` and the instruction as `renderInstruction`; the route double runs the REAL parseBotNodePromptCarrier so the carrier is validated the way /api/swarm-execute validates it. The exact text agy receives, the rebind's tools and the unchanged non-image turns are pinned in tests/unit/image-turn-prompt-framing.spec.ts.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Clearer Guard A refusals (operator decision 2026-10-03; Guard A still accepts exactly what it did). The Guard A table now pins the whole error each refusal reaches the provider's caller with: generate_image never ran, ran and ended in ERROR (the 2026-10-03 replay shape: TOOL_ERROR "no image generated in response", then NO_IMAGE_CAPABILITY), ran but never finished, or reached DONE with no acceptable file; and the bot's untrusted diagnostic (the tool's error text, the model's final reply) on the error's `diagnostic`, never in its message. New: an ERROR step with an image in the brain anyway is refused (only the DONE check stands in its way); the reply and the tool error are bounded and lose their control characters; the bot logs the refusal with both as fields; pino's err serializer carries the diagnostic; the REAL storyboard pipeline (generateStoryboardFrame) does not retry a refusal whose tool error and reply carry its transient words, because they are not in the message it classifies; and the 2026-10-03 00:24 shape end to end, a render bot found on a stale default corrected onto its own antigravity-cli before the render (reconcile 'corrected', one switch, onto its own setting). The wrapper case pins the bot-side refusal text with its diagnostic marker.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Verifier finding on core PR #1031: the refusal's diagnostic reached the Antigravity provider error's message and stderr, which ProviderFailoverProvider classifies, and bot-node-runtime wraps antigravity-cli in that failover whenever a fallback order is configured. New: three refusals carrying a throttle word (RESOURCE_EXHAUSTED/quota in the tool's error, 429 Too Many Requests in the model's reply, RESOURCE_EXHAUSTED as the tool step's last state) run through the REAL maybeWrapBotNodeProviderFailover with a recording openai-codex rung: no "[ProviderFailover] ... retrying via" line, the rung never runs, one agy turn, and the api still receives the diagnostic (the handler re-attaches it where the error leaves the node). The active-only reason no longer names the stream's state; it moved into the diagnostic. The marker is the shared ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, pinned equal to agy-image-turn.js's.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Retry, max 3, fresh turns (operator decision 2026-10-03). A render whose generate_image ran and ended in ERROR now runs again as a fresh turn through this same real chain: the Guard A table's two ERROR shapes make three agy turns, each with its own private HOME (removed) and its own -a2/-a3 workspace (no output collected), and fail with "render retries exhausted: all 3 attempts failed" after Guard A's words; every other shape stays one turn with its message unchanged. New: a first turn ending in ERROR and a second that renders (FAKE_AGY_IMAGE_MODE_SEQUENCE) hands back the second turn's image, attempt 2, from <id>-a2, the second turn's instruction naming its own anchor; the same through the REAL boot wiring and its one-image-turn-per-bot queue, where neither dispatch body carries the queue's startBy. Guard A's [backoff] category (a quota, a 429 or a rate limit in the image tool's own error) is Guard A's own token: it crosses the REAL maybeWrapBotNodeProviderFailover on every attempt with no failover line, the openai-codex rung never runs, and it alone selects the long waits; the shared ANY_BOT_IMAGE_TURN_ERROR_REFUSAL and ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY are pinned equal to agy-image-turn.js's. The provider's waits ride the test-only sleepImpl and are recorded, so the real chain runs without real 3 to 45 s waits; the storyboard frame stage still adds no retry of its own (three turns, the provider's).
  */
 
 import { spawn } from 'node:child_process';
@@ -21,7 +22,7 @@ import sharp from 'sharp';
 import { createBotNodeExecutionHandler, IMAGE_RENDER_INSTRUCTION_SOURCE } from '../../src/app/bot-node-execution-handler';
 import { parseBotNodePromptCarrier } from '../../src/app/bot-node-request-scope';
 import { maybeWrapBotNodeProviderFailover } from '../../src/app/bot-node-runtime';
-import { ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER } from '../../src/shared/llm-runtime';
+import { ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY, ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, ANY_BOT_IMAGE_TURN_ERROR_REFUSAL } from '../../src/shared/llm-runtime';
 import { buildAntigravityRenderPrompt, createAntigravityCliImageProvider } from '../../src/features/video-generation/services/storyboard-antigravity-image-provider';
 import { registerCliStoryboardImageExecutor } from '../../src/features/video-generation/services/storyboard-cli-image-executor';
 import { generateStoryboardFrame } from '../../src/features/video-generation/services/storyboard-frames';
@@ -53,20 +54,25 @@ const ToolRegistry = require('../../any-bot/server/services/ToolRegistry');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const AntigravityProvider = require('../../any-bot/server/services/llm/AntigravityProvider');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const agyImageTurn = require('../../any-bot/server/services/codebase/agy-image-turn') as { DIAGNOSTIC_MARKER: string };
+const agyImageTurn = require('../../any-bot/server/services/codebase/agy-image-turn') as { DIAGNOSTIC_MARKER: string; ENDED_IN_ERROR_REFUSAL: string; BACKOFF_CATEGORY: string };
 
 const FAKE_AGY = path.resolve('tests/fixtures/fake-agy-image.cjs');
 const OWNER = 'operator-sub';
 const RENDER_BOT = 'a0000000-0000-0000-0000-000000000099';
 const ENV_KEYS = ['DEMO_MODE', 'OSHAL_OPERATOR_SUBS', 'ANTIGRAVITY_OAUTH_TOKEN_PATH', 'OSHAL_WORKSPACE_ROOT', 'SHARED_WORKSPACE_ROOT',
   'SWARM_CONTROLLER_URL', 'FAKE_AGY_OBSERVE_FILE', 'FAKE_AGY_IMAGE_MODE', 'OSHAL_TOOL_LESS', 'FAKE_AGY_REPLY_JSON', 'FAKE_AGY_TOOL_ERROR_JSON',
-  'FAKE_AGY_ACTIVE_STATE'];
+  'FAKE_AGY_ACTIVE_STATE', 'FAKE_AGY_IMAGE_MODE_SEQUENCE'];
 /** How a refused render reaches the provider's caller from the real handler: the bot's own words, then Guard A's. */
 const REFUSED = 'antigravity-cli image provider: render task failed — Antigravity CLI error: image turn refused: ';
 /** Guard A's first half, the text every no-DONE refusal still starts with. */
 const NO_DONE = 'the event stream shows no generate_image tool step that reached DONE';
+/** What the provider adds when three fresh turns all ended in Guard A's ERROR. */
+const EXHAUSTED = ' — render retries exhausted: all 3 attempts failed';
 /** A failed render: the message, and the bot's untrusted diagnostic beside it. */
 type RenderError = Error & { diagnostic?: string };
+/** The provider's waits between attempts, recorded instead of slept (the test-only sleepImpl). */
+const waits: number[] = [];
+const recordWait = async (ms: number): Promise<void> => { waits.push(ms); };
 
 interface Observation { argv: string[]; cwd: string; home: string; prompt: string }
 
@@ -99,6 +105,8 @@ beforeEach(() => {
   delete process.env.FAKE_AGY_REPLY_JSON;
   delete process.env.FAKE_AGY_TOOL_ERROR_JSON;
   delete process.env.FAKE_AGY_ACTIVE_STATE;
+  delete process.env.FAKE_AGY_IMAGE_MODE_SEQUENCE;
+  waits.length = 0;
   registerCliStoryboardImageExecutor(null);
 });
 
@@ -189,11 +197,19 @@ function renderWorkspaces(): string[] {
   return fs.readdirSync(root).filter((name) => name.startsWith('sbimg-')).map((name) => path.join(root, name));
 }
 
+/** The real antigravity-cli provider, its waits between fresh turns recorded instead of slept. */
+const renderProvider = (options: { taskId?: string } = {}) => createAntigravityCliImageProvider(OWNER, { ...options, sleepImpl: recordWait });
+
 /** One render through the real chain with the stand-in agy in `mode`; the error it failed with, or null. */
 async function refusedRender(mode: string, controller = botNodeTaskController()): Promise<RenderError | null> {
   process.env.FAKE_AGY_IMAGE_MODE = mode;
   wireRealBot(controller);
-  return createAntigravityCliImageProvider(OWNER).generateWithMeta!('make the circle blue', await anchor()).then(() => null, (e: RenderError) => e);
+  return renderProvider().generateWithMeta!('make the circle blue', await anchor()).then(() => null, (e: RenderError) => e);
+}
+
+/** The render's task workspaces in attempt order: its own id, then -a2 and -a3. */
+function attemptWorkspaces(): string[] {
+  return renderWorkspaces().sort((a, b) => a.length - b.length || a.localeCompare(b));
 }
 
 /** Every line this process writes to stdout (where the any-bot pino logger writes) until restore(). */
@@ -261,26 +277,60 @@ describe('antigravity-cli storyboard rail, through the real bot-node chain and a
   const NO_FILE = 'generate_image reached DONE but no PNG or JPEG it wrote during this turn was found in the private brain directory';
   const TOOL_ERROR = 'generate_image error "TOOL_ERROR: no image generated in response"';
   it.each([
-    ['no-step', NEVER_RAN, 'model reply "RENDERED"'],
-    ['run-command', NEVER_RAN, 'model reply "RENDERED"'],
+    ['no-step', NEVER_RAN, 'model reply "RENDERED"', 1],
+    ['run-command', NEVER_RAN, 'model reply "RENDERED"', 1],
     // The 2026-10-03 storyboard replays: the tool answered TOOL_ERROR, then the model replied NO_IMAGE_CAPABILITY.
-    ['error-step', ENDED_IN_ERROR, `${TOOL_ERROR}; model reply "NO_IMAGE_CAPABILITY"`],
+    // The one shape the render retries: three fresh turns, then the retries are exhausted.
+    ['error-step', `${ENDED_IN_ERROR}${EXHAUSTED}`, `${TOOL_ERROR}; model reply "NO_IMAGE_CAPABILITY"`, 3],
     // An image and its step output sit in the brain anyway: only the DONE check stands between it and collection.
-    ['error-step-image', ENDED_IN_ERROR, `${TOOL_ERROR}; model reply "RENDERED"`],
+    ['error-step-image', `${ENDED_IN_ERROR}${EXHAUSTED}`, `${TOOL_ERROR}; model reply "RENDERED"`, 3],
     // The stream's state is the tool's word, not Guard A's: it rides in the diagnostic.
-    ['active-only', `${NO_DONE}: generate_image ran but did not finish`, 'generate_image last state "ACTIVE"; model reply "RENDERED"'],
-    ['stale', NO_FILE, 'model reply "RENDERED"'],
-    ['outside', NO_FILE, 'model reply "RENDERED"'],
-  ])('Guard A refuses the %s turn and says which way it failed: nothing collected, the render fails, the HOME is removed', async (mode, reason, diagnostic) => {
+    ['active-only', `${NO_DONE}: generate_image ran but did not finish`, 'generate_image last state "ACTIVE"; model reply "RENDERED"', 1],
+    ['stale', NO_FILE, 'model reply "RENDERED"', 1],
+    ['outside', NO_FILE, 'model reply "RENDERED"', 1],
+  ])('Guard A refuses the %s turn and says which way it failed: nothing collected, the render fails, every HOME is removed', async (mode, reason, diagnostic, turns) => {
     const err = await refusedRender(mode);
     // The message is the bot's own words only; every no-DONE reason still starts with the old text.
     expect(err?.message).toBe(`${REFUSED}${reason}`);
     // The tool's error text and the model's reply ride beside it as untrusted diagnostic text.
     expect(err?.diagnostic).toBe(diagnostic);
-    const files = fs.readdirSync(renderWorkspaces()[0]);
-    expect(files).not.toContain('output.jpg');
-    expect(files).not.toContain('output.image-turn.json');
-    expect(fs.existsSync(observations()[0].home)).toBe(false);
+    // Only Guard A's ERROR runs again, each time as a fresh turn: its own workspace and its own private HOME.
+    expect(observations(), 'one agy turn per attempt').toHaveLength(turns);
+    const workspaces = attemptWorkspaces();
+    expect(workspaces.map((dir) => path.basename(dir))).toEqual([path.basename(workspaces[0]), `${path.basename(workspaces[0])}-a2`, `${path.basename(workspaces[0])}-a3`].slice(0, turns));
+    for (const workspace of workspaces) {
+      const files = fs.readdirSync(workspace);
+      expect(files).not.toContain('output.jpg');
+      expect(files).not.toContain('output.image-turn.json');
+    }
+    expect(new Set(observations().map((turn) => turn.home)).size, 'each turn had a private HOME of its own').toBe(turns);
+    for (const turn of observations()) expect(fs.existsSync(turn.home)).toBe(false);
+    expect(waits, 'the waits between fresh turns (about 3 s, then about 8 s)').toHaveLength(turns - 1);
+  }, 60_000);
+
+  it('a first turn that ends in ERROR runs again as a fresh turn, and the second turn\'s image comes back from its own workspace', async () => {
+    process.env.FAKE_AGY_IMAGE_MODE_SEQUENCE = 'error-step,jpeg';
+    wireRealBot();
+
+    const result = await renderProvider().generateWithMeta!('make the circle blue', await anchor());
+
+    const [first, second] = attemptWorkspaces();
+    expect(path.basename(second)).toBe(`${path.basename(first)}-a2`);
+    expect(result.cliRender).toMatchObject({ taskId: path.basename(second), attempt: 2, tool: 'generate_image', toolState: 'DONE', locator: 'step-output' });
+    expect((await sharp(result.image).metadata()).format).toBe('png');
+    expect(fs.readdirSync(first)).not.toContain('output.jpg');
+    expect(fs.readdirSync(second)).toEqual(expect.arrayContaining(['anchor.png', 'output.jpg', 'output.image-turn.json']));
+    const turns = observations();
+    expect(turns).toHaveLength(2);
+    // Fresh turns: each ran in its own workspace with its own private HOME, and each instruction names its own anchor.
+    expect(turns.map((turn) => fs.realpathSync(turn.cwd))).toEqual([fs.realpathSync(first), fs.realpathSync(second)]);
+    expect(turns[0].home).not.toBe(turns[1].home);
+    expect(renderInstruction(turns[1].prompt)).toBe(buildAntigravityRenderPrompt(path.join(second, 'anchor.png')));
+    expect(briefRecord(turns[1].prompt)).toBe('make the circle blue');
+    for (const turn of turns) expect(fs.existsSync(turn.home)).toBe(false);
+    expect(waits).toHaveLength(1);
+    expect(waits[0]).toBeGreaterThanOrEqual(3_000);
+    expect(waits[0]).toBeLessThan(3_600);
   }, 60_000);
 });
 
@@ -294,14 +344,15 @@ describe('Guard A refusals: bounded diagnostics, the bot log, and an error messa
     expect(reply).toHaveLength(200);
     // Guard A writes the marker; the node re-attaches behind it and the api splits on it: one contract across the runtimes.
     expect(ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER).toBe(agyImageTurn.DIAGNOSTIC_MARKER);
-    expect(err?.message).toBe(`${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR`);
+    // A quota in the tool's own error puts the ERROR in Guard A's [backoff] category, in Guard A's own words.
+    expect(err?.message).toBe(`${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR [backoff]${EXHAUSTED}`);
     expect(err?.diagnostic).toBe(`generate_image error ${JSON.stringify(toolError)}; model reply ${JSON.stringify(reply)}`);
     expect(err?.diagnostic).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
     // A framework logger's { err } (Create logs its region-edit failure that way) carries it: pino's err serializer copies it.
     expect((pino.stdSerializers.err(err!) as unknown as Record<string, unknown>).diagnostic).toBe(err?.diagnostic);
   }, 60_000);
 
-  it('the bot logs the refusal with the tool error and the model reply as fields of their own', async () => {
+  it('the bot logs the refusal with the tool error and the model reply as fields of their own, once per fresh turn', async () => {
     const stdout = captureStdout();
     try {
       await refusedRender('error-step');
@@ -310,22 +361,31 @@ describe('Guard A refusals: bounded diagnostics, the bot log, and an error messa
     }
     const refusals = stdout.lines().filter((line) => line.includes('"agy-image-turn"'))
       .map((line) => JSON.parse(line) as Record<string, unknown>).filter((entry) => entry.msg === 'image turn refused');
-    expect(refusals).toHaveLength(1);
-    expect(refusals[0]).toMatchObject({ level: 40, reason: `${NO_DONE}: generate_image ran and ended in ERROR`,
-      toolError: 'TOOL_ERROR: no image generated in response', modelReply: 'NO_IMAGE_CAPABILITY' });
+    expect(refusals).toHaveLength(3);
+    for (const refusal of refusals) {
+      expect(refusal).toMatchObject({ level: 40, reason: `${NO_DONE}: generate_image ran and ended in ERROR`,
+        toolError: 'TOOL_ERROR: no image generated in response', modelReply: 'NO_IMAGE_CAPABILITY' });
+    }
   }, 60_000);
+
+  it('the api retries on Guard A\'s own ERROR words and [backoff] category: one contract across the runtimes', () => {
+    expect(ANY_BOT_IMAGE_TURN_ERROR_REFUSAL).toBe(agyImageTurn.ENDED_IN_ERROR_REFUSAL);
+    expect(ANY_BOT_IMAGE_TURN_BACKOFF_CATEGORY).toBe(agyImageTurn.BACKOFF_CATEGORY);
+    expect(`${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR`).toBe(`antigravity-cli image provider: render task failed — Antigravity CLI error: ${ANY_BOT_IMAGE_TURN_ERROR_REFUSAL}`);
+  });
 
   it('the REAL storyboard frame stage does not retry a refusal whose tool error and reply carry its transient words', async () => {
     process.env.FAKE_AGY_TOOL_ERROR_JSON = JSON.stringify({ type: 'TOOL_ERROR', message: 'upstream returned 503 EMPTY_RESPONSE' });
     process.env.FAKE_AGY_REPLY_JSON = JSON.stringify('EMPTY_RESPONSE 503');
     process.env.FAKE_AGY_IMAGE_MODE = 'error-step';
     wireRealBot();
-    const provider = createAntigravityCliImageProvider(OWNER);
+    const provider = renderProvider();
     // generateStoryboardFrame retries only when the error MESSAGE reads transient (RATE_LIMITED, EMPTY_RESPONSE, 429, 5xx).
     const err = await generateStoryboardFrame({ n: 1, camera: 'WIDE: a red circle on white' }, { styleLock: 'flat colour', cast: [], provider }, null)
       .then(() => null, (e: Error) => e);
-    expect(err?.message).toBe(`storyboard frame 1 (antigravity-cli): ${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR`);
-    expect(observations(), 'one render: words from the tool or the model never decide a retry').toHaveLength(1);
+    expect(err?.message).toBe(`storyboard frame 1 (antigravity-cli): ${REFUSED}${NO_DONE}: generate_image ran and ended in ERROR${EXHAUSTED}`);
+    // The provider's own three fresh turns on Guard A's words; the frame stage adds none on the tool's or the model's words.
+    expect(observations(), 'one render of three fresh turns: words from the tool or the model never decide a retry').toHaveLength(3);
   }, 60_000);
 });
 
@@ -340,15 +400,23 @@ describe('a Guard A refusal never enters the bot node\'s provider failover (the 
     return maybeWrapBotNodeProviderFailover(raw, 'antigravity-cli', { 'antigravity-cli': raw, 'openai-codex': codexRung }, ['openai-codex']);
   }
 
+  const BACKOFF = `${NO_DONE}: generate_image ran and ended in ERROR [backoff]${EXHAUSTED}`;
   it.each([
+    // Guard A's own [backoff] category crosses the failover on every one of the three fresh turns.
     ['a quota in the image tool\'s own error', 'error-step',
       { FAKE_AGY_TOOL_ERROR_JSON: JSON.stringify({ type: 'TOOL_ERROR', message: 'RESOURCE_EXHAUSTED: quota exceeded' }) },
-      `${NO_DONE}: generate_image ran and ended in ERROR`, 'generate_image error "TOOL_ERROR: RESOURCE_EXHAUSTED: quota exceeded"; model reply "NO_IMAGE_CAPABILITY"'],
+      BACKOFF, 'generate_image error "TOOL_ERROR: RESOURCE_EXHAUSTED: quota exceeded"; model reply "NO_IMAGE_CAPABILITY"', 3],
+    ['a 429 in the image tool\'s own error', 'error-step',
+      { FAKE_AGY_TOOL_ERROR_JSON: JSON.stringify({ type: 'HTTP_ERROR', message: '429 Too Many Requests' }) },
+      BACKOFF, 'generate_image error "HTTP_ERROR: 429 Too Many Requests"; model reply "NO_IMAGE_CAPABILITY"', 3],
+    ['a rate limit in the image tool\'s own error', 'error-step',
+      { FAKE_AGY_TOOL_ERROR_JSON: JSON.stringify({ type: 'TOOL_ERROR', message: 'image model rate limit reached' }) },
+      BACKOFF, 'generate_image error "TOOL_ERROR: image model rate limit reached"; model reply "NO_IMAGE_CAPABILITY"', 3],
     ['a 429 in the model\'s reply', 'no-step', { FAKE_AGY_REPLY_JSON: JSON.stringify('429 Too Many Requests') },
-      `${NO_DONE}: generate_image never ran in this turn`, 'model reply "429 Too Many Requests"'],
+      `${NO_DONE}: generate_image never ran in this turn`, 'model reply "429 Too Many Requests"', 1],
     ['a throttle word as the tool step\'s last state', 'active-only', { FAKE_AGY_ACTIVE_STATE: 'RESOURCE_EXHAUSTED' },
-      `${NO_DONE}: generate_image ran but did not finish`, 'generate_image last state "RESOURCE_EXHAUSTED"; model reply "RENDERED"'],
-  ])('%s: no failover, no second rung, one agy turn, and the api still receives the diagnostic', async (_label, mode, env, reason, diagnostic) => {
+      `${NO_DONE}: generate_image ran but did not finish`, 'generate_image last state "RESOURCE_EXHAUSTED"; model reply "RENDERED"', 1],
+  ])('%s: no failover, no second rung, one agy turn per attempt, and the api still receives the diagnostic', async (_label, mode, env, reason, diagnostic, turns) => {
     Object.assign(process.env, env);
     const rungCalls: string[] = [];
     const stdout = captureStdout();
@@ -360,9 +428,16 @@ describe('a Guard A refusal never enters the bot node\'s provider failover (the 
     }
     expect(stdout.lines().filter((line) => line.includes('[ProviderFailover]') && line.includes('retrying via')), 'no failover was attempted').toEqual([]);
     expect(rungCalls, 'the fallback rung never ran').toEqual([]);
-    expect(observations(), 'one agy turn').toHaveLength(1);
+    expect(observations(), 'one agy turn per attempt').toHaveLength(turns);
     expect(err?.message).toBe(`${REFUSED}${reason}`);
     expect(err?.diagnostic, 'the handler re-attached it where the error left the node').toBe(diagnostic);
+    if (reason !== BACKOFF) return;
+    // Only Guard A's [backoff] token chose the long waits: about 20 s, then about 45 s.
+    expect(waits).toHaveLength(2);
+    expect(waits[0]).toBeGreaterThanOrEqual(20_000);
+    expect(waits[0]).toBeLessThan(24_000);
+    expect(waits[1]).toBeGreaterThanOrEqual(45_000);
+    expect(waits[1]).toBeLessThan(54_000);
   }, 60_000);
 });
 
@@ -432,6 +507,30 @@ describe('the bot-level rule end to end: the real wiring, the route\'s mapping a
     expect(result.cliRender).toMatchObject({ tool: 'generate_image', toolState: 'DONE', ranOn: 'antigravity-cli', providerConfigAction: 'corrected' });
     expect(runtime.switches, 'the one switch puts the bot back on its own setting').toEqual([['antigravity-cli', 'gemini-3.8-flash-low']]);
     expect((await sharp(result.image).metadata()).format).toBe('png');
+  }, 60_000);
+
+  it('a first turn that ends in ERROR runs again through the real wiring and its image-turn queue: a fresh dispatch on <id>-a2, the bot\'s own record each time', async () => {
+    process.env.FAKE_AGY_IMAGE_MODE_SEQUENCE = 'error-step,jpeg';
+    const installed = await installRenderBotSwitch([switchRow('fleet-default', 'antigravity-cli', { modelId: 'gemini-3.8-flash-low', fallbackOrder: ['openai-codex'] })]);
+    const runtime = botRuntime();
+    const bodies: Array<Record<string, unknown>> = [];
+    const deliver = routeTo(createBotNodeExecutionHandler({
+      anyBotTaskController: botNodeTaskController(), providerName: 'antigravity-cli', modelName: 'gemini-3.8-flash-low', dispatchConfigRuntime: runtime,
+    }));
+    hop.deliver = async (agentId, body) => { bodies.push(body); return deliver(agentId, body); };
+    wireCliStoryboardImageExecutor({ runtimeParamsResolver: () => installed.resolver });
+
+    const result = await renderProvider().generateWithMeta!('make the circle blue', await anchor());
+
+    expect(bodies.map((body) => body.taskId)).toEqual([bodies[0].taskId, `${String(bodies[0].taskId)}-a2`]);
+    for (const body of bodies) {
+      expect(body).toMatchObject({ providerId: 'antigravity-cli', model: 'gemini-3.8-flash-low', fallbackOrder: [], providerConfigRequired: true, imageTurn: true, text: 'make the circle blue' });
+      // The queue's start-by time is the api's own bookkeeping; it never reaches the bot.
+      expect(body).not.toHaveProperty('startBy');
+    }
+    expect(result.cliRender).toMatchObject({ taskId: `${String(bodies[0].taskId)}-a2`, attempt: 2, ranOn: 'antigravity-cli', providerConfigAction: 'match' });
+    expect(runtime.switches, 'neither turn switched the bot').toEqual([]);
+    expect(observations()).toHaveLength(2);
   }, 60_000);
 });
 

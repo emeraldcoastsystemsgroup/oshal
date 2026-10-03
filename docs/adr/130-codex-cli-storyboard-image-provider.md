@@ -1,6 +1,6 @@
 # ADR-130 — codex-cli storyboard image provider (demo-mode rendering on the swarm's own harness)
 
-**Status:** Accepted; amended 2026-10-02 (the render bot's own harness picks the image rail; antigravity-cli rail; phase 2 not built; amendment (b): the image-turn prompt framing, the SEC-05 carve for image turns) and 2026-10-03 (a bot found on a stale default is first corrected onto its own setting; Guard A's refusals say which way the turn failed)
+**Status:** Accepted; amended 2026-10-02 (the render bot's own harness picks the image rail; antigravity-cli rail; phase 2 not built; amendment (b): the image-turn prompt framing, the SEC-05 carve for image turns) and 2026-10-03 (a bot found on a stale default is first corrected onto its own setting; Guard A's refusals say which way the turn failed; amendment (c): a `generate_image` ERROR is retried as up to two fresh turns inside the caller's deadline, and the render bot takes one image turn at a time)
 **Date:** 2026-08-22
 **Extends:** ADR-082 (storyboard provider family), ADR-127 (demo-mode CLI carve), ADR-036 (bot-owned execution)
 
@@ -268,3 +268,70 @@ a ticket turn are unchanged), plus the updated `storyboard-antigravity-image-tur
 `storyboard-cli-image-wiring`, `storyboard-codex-cli-provider`, `bot-node-prompt-carrier`,
 `live-acceptance-runner` and `live-acceptance-storyboard-agy` suites. The live proof on the box is
 still the `storyboard-agy` case after a deploy of this change.
+
+**Amendment (c), 2026-10-03 — retry a `generate_image` ERROR as fresh turns; one image turn at a
+time per render bot.** After amendment 2026-10-03 shipped (main `3f06817f`, deployed 04:41 UTC), the
+operator-approved measured run of 10 interleaved pairs (04:41 to 04:47 UTC) passed Create's region
+edit 10 of 10 and the storyboard render card 4 of 10. All six failures were Guard A's "`generate_image`
+ran and ended in ERROR": the tool's own error was `TOOL_ERROR` "no image generated in response", the
+model then replied `NO_IMAGE_CAPABILITY`, and no failover line was logged. It was not throttling:
+Create's renders, seconds apart on the same Antigravity login and endpoint, all passed. And a fresh
+attempt does not inherit the last one: byte-identical replays in fresh conversations went ERROR, DONE,
+ERROR. Operator decision 2026-10-03: "Retry, max 3, fresh turns" and "Throttle image renders".
+
+- **Retry.** The `antigravity-cli` provider runs a render again only when a failed attempt's error
+  message ends with Guard A's fixed words, `image turn refused: the event stream shows no
+  generate_image tool step that reached DONE: generate_image ran and ended in ERROR`
+  (`ANY_BOT_IMAGE_TURN_ERROR_REFUSAL`, pinned equal to `agy-image-turn.js`), alone or followed by
+  Guard A's own ` [backoff]`. It never reads the untrusted diagnostic for that, so neither the tool's
+  text nor the model's reply can make a render retry or wait longer. Each retry is a fresh turn: a
+  new task id and workspace (`<id>-a2`, then `<id>-a3`), the anchor staged again, a new private HOME
+  on the bot. The waits are about 3 s and then 8 s, with up to 20 % jitter; with ` [backoff]` they are
+  about 20 s and then 45 s. Three attempts in all. Never retried: `generate_image` never ran, ran but
+  did not finish, reached DONE with no acceptable file, a missing or mismatched output, and any
+  failure that is not Guard A's; such a failure on the first attempt keeps its error exactly as
+  before.
+- **Guard A's `[backoff]` category.** Guard A appends ` [backoff]` to its ERROR refusal when the
+  ERROR step's own error text reads as a quota or rate limit by the provider failover classifier's
+  throttle vocabulary (`isProviderThrottle`). Only the tool's error decides it, never the model's
+  reply, and it can only lengthen the wait: the attempt limit and the deadline still hold. The token
+  is Guard A's own and matches none of the failover classifier's patterns, because the reason reaches
+  the error the node's provider failover classifies; the tool's text itself still rides only in the
+  diagnostic.
+- **Throttle.** The CLI image executor runs every render dispatch through an in-process queue keyed
+  by the render bot (`ImageTurnQueue`, `src/app/storyboard-image-turn-queue.ts`): the bot runs one image
+  turn at a time and other renders wait their turn in arrival order. The render bot's record is still
+  read and checked inside the turn, at dispatch. Text turns never enter the queue. It covers both CLI
+  rails.
+- **Deadline.** The whole render (its waits for the render bot, every attempt and the waits between
+  them) stays inside the caller's own deadline: `deadlineMs`, through `resolveStoryboardImageProvider`
+  or the provider's options. Callers that pass none get 120 s, the default deadline of Create's region
+  edit (`CREATE_REGION_EDIT_TIMEOUT_MS`) and Portrait Studio (`PORTRAIT_STUDIO_VENDOR_TIMEOUT_MS`).
+  The storyboard frame stage and the Test Lab render card pass the CLI render budget
+  (`STORYBOARD_CLI_IMAGE_TIMEOUT_MS`, 420 s), which the live case's one blocking call already carries
+  plus its margin. An attempt starts only while the time left still covers one attempt (30 s until
+  the render has timed one, then its longest attempt so far, its wait for the render bot included).
+  Each dispatch carries that latest start
+  time (`startBy`) to the queue, which answers `busy` with nothing dispatched when the bot is still
+  taken then. A render that stops says why: "render retries exhausted" (all three attempts failed, or
+  the deadline leaves no time for the next) or "image renders are busy". The deadline decides only
+  whether an attempt starts; a dispatch already running is bounded by its own dispatch budget, as
+  before. The provider's notes come after the bot's own words and carry no tool or model text; the
+  storyboard frame stage does not retry an exhausted render again (crossed for real in the image-turn
+  suite: three turns, not fifteen).
+- **Observability.** Each failed attempt is logged on the api (`antigravity-cli render attempt
+  failed`: `attempt` n/3, `category`, `waitMs`, `outcome`), a rendered frame reports
+  `cliRender.attempt`, and the Test Lab card's verdict and the `storyboard-agy` PASS line name the
+  attempt that rendered the frame. The card removes the tagged workspace and each attempt's.
+- **Not built.** Create and Portrait Studio do not pass their own configured deadline yet, so a
+  deployment that sets either below 120 s gets renders bounded at 120 s, not at its setting.
+
+Guards: `tests/unit/storyboard-antigravity-render-retry.spec.ts` (the provider over the real Guard A
+wording, fake timers measuring every wait: what is and is not retried, the fresh task ids, the waits,
+`[backoff]`, the deadline and `startBy`, busy, and that the diagnostic decides nothing),
+`tests/unit/storyboard-image-turn-queue.spec.ts` (the queue itself), plus the updated
+`storyboard-antigravity-image-turn` (fresh turns through the real chain and a real `agy` child, and
+` [backoff]` through the real provider failover with no rung run), `storyboard-cli-image-wiring` (two
+concurrent renders reach the bot one at a time; busy at `startBy`; a text turn is not queued),
+`storyboard-test-lab-render` and `live-acceptance-storyboard-agy` suites. The live proof is the measured
+run of `storyboard-agy` and `create-region-edit` pairs after a deploy of this change.
