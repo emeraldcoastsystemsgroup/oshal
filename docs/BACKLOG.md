@@ -34,8 +34,8 @@ from preparation or unit tests alone.
 | Status | Count | Meaning |
 |---|---|---|
 | IN PROGRESS | **0** | being worked in the current session |
-| OPEN — actionable | **20** | no decision, no live box needed; can be closed by an agent |
-| OPEN — needs operator | **71** | a decision, credential, account or purchase only the operator can make |
+| OPEN — actionable | **21** | no decision, no live box needed; can be closed by an agent |
+| OPEN — needs operator | **70** | a decision, credential, account or purchase only the operator can make |
 | OPEN — needs live proof | **74** | needs the running box, a deploy, hardware, or a human at a browser |
 | OPEN — blocked | **8** | waiting on something outside this repo |
 | OPEN — needs review | **0** | the triage could not decide; somebody has to read it |
@@ -2007,9 +2007,9 @@ to every signed-in person on every deployment.
   - The Portrait Studio case from item 4 passes on the box with its cleanup complete.
 
 ### Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)
-- **Status:** OPEN — needs operator · a contract change: a provider-switch schema change, and retiring the deployment-wide `STORYBOARD_IMAGE_PROVIDER` selector ("Not built (phase 2)" in the ADR-130 amendment 2026-10-02)
+- **Status:** OPEN — actionable · its scope is carried by "Capability providers per user (ADR-173) — build slices" (ADR-173 accepted 2026-10-03); it closes when that entry's S3 and S5 are done
 
-- **Pointer:** [ADR-173](adr/173-capability-providers-resolve-per-user.md), accepted 2026-10-03, supersedes this entry's scope: the per-bot image setting is the bot rung of its resolution order (D1, D2, D7) and `STORYBOARD_IMAGE_PROVIDER` is retired in its slice S5, both built under "Capability providers per user (ADR-173) — build slices". The Status and Remaining below predate that decision and are carried by that entry; this entry closes when its slices S3 and S5 are done.
+- **Pointer:** [ADR-173](adr/173-capability-providers-resolve-per-user.md), accepted 2026-10-03, supersedes this entry's scope: the per-bot image setting is the bot rung of its resolution order (D1, D2, D7) and `STORYBOARD_IMAGE_PROVIDER` is retired in its slice S5, both built under "Capability providers per user (ADR-173) — build slices". The "Why it needs the operator", "Remaining" and "Done when" lines below predate that decision and are carried by that entry; this entry closes when its slices S3 and S5 are done.
 - **Context:** phase 1 (core #1013, `d7986a88`) picks the image rail from the render bot's own effective provider.
   - A render bot whose harness has no image rail is refused: any harness other than `antigravity-cli`, `openai-codex` and `codex-cli` (for example `claude-code`, `cline`, `gemini-cli` and the Cline-backed ids).
   - The only way to name an image API is `STORYBOARD_IMAGE_PROVIDER`, one deployment-wide setting: the `codex` platform key, `comfyui`, `vertex` or `openrouter`. It is set in `.env` and passed to the api by `docker-compose.oshal-local.yml`.
@@ -2032,15 +2032,15 @@ to every signed-in person on every deployment.
   - It supersedes the scope of "Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)", which stays and points here, and it carries the user per-bot preference that ADR-162 names as a follow-up.
 - **Decision:** the operator approved D1 to D12 as written on 2026-10-03 ("Approve all 12 as written"). ADR-173 records each decision with its reason and the alternative considered. It adds tables, a resolver and a manifest key to core, and it changes who may choose a paying provider (D4), the order in which a user's choice meets a bot's setting (D1, D11) and a swarm default (D12).
 - **Remaining:** five slices build in order, each accepted on its own.
-  - S1: registry, availability, cost classes, swarm rows, and TTS and STT spend (core).
+  - S1: registry, availability, cost classes, the swarm and offer tables, the resolver with a required principal and D9's voice rule on today's core callers, TTS and STT spend, and the STT failover rewritten to D5 (core).
   - S2: user defaults and a "My defaults" card.
-  - S3: the bot rung, including a user's per-bot LLM choice.
+  - S3: the bot rung, including a user's per-bot LLM choice and, per D11, the user's general LLM preference moved below the administrator's per-bot rows with its pin migration.
   - S4: the `capabilities:` manifest block and a principal on every caller (core and store).
   - S5: retire `STORYBOARD_IMAGE_PROVIDER` and the hard-coded store chains.
-- **Done when:** each slice has tests that cross the boundary it claims and a live proof on the box.
-  - S1: a real-Postgres spec on the enforcing role shows a non-operator write to the swarm rows is refused; a swarm default changes the next call with no restart; a recorded clip transcribes through `local-stt` on the box before the operator moves the swarm STT default to it.
+- **Done when:** each slice meets its "Done when (tested)" and "Done when (live)" in ADR-173 "Rollout (slices with done-when)"; the headline proof of each:
+  - S1: a real-Postgres spec on the enforcing role shows a non-operator write to the swarm rows is refused; a swarm default changes the next call with no restart; a recorded clip transcribes through `local-stt` on the box before the operator moves the swarm STT default to it; a failed `gemini-stt` reaches no other provider and returns its own failure; a TTS and an STT call each write a cost event with the bot and caller.
   - S2: a non-operator test user's default is used on their next call, and a swarm-paid provider is not offered to them without an operator grant.
-  - S3: two users and one bot resolve to two different brains, shown from their dispatch records.
+  - S3: two users and one bot resolve to two different brains, shown from their dispatch records; an administrator's per-bot row beats the user default for that bot, and the pin migration lists and pins each affected user and bot.
   - S4: a Switchboard image and a D&D cutaway render for the operator on the box, which both refuse today, and a manifest preference is followed.
   - S5: no source reads a capability selector variable outside the seed loader, and with the Google key removed from the box only `gemini-stt` and `gemini-tts` become unavailable among the four capabilities.
 

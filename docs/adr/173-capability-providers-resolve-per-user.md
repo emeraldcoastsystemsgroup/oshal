@@ -45,13 +45,13 @@ Each fact below is cited to the file and line at the commits above.
 
 | | Text to speech | Speech to text | Image | Video |
 |---|---|---|---|---|
-| Providers in code | `browser`, `gemini-tts`, `google-cloud-tts`, `openai-tts` | `browser`, `gemini-stt`, `google-cloud-stt`, `local-stt` | `codex` (OpenAI images), `comfyui`, `vertex`, `openrouter`, `codex-cli`, `antigravity-cli` | Veo; Google Vids on the series owner's own node; ComfyUI, deck-to-video and Veo providers in a loop nothing calls |
-| What picks one | the request, then the caller's saved choice, then the swarm default in a file | the swarm default in a file | `STORYBOARD_IMAGE_PROVIDER`, else the render bot's harness | nothing: each surface hard-wires its provider |
-| Moving the swarm default | edit `config-seed/global-config.json`, restart the api | same | set an environment variable, recreate the api | not possible |
+| Providers in code | `browser`, `gemini-tts`, `google-cloud-tts`, `openai-tts` | `browser`, `gemini-stt`, `google-cloud-stt`, `local-stt` | `codex` (OpenAI images), `comfyui`, `vertex`, `openrouter`, `codex-cli`, `antigravity-cli`; outside the resolver, an Imagen client with no caller and the any-bot `vertexAITools` `generate-image` tool on the service account, registered only when `AGENT_MCP_TOOLS` is set (unset in every container on the box) | Veo; Google Vids on the series owner's own node; ComfyUI, deck-to-video and Veo providers in a loop nothing calls; the any-bot `generate-video` tool, registered the same way |
+| What picks one | the request, then the caller's saved choice, then the swarm default in a file | the swarm default in a file | `STORYBOARD_IMAGE_PROVIDER`, else `codex` outside demo mode, else (in demo mode) the render bot's harness | nothing: each surface hard-wires its provider |
+| Moving the swarm default | edit `config-seed/global-config.json`, restart the api | same | set `STORYBOARD_IMAGE_PROVIDER` and recreate the api to name an image API; in demo mode, a provider-switch write that changes the render bot's provider (its own row, else the fleet default) moves the rail (`antigravity-cli`, `codex-cli`, or a refusal) with no restart, and moves that bot's text brain with it | not possible |
 | Per user | provider and voice (`voice_user_prefs`) | none in core | none | none |
 | Per bot | none | none | only through the render bot's text harness | none |
 | Per application | a manifest `voice:` block that nothing reads | same | none | none |
-| Spend recorded | no | no | yes | Veo, by Video Studio |
+| Spend recorded | no | no | OpenRouter only, by four store packages | Veo, by Video Studio |
 | Provider unavailable | the call returns a `fallback` and the client speaks with the browser | the service tries the other server providers in registration order | the call throws and refuses to fall back to a paid provider | the call throws |
 
 #### Text to speech
@@ -128,8 +128,8 @@ Each fact below is cited to the file and line at the commits above.
   before the free on-host one. The failover was built after Gemini's free tier hit its quota and every dictation
   failed (guard `tests/unit/voice-stt-failover.spec.ts`).
 - **Per user and per bot.** None in core. Calling Assistant keeps its own per-person `sttProvider`
-  (`store: calling-assistant/oshal-app.yaml:54`, candidate list `calling-assistant/routes/routes.js:42`, passed at
-  `calling-assistant/routes/service.js:122`).
+  (`store: calling-assistant/oshal-app.yaml:54`, candidate list `store: calling-assistant/routes/routes.js:42`, passed at
+  `store: calling-assistant/routes/service.js:122`).
 - **Pinned.** `ambient-speaker-routes.ts:450-452` names `google-cloud-stt` for word timestamps, and an explicit
   provider gets no failover. Little Monsters' lecture transcription calls `resolveForApp()` with no config
   (`store: little-monsters/routes/education-voice-routes.js:117`).
@@ -141,28 +141,38 @@ Each fact below is cited to the file and line at the commits above.
   selected), `codex-cli` and `antigravity-cli` (free, subscription-included, on the render bot) (`storyboard-image-providers.ts`,
   `storyboard-antigravity-image-provider.ts:192`). The interface already carries `costClass`, `available()` ("cheap: no
   generation") and an optional `healthCheck()` because "key-presence lies" (`storyboard-image-providers.ts:76-99`).
+  Outside the resolver there are two more: an Imagen client that nothing calls (`image-client.ts:47`), and the any-bot
+  `vertexAITools` `generate-image` tool, which mints a service-account token (`vertexAITools.js:31-42`) with no
+  `VEO_ALLOW_SWARM_BILLING` check and is registered only when `AGENT_MCP_TOOLS` is set (`startup-swarm-runtime.js:656`). A
+  provisioned bot gets that variable from its manifest's `mcp_tools` (`ProvisioningManager.js:572`); no compose service
+  sets it, and it was unset in every container on the box.
 - **Selection** (`storyboard-image-default.ts:115-121`): `STORYBOARD_IMAGE_PROVIDER` if set; else `codex` outside demo
   mode; else the render bot's own harness picks the rail (ADR-130). The render bot is `STORYBOARD_CLI_IMAGE_BOT_ID`,
   default general-bot (`storyboard-cli-image-wiring.ts:55`, `:185`). The command-line rails need `DEMO_MODE` and an
   operator caller, and `isDeploymentOperatorSub(undefined)` is false (`deployment-mode.ts:42-44`). On the box the rail
   is `antigravity-cli`.
-- **Settings.** None per user, per application or per bot. ADR-130 "Not built (phase 2)" is a per-bot image setting
-  and image APIs selectable per bot; the BACKLOG entry "Images phase 2: a per-bot image setting, and image APIs as
-  bot-level choices (ADR-130)" is open.
+- **Settings.** None per user or per application, and per bot only indirectly, through the render bot's own text harness
+  (above). ADR-130 "Not built (phase 2)" is a per-bot image setting and image APIs selectable per bot; the BACKLOG entry
+  "Images phase 2: a per-bot image setting, and image APIs as bot-level choices (ADR-130)" is open.
 - **Callers that drop the user.** Switchboard and D&D call the resolver with no `userSub`
   (`store: switchboard/routes/switchboard-compose-routes.js:193`, `store: dnd/lib/dnd-media-service.js:245`). With the
   render bot on a command-line rail, both are refused as "not configured" for everyone, the operator included. These pass
-  it: the core series pipeline (`series-pipeline.ts:392`, `storyboard-frames.ts:293`), Portrait Studio
+  it: the core series pipeline (`series-pipeline.ts:392`, `storyboard-frames.ts:337`), Portrait Studio
   (`store: portrait-studio/routes/portrait-studio-routes.js:111`) and Create's region edit
   (`store: create/routes/create-region-edit-routes.js:182`).
 - **Who pays for `vertex`.** The token comes from the caller's `google` connector (`series-orchestrator.ts:86-91`) or
   `gcp` connector (`store: video/routes/video-routes.js:497-511`), or from the swarm service account only when
-  `VEO_ALLOW_SWARM_BILLING` is `true`. The `gcp` connector's default scope is read-only (`connector-provider-registry.ts:121`)
-  and both `gcp` connections on the box hold it. Two places assume `codex` when the selector is unset
-  (`series-orchestrator.ts:89`, `store: video/routes/video-routes.js:498`).
+  `VEO_ALLOW_SWARM_BILLING` is `true`. With the flag set, the series conductor uses it in place of the owner's `google`
+  token (`series-orchestrator.ts:90`); Video Studio's storyboard route uses it only when the caller has no `gcp` token
+  (`store: video/routes/video-routes.js:499-503`). The `gcp` connector's default scope is read-only
+  (`connector-provider-registry.ts:121`) and both `gcp` connections on the box hold it. Two places assume `codex` when the
+  selector is unset (`series-orchestrator.ts:89`, `store: video/routes/video-routes.js:498`).
 - **When unavailable.** The resolver throws "Refusing to fall back to a paid provider you did not ask for"
   (`storyboard-image-providers.ts:754`, `:782`). Spend is recorded by `recordStoryboardImageCost`
-  (`storyboard-image-cost.ts:51`) into `chat_tasks` and `oshal_cost_events`.
+  (`storyboard-image-cost.ts:51`) into `chat_tasks` and `oshal_cost_events` only when a provider reports a vendor cost,
+  which only `openrouter` does, and only by Portrait Studio, Create, Switchboard and D&D. The paid `codex` and `vertex`
+  providers report no cost, the command-line rails report `costUsd: null`, and the core series storyboard stage records
+  nothing (`storyboard-frames.ts:304`).
 - **Variables compose does not pass.** `docker-compose.oshal-local.yml` passes `STORYBOARD_IMAGE_PROVIDER` (line 336) but
   does not list `COMFYUI_URL` or `VEO_ALLOW_SWARM_BILLING`, so setting them in `.env` has no effect.
 
@@ -190,7 +200,11 @@ Each fact below is cited to the file and line at the commits above.
   (`provider-switch-routes.ts:206-216`, `:229-231`).
 - Per-user credentials live in `oshal_connections`, encrypted under each user's own data key
   (`connector-token-crypto.ts:2-12`); a bring-your-own LLM is provider `any-llm` (`byo-llm-routes.ts:1-21`). The swarm's
-  keys are read through `getSwarmApiKey` (`swarm-credentials.ts:215`); the speech providers read the environment directly.
+  own keys have a config-aware reader, `getSwarmApiKey` (`swarm-credentials.ts:215`), but only the image providers and
+  vision-describe call it (`storyboard-image-providers.ts:599`, `:631`; `vision-describe-service.ts:118`). The LLM ladder's
+  swarm-key rungs read the environment directly, as the speech providers do: the operator lane through `laneKeyFromEnv`
+  (`openai-compat-lanes.ts:68-74`, `free-tier-rotation.ts:813`) and the platform OpenRouter lane
+  (`free-tier-rotation.ts:482`).
 - A user's turn resolves in `resolveUserBrain` (`user-brain-resolution.ts:453-467`): the named choice if usable, then the
   demo command-line default for the operator (`DEMO_CLI_ORDER`, `:65`, `:460`), then the hosted ladder
   (`free-tier-rotation.ts:855-876`).
@@ -199,18 +213,24 @@ Each fact below is cited to the file and line at the commits above.
   missing piece for an unavailable option (`llm-preference-routes.ts:211-242`).
 - A bot resolves to its own row, then the fleet row for a bot the registry runs on an LLM harness, then the registry; an
   unknown id fails closed (`bot-provider-switch.ts:312-338`, `:179`).
-- A user's choice meets a bot's row in `stampRemoteBrain` (`inline-bot-execution.ts:270-335`): an explicit
+- A user's choice meets a bot's row in `stampRemoteBrain` (`inline-bot-execution.ts:270-362`): an explicit
   `byoLlmConnection` or `providerId` wins; with no user, the administrator's rows apply; otherwise the user's choice is
   stamped on the dispatch as a command-line harness, `bot-default` (the bot's own record) or a hosted connection. Protected
-  application dispatch and Jarvis use the same seam (`extensions/swarm/index.ts:799-809`, `jarvis-orchestrator.ts:360`).
+  application dispatch and Jarvis call the same resolver, `resolveUserBrain`, and apply its result themselves instead of
+  through `stampRemoteBrain`: protected dispatch in `supportedProtectedRequest` (`extensions/swarm/index.ts:800-809`,
+  `manifest-worker-application-execution.ts:100-170`), and Jarvis at `jarvis-orchestrator.ts:360-389`, whose `cli` or
+  hosted result `stampRemoteBrain` then leaves unchanged (`inline-bot-execution.ts:276`).
 - A user's per-bot LLM setting does not exist: ADR-162 §2 lists it as "follow-up — does not exist yet"
   (`162-a-bots-brain-is-layered-records.md:58`), and there is no table or route for it.
 
 ### What is wrong
 
-- **G1. The swarm default is a file or an environment variable.** Changing it means a restart or a container
-  recreate, and some variables never reach the container. Video has none. ADR-162 §7 already requires one write with no
-  restart for LLM.
+- **G1. The swarm default is a file or an environment variable.** For images on a demo deployment with
+  `STORYBOARD_IMAGE_PROVIDER` unset, it is instead a by-product of the render bot's LLM switch row (its own, else the
+  fleet default). Changing the file or a variable means a restart or a container recreate, and some variables never reach
+  the container. The switch-row write needs no restart, but it can only move images between `codex-cli` and
+  `antigravity-cli` (any other harness is refused), and it moves that bot's text brain with them. Video has none. ADR-162
+  §7 already requires one write with no restart for LLM.
 - **G2. Only TTS has a user setting, and nothing else shares its table.** STT, image and video have none; Calling
   Assistant and Little Monsters each keep their own setting in their own place.
 - **G3. The application's declared preference is ignored.** Five manifests declare a `voice:` block that nothing reads,
@@ -271,7 +291,7 @@ admits, which is swarm root and admin roles plus the break-glass allowlist (ADR-
 
 A rung is used when it has a setting and that setting's provider is available to this caller (D3). Otherwise the next
 rung is tried, subject to D5. Each resolution reports the rung that answered (`app`, `user-bot`, `bot-row`,
-`user-default`, `swarm-default`), as ADR-162 does for a bot's provider (`162-a-bots-brain-is-layered-records.md:116-118`).
+`user-default`, `swarm-default`), as ADR-162 does for a bot's provider (`162-a-bots-brain-is-layered-records.md:118-120`).
 
 Example, an illustration of the rule and not observed behaviour: a signed-in user triggers narration in an application
 whose manifest prefers `gemini-tts`. Rung 1 is skipped because the Google key is not set. Rung 2: the application's bot has
@@ -281,32 +301,35 @@ it speaks with that and reports `user-default`. Both providers are `swarm-paid`,
 **Why.** It is the order the operator described: the application's preference, then the bot's, then the user's own
 default as the fallback, with the swarm default behind it. One order for four capabilities is one resolver, one
 explanation ("which rung chose this?") and one place to test. Today the orders differ: TTS is request, then user, then
-swarm default and ignores the application; STT is the swarm default alone; image is an environment variable and then the
-render bot's harness; video has none.
+swarm default and ignores the application; STT is the swarm default alone; image is an environment variable, then `codex`
+outside demo mode, else the render bot's harness; video has none.
 
 **Considered.** Order by owner, as ADR-162 does for LLM: the user's own choices (per bot, then default) above the
 application's preference and the administrator's row. A user could then always override an application, including its
 voice, and an application could no longer guarantee a provider.
 
 **Note.** ADR-162 puts a user's general LLM preference above the administrator's per-bot rows. D11 moves it below them,
-so LLM follows this order.
+so LLM follows this order of rungs; for LLM a user with no row is on `auto`, which walks the user's own ladder rather than
+skipping to the portal default (D11).
 
 ### D2. Storage: four small tables that mirror the LLM records — decided
 
 **Decided.** Table names are chosen in S1; the shapes are:
 
 - **A per-user table** keyed `(user_sub, capability)`, holding `provider_id` and an `options` jsonb (voice, model).
-  Forced row-level security, owner or operator, the policy of migrations `112` and `122`. It absorbs `voice_user_prefs`:
+  Forced row-level security, owner or operator, the policy of migrations `112-owner-column-rls.sql` and
+  `122-user-llm-preference.sql`. It absorbs `voice_user_prefs`:
   existing rows are copied across and the old table is left in place.
 - **A per-user per-bot table** keyed `(user_sub, agent_id, capability)`, same columns and policy. Its capability set
   includes `llm`, which is the missing per-user per-bot rung (D11).
 - **One swarm table** keyed `(scope_id, capability)`, where `scope_id` is `fleet-default` or an agent id, mirroring
-  `oshal_bot_provider_switch` (migration `147`): every identity may read it; the table's own policy lets only an operator
-  write it, so the database refuses a non-operator write whatever the route does. `updated_by` records who. The voice
+  `oshal_bot_provider_switch` (migration `147`): every identity may read it; the table's own policy lets only the operator
+  identity, or server work running under the system identity, write it (`147-bot-provider-switch.sql:63-73`), so the
+  database refuses a signed-in non-operator's write whatever the route does. `updated_by` records who. The voice
   block of `global-config.json` and the existing selectors become the seed: with no row for a `(scope, capability)`
-  pair, resolution behaves as it does today.
-- **A small provider-offer table** keyed `(capability, provider_id)`, holding who a provider is offered to (D4) and an
-  optional quota label; same read and write policy as the swarm table.
+  pair, the swarm default is the provider the file or the selector names today; D4 and D5 still apply.
+- **A small provider-offer table** keyed `(capability, provider_id)`, holding who a provider is offered to (D4), its unit
+  price for recording spend (D4) and an optional quota label; same read and write policy as the swarm table.
 
 Rows hold provider ids and options, never a secret (ADR-162 §5). A write validates the provider id against that
 capability's registry first, as the switch routes do; the database constraint only refuses shapes no validator would
@@ -331,7 +354,8 @@ the resolver, so an option cannot be offered that a call would not run on. It ch
 2. a credential this caller may use exists, read through the reader the call uses: the swarm's credential through
    `getSwarmApiKey`, or `getSwarmPlatformApiKey` for OpenAI's platform API (`swarm-credentials.ts:215`, `:268`), because
    `getSwarmApiKey('openai')` can return the ChatGPT subscription token, which the platform's image and model endpoints
-   refuse; or the caller's own connector;
+   refuse, or the Google service-account token readers for the Cloud speech, `vertex` and Veo providers
+   (`getGoogleAccessToken`, `getGoogleCloudPlatformAccessToken`, `getVertexAccessToken`); or the caller's own connector;
 3. policy: the operator has not switched the provider off, a user-written choice satisfies D4's grant, and the
    command-line image rails keep their ADR-127 carve;
 4. a cheap health probe where one exists, cached briefly with the interval a setting. Today that is the image providers'
@@ -367,7 +391,7 @@ resolver can again disagree.
   (`guest-capability-matrix.ts:118-120`).
 - TTS and STT spend is recorded as image spend is: a cost event in `chat_tasks` and `oshal_cost_events` carrying the
   accountable bot and the caller (`recordStoryboardImageCost`, `storyboard-image-cost.ts:51`). The amount is the call's
-  units (characters, audio seconds) times a unit price declared on the provider row, never a literal in code. A `free`
+  units (characters, audio seconds) times the unit price on the provider's offer row (D2), never a literal in code. A `free`
   call writes no spend event of its own. A shared free-tier quota is labelled as such in the list.
 - The command-line image rails keep their ADR-127 carve, `DEMO_MODE` and an exact `OSHAL_OPERATOR_SUBS` subject, which is
   stricter than the operator role; this ADR widens none of who may run a command-line harness.
@@ -388,14 +412,15 @@ is still recorded. Nothing changes for users; the operator relies on the vendor'
 
 **Decided.**
 
-- A rung is skipped only when its provider is unavailable (D3). A provider that was available and then fails at call time
-  fails the call clearly, under the retry rules its own rail already has; the resolver does not move to another provider.
+- A rung that names a provider is skipped only when that provider is unavailable (D3). A provider that was available and
+  then fails at call time fails the call clearly, under the retry rules its own rail already has; the resolver does not
+  move to another provider.
 - A skip never lands on a different payer: the next provider must be `free` or in the same cost class as the one it
   replaces. Otherwise the call is refused at rung 5, naming the missing piece.
 - Browser speech stays a choice the client makes after a refusal (`store: little-monsters/tools/lm-voice.js:93-105`); the
   server does not substitute it silently.
-- This applies to the four media capabilities. LLM failover stays as ADR-162 and migration `148` define it: an
-  administrator-written `fallback_order`.
+- This applies to the four media capabilities. LLM failover stays as migration `148` defines it: an
+  administrator-written `fallback_order` on the switch rows (the bot's row, else the fleet row, else the environment).
 
 **Why.** Today's STT walks registration order, which tries the paid Cloud provider before the free on-host one
 (`voice-service.ts:117-129`), so a free-tier quota wall silently becomes a paid call. D&D's chain also moves on throttles
@@ -418,12 +443,12 @@ served by a provider they did not pick. A variant is the LLM pattern: an operato
 config-admin page, effective without a restart: the write refreshes the snapshot in the writing process and the rest read it
 on the snapshot's interval, the `provider-switch` pattern (`provider-switch-routes.ts:154-160`). The route admits operator
 browser sessions and refuses a service secret (as `provider-switch-routes.ts:206-216` does), and the table's own policy
-refuses a non-operator write. The acceptance test is ADR-162 §7's: moving the swarm's speech-to-text from one provider to
-another is one write, with no pull request, image deploy or restart.
+refuses a write from any identity other than the operator or the system identity. The acceptance test is ADR-162 §7's:
+moving the swarm's speech-to-text from one provider to another is one write, with no pull request, image deploy or restart.
 
 **Why.** A TTS or STT default change is a bind-mounted file and an api restart (`tts-provider-registry.ts:39-41`), an image
-default is an environment variable and a recreate, some of those variables never reach the container, and video has no
-default (G1).
+default is an environment variable and a recreate, or on a demo deployment with the selector unset a by-product of the
+render bot's LLM switch row, some of those variables never reach the container, and video has no default (G1).
 
 **Considered.** Keep the file and the environment and add the user layers only. The operator still cannot move a default
 from the cockpit, and the environment selectors (S5) cannot be retired.
@@ -446,10 +471,12 @@ is smaller, but an administrator then cannot give an application's bot its own v
 
 **Decided.** The resolver takes the caller's principal (the user's subject), the application and the bot as required
 inputs. Scheduled or swarm-owned work passes an explicit system principal and resolves the operator-written rungs only. The
-callers that drop or ignore the user today are fixed in S4: video narration (`video-render-service.ts:59`) and deck narration
-(`deck-to-video-provider.ts:92`), the D&D and Game Show voice chains, `POST /api/voice/transcribe`
-(`voice-controller.ts:45-56`), Switchboard and D&D images, and Video Studio's Veo call (`veo-client.ts:172-174`). A guard spec
-fails when the resolver is called without a principal.
+callers that drop or ignore the user today are fixed in S1 (the core route `POST /api/voice/transcribe`
+(`voice-controller.ts:45-56`), which S1's live proof routes through the resolver) and in S4 (the rest): video narration
+(`video-render-service.ts:59`) and deck narration (`deck-to-video-provider.ts:92`), the D&D and Game Show voice chains,
+Little Monsters' lecture transcription (`store: little-monsters/routes/education-voice-routes.js:117`), Switchboard and D&D
+images, and Video Studio's Veo call (`veo-client.ts:172-174`). A guard spec fails when the resolver is called without a
+principal.
 
 **Why.** A user default can only apply to a call that says whose it is. On the box, the missing `userSub` already makes
 Switchboard and D&D images refuse for everyone (G4).
@@ -554,18 +581,23 @@ quota wall surfaces as a failed transcription and the key stays load-bearing for
   capability, what is available to them and, for each unavailable provider, why. By default every user follows the swarm
   default ("portal default"), as the operator asked.
 - **What changes for existing behaviour,** each named so none is a surprise:
-  - STT stops failing over from one cost class to another on a runtime error, and D&D's chain stops moving on throttles and
-    timeouts (D5).
+  - STT stops failing over to any other provider on a runtime error (a provider that was available and then fails, fails
+    the call), and D&D's chain stops moving on throttles and timeouts (D5).
   - The swarm STT default moves to `local-stt` by one operator write (D12).
   - The old `voice:` blocks become live preferences (D10); Little Monsters' read-aloud, D&D and Game Show are affected.
   - TTS and STT spend appears in the cost views (D4).
-  - A non-operator user sees swarm-paid providers only when the operator has granted them (D4).
+  - A non-operator user can choose a swarm-paid provider only when the operator has granted it; without the grant it is
+    listed as unavailable ("not offered to you") and saving it answers 409 (D4).
   - Switchboard and D&D images work for the operator on the command-line rails once they pass the user (D8).
+  - For LLM, the user's general preference moves below an administrator's per-bot row (D11, S3): where an operator has
+    written a per-bot row, users on `auto` follow it and users with a named preference are pinned by an equal user
+    per-bot row; the operator's box held no per-bot rows on 2026-10-03.
 - **What does not change.** The ADR-127 carve for command-line harnesses, ADR-162's administrator rows and `fallback_order`,
   the rule that no row means today's behaviour (ADR-162 §4), and the rule that no credential is stored in these tables.
-- **Cost of building.** Four tables with migrations and real-role security specs; a registry, an availability function
-  and a resolver for each capability; a user card, a config-admin card and per-bot panels; one store pull request per
-  package that calls a media capability (application code lives in the store, CLAUDE.md Rule 0c); a guard for each decision.
+- **Cost of building.** Four tables with migrations and real-role security specs; a registry and an availability function
+  for each capability, and one resolver shared by the four; a user card, a config-admin card and per-bot panels; one store
+  pull request per package that calls a media capability (application code lives in the store, CLAUDE.md Rule 0c); a
+  guard for each decision.
 - **Scope.** This ADR builds nothing. It supersedes the scope of the BACKLOG entry "Images phase 2: a per-bot image
   setting, and image APIs as bot-level choices (ADR-130)", which stays and points here, and it carries the user per-bot
   preference that ADR-162 names as a follow-up. ADR-130 and ADR-162 each carry a dated one-line pointer to this ADR
@@ -594,23 +626,26 @@ functionality"). Database claims are proved against the real enforcing role and 
 - **S1. Registry, availability, cost classes, swarm rows and spend (core).** Provider declarations with a cost class and an
   availability function per capability (D3, D4); the swarm table and the offer table, seeded from `global-config.json`
   and the existing selectors (D2, D6); the operator route and config-admin card; unit prices and spend recording for TTS and
-  STT (D4); the STT runtime failover rewritten (D5); the resolver with a required principal (D8), wired to the core callers
-  that exist today.
+  STT (D4); the STT runtime failover rewritten (D5); the resolver with a required principal (D8) and D9's voice rule, wired
+  to the core callers that exist today.
   - Done when (tested): a real-Postgres spec on the enforcing role shows every identity reads the swarm rows and a
     non-operator write is refused by the table; a spec over the real snapshot shows a swarm write changes the next
     resolution with no restart; for each capability a spec shows the options list and the resolver agree for every provider;
-    `voice-stt-failover.spec.ts` is rewritten to D5 and a spec shows a failed `gemini-stt` never reaches `google-cloud-stt`;
-    a TTS call and an STT call each write a cost event with the bot and caller; a guard fails when a core call site calls
-    the resolver without a principal.
+    `voice-stt-failover.spec.ts` is rewritten to D5 and a spec shows a failed `gemini-stt` reaches no other provider
+    (neither `google-cloud-stt` nor `local-stt`) and returns its own failure; a spec shows that a TTS pair whose provider is
+    unavailable lands on the next provider with that provider's `defaultVoice`, and no call sends a voice id the landing
+    provider does not list; a TTS call and an STT call each write a cost event with the bot and caller; a guard fails when
+    a core call site calls the resolver without a principal.
   - Done when (live): on the box a recorded clip transcribes through `local-stt` with the expected text; the operator then
     writes the swarm STT row to `local-stt` with no restart, and the next Jarvis dictation's result names `local-stt` while
     its log line names the rung `swarm-default`.
 - **S2. User defaults.** The per-user table with `voice_user_prefs` copied across, routes mirroring
   `/api/settings/llm-default`, the "My defaults" card, the offer rows and the operator's grant control; the Spoken voice
-  panel keeps working through its routes.
+  panel's `GET`/`POST /api/voice/prefs` read and write the per-user table through the same availability function (D3, D4).
   - Done when (tested): a real-Postgres spec shows a user reads and writes only their own rows; a swarm-paid provider is
-    absent from a non-granted user's available list and saving it answers 409; a browser test drives the card; a migration
-    spec copies a `voice_user_prefs` row and leaves its source.
+    absent from a non-granted user's available list and saving it answers 409; `POST /api/voice/prefs` answers 409 for a
+    swarm-paid provider without a grant, and a choice saved through it is the one the next call resolves; a browser test
+    drives the card; a migration spec copies a `voice_user_prefs` row and leaves its source.
   - Done when (live): a non-operator test user picks a free provider and the next call reports `user-default`; without a
     grant a swarm-paid provider shows unavailable for that user; after the operator's grant it can be saved.
 - **S3. The bot rung.** Administrator per-bot rows (operator route and per-bot panel), the per-user per-bot table with its
@@ -629,24 +664,35 @@ functionality"). Database claims are proved against the real enforcing role and 
     per caller shows it passes the principal; the principal guard now scans the store packages' call sites; `required: true`
     fails closed and the default falls through.
   - Done when (live): on the box, with the render bot on `antigravity-cli`, a Switchboard compose image and a D&D cutaway
-    render for the operator, which both refuse today; D&D narration follows its manifest preference; a non-operator's call to
-    the same surfaces uses their own default.
-- **S5. Retire the selectors.** `STORYBOARD_IMAGE_PROVIDER` and the two `codex` assumptions (`series-orchestrator.ts:89`,
-  `store: video/routes/video-routes.js:498`) stop being read; the hard-coded store chains are gone; compose stops listing the
-  selector; ADR-130's "Not built (phase 2)" paragraph and the BACKLOG entry "Images phase 2" are updated in the same change.
+    render for the operator, which both refuse today; D&D narration follows its manifest preference; a non-operator's
+    Switchboard compose image and D&D cutaway use their own image default (neither manifest declares an image preference).
+- **S5. Retire the selectors.** `STORYBOARD_IMAGE_PROVIDER` stops being read outside the seed loader, and the two `codex`
+  assumptions (`series-orchestrator.ts:89`, `store: video/routes/video-routes.js:498`) are removed; the hard-coded store
+  chains are gone; compose stops listing the selector; ADR-130's "Not built (phase 2)" paragraph and the BACKLOG entry
+  "Images phase 2" are updated in the same change.
   - Done when (tested): a guard fails if any source reads a capability selector variable outside the seed loader.
-  - Done when (live): with the Google key removed from the box, the picker shows `gemini-stt` and `gemini-tts` unavailable
-    with the missing piece and voice input and output still work on the swarm defaults. The operator LLM lane and Career
-    Hunter's search still read the key and are not part of this proof.
+  - Done when (live): with the Google key removed from the box for the proof and restored after it (the operator LLM lane
+    and Career Hunter's search still read it, are down for that window and are not part of this proof), the picker shows
+    `gemini-stt` and `gemini-tts` unavailable with the missing piece and voice input and output still work on the swarm
+    defaults.
 
 ## References
 
 - Code cited above: `src/features/voice/`, `src/features/voice-providers/`, `src/features/video-generation/services/`,
   `src/app/routes/` (`voice-routes.ts`, `user-brain-resolution.ts`, `llm-preference-routes.ts`, `inline-bot-execution.ts`),
-  `src/shared/llm-runtime/bot-provider-switch.ts`, `src/app/extensions/swarm/routes/provider-switch-routes.ts`, and the
-  migrations `112`, `122`, `147` and `148` in `scripts/migrations/`.
+  `src/shared/llm-runtime/bot-provider-switch.ts`, `src/app/extensions/swarm/routes/provider-switch-routes.ts`,
+  `src/app/extensions/swarm/index.ts`, `src/app/series-orchestrator.ts`, `src/app/series-pipeline.ts`,
+  `src/app/series-dispatch.ts`, `src/app/server-auxiliary-routes.ts`, `src/app/storyboard-cli-image-wiring.ts`,
+  `src/features/swarm-apps/types.ts`, `src/features/llm-provider/services/swarm-credentials.ts`,
+  `src/features/agent-management/services/provider-switch-store.ts`,
+  `src/features/swarm-orchestration/services/manifest-worker-application-execution.ts`,
+  `src/features/vision-describe/services/vision-describe-service.ts`, `src/shared/middleware/guest-capability-matrix.ts`,
+  `src/shared/deployment-mode.ts`, `any-bot/server/services/tools/vertexAITools.js`,
+  `any-bot/server/app-modules/startup-swarm-runtime.js`, `any-bot/server/services/ProvisioningManager.js`,
+  `docker-compose.oshal-local.yml`, `config-seed/global-config.json`, `tests/unit/voice-stt-failover.spec.ts`, and the
+  migrations `112-owner-column-rls.sql`, `122`, `147` and `148` in `scripts/migrations/`.
 - Surfaces: `src/api/utilities.html` ("My default brain"), `src/api/jarvis-ambient-ui.js` ("Spoken voice"),
   `src/pages/config-admin/config-admin-fleet-default.js`.
-- Store packages cited: `dnd`, `game-show`, `little-monsters`, `calling-assistant`, `switchboard`, `video`,
+- Store packages cited: `dnd`, `game-show`, `little-monsters`, `lora`, `calling-assistant`, `switchboard`, `video`,
   `portrait-studio`, `create` and `career-hunter`.
 - BACKLOG: [Images phase 2](../BACKLOG.md) and the build entry "Capability providers per user (ADR-173) — build slices".
