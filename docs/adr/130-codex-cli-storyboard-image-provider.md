@@ -211,8 +211,11 @@ CLI image dispatch is also not built.
 - With the render bot on `antigravity-cli` (its own row, or the fleet default) and `DEMO_MODE` on,
   the resolver selects `antigravity-cli` for every consumer that passes the caller's sub: Video
   Studio's storyboard stage, Create's region edit and Portrait Studio. Any caller but the operator
-  gets the not-configured refusal. None of these has rendered on the box yet (see the live proof
-  below).
+  gets the not-configured refusal. Of these, Create's region edit has rendered on the box on
+  `antigravity-cli`: `create-region-edit` passed 2 of 2 on main `44d3a823`, then 10 of 10 on
+  `3f06817f` and 10 of 10 on `3642c1f1` (2026-10-03). Video Studio's storyboard stage and Portrait
+  Studio have no recorded live run on the box yet; the live proof below renders through the
+  provider directly, not through the storyboard stage.
 - Guards: `tests/unit/storyboard-image-default.spec.ts` (the mapping, the override, fail-closed, and
   the real reader over the canonical record and the real switch snapshot: bot row over fleet default
   both ways, registry declaration, unread snapshot, a row write moving the rail),
@@ -227,9 +230,12 @@ CLI image dispatch is also not built.
   storyboard-agy` (Lab card `storyboard-antigravity-render`): one frame on the render bot's
   antigravity rail, `generate_image` DONE, a real PNG, the bot's report that it ran its own
   `antigravity-cli` with a `match` reconcile, or a `corrected` one when it was found on a stale
-  default (2026-10-03), its workspace removed. It first ran on the box on 2026-10-03 (main
-  `44d3a823`) and passed 0 of 3: the first render produced its frame and was failed by the then
-  match-only check, and the next two were refused by Guard A.
+  default (2026-10-03), its workspace removed. On main `44d3a823` (2026-10-03 00:24 UTC) it passed
+  0 of 3: the first render produced its frame through `generate_image` and was failed by the then
+  match-only check, and the next two were refused by Guard A. On main `3f06817f` (04:41 to 04:47
+  UTC) it passed 4 of 10, and on main `3642c1f1` (09:19 to 09:26 UTC, amendment (c)) 9 of 10; each
+  PASS line names `generate_image` DONE and the bot's own `antigravity-cli` with a `match`
+  reconcile, with cleanup outstanding 0.
 
 **Amendment (b), 2026-10-02 — the image-turn prompt framing (SEC-05 carve, server-authored
 instruction only).** The first live render on the box (main `1848fb4f`, 19:00 UTC) was refused by
@@ -269,7 +275,11 @@ through the real handler, loop, provider, wrapper and a stand-in `agy` child, an
 a ticket turn are unchanged), plus the updated `storyboard-antigravity-image-turn`,
 `storyboard-cli-image-wiring`, `storyboard-codex-cli-provider`, `bot-node-prompt-carrier`,
 `live-acceptance-runner` and `live-acceptance-storyboard-agy` suites. The live proof on the box is
-still the `storyboard-agy` case after a deploy of this change.
+the `storyboard-agy` case after a deploy of this change. On main `44d3a823` (2026-10-03 00:24 UTC)
+it passed 0 of 3: the first render called `generate_image` under this framing and produced its
+frame, which the case, then match-only, failed on a `corrected` reconcile, and the next two were
+refused by Guard A. It passed 4 of 10 on main `3f06817f` and 9 of 10 on main `3642c1f1`
+(amendment (c)).
 
 **Amendment (c), 2026-10-03 — retry a `generate_image` ERROR as fresh turns; one image turn at a
 time per render bot.** After amendment 2026-10-03 shipped (main `3f06817f`, deployed 04:41 UTC), the
@@ -368,3 +378,19 @@ being store code, is a verbatim copy pinned by the sha256 of the store source),
 concurrent renders reach the bot one at a time; busy at `startBy`; a text turn is not queued),
 `storyboard-test-lab-render` and `live-acceptance-storyboard-agy` suites. The live proof is the measured
 run of `storyboard-agy` and `create-region-edit` pairs after a deploy of this change.
+
+*Live proof, 2026-10-03.* Main `3642c1f1` was deployed at 09:12 UTC (post-verify PASS). The measured
+run of 10 interleaved pairs from 09:19 to 09:26 UTC passed `create-region-edit` 10 of 10 and
+`storyboard-agy` 9 of 10, against 4 of 10 before this change: 6 frames rendered on attempt 1, 3 on
+attempt 2, and 1 render failed all three ("render retries exhausted: all 3 attempts failed"). The api
+logged 6 `antigravity-cli render attempt failed` lines, every one `category: "error"` (none
+`[backoff]`): attempt 1/3 with a retry wait of 3.1 to 3.3 s, 2/3 with 9.3 s, and 3/3 with
+`outcome: "exhausted"`. Each attempt's diagnostic was again `TOOL_ERROR` "no image generated in
+response" and `NO_IMAGE_CAPABILITY`, the render bot logged no failover (`retrying via`) line, and
+every run's cleanup was outstanding 0. The throttle check at 09:27:27 UTC started both cases at the
+same moment, and both passed, the storyboard on attempt 3 of 3. The api logged `cli storyboard
+render waited its turn on the render bot` twice, for the Create render (`waitedMs` 11958) and for the
+storyboard's attempt 2 (`waitedMs` 10846), and the render bot's image turns ran strictly one after
+another: storyboard attempt 1 from 09:27:27.956 to 09:27:39.953 (refused), Create from 09:27:39.994
+to 09:27:53.886, attempt 2 from 09:27:53.950 to 09:28:16.912 (refused), and attempt 3 from
+09:28:26.526 to 09:28:40.096 (rendered).
