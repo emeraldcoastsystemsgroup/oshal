@@ -66,6 +66,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L5: the deterministic location-reminder turn ("remind me next time I'm at the grocery store", "I'm at the grocery store, remind me next time", "... here") is detected before the time-reminder intent and answered by location-jarvis-intent.ts without a model turn, sharing the reminder branch; the build-request guard yields to it. Net +4 code lines.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | The model turn's context blocks run catalog, plan guidance, tools, artifacts, open work. With tools first and open work ahead of the plan guidance, every live turn on 2026-10-01 (37,816 characters against the node's 24,000) lost the plan guidance, the open work and 23 of the 40 catalog entries, so Jarvis could not plan a multi-step request. The plan guidance now sits directly after the catalog it refers to, and open work, which is bounded per task and least costly to clip, goes last. No line count change.
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | The catalog is built from the user's words (buildCatalogBlock(ctx, message)), so the apps the ask names lead it with their description and every other app is still listed by key; it was the first 40 routes regardless of the ask.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | Read and return global fleet overview data only for operators while preserving each caller's personal panels.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -73,7 +74,7 @@ import { Router, type Request, type Response, type RequestHandler } from 'expres
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { createChildLogger } from '@/shared/logger';
-import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { getTrustedServiceUserSub, isOperator } from '@/shared/middleware/authz';
 import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import {
@@ -646,9 +647,9 @@ export function createJarvisRoutes(ctx: AppContext, apiDir: string, artifactVisi
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
       const [bots, comms, activity, calendar] = await Promise.all([
-        buildBots(ctx), buildComms(ctx, sub), buildActivity(ctx, sub), buildCalendar(ctx, sub),
+        isOperator(req) ? buildBots(ctx) : undefined, buildComms(ctx, sub), buildActivity(ctx, sub), buildCalendar(ctx, sub),
       ]);
-      res.json({ bots, comms, activity, calendar });
+      res.json({ ...(bots === undefined ? {} : { bots }), comms, activity, calendar });
     } catch (err) {
       logger.error({ err }, 'jarvis overview failed');
       res.status(500).json({ error: (err as Error).message });

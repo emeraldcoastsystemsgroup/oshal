@@ -24,6 +24,7 @@
   7 | maintainer@emeraldcoastsystemsgroup.com | Prefer the shared response-renderer bundle for live, durable and resumed answers with the existing escaped renderer retained as the unavailable-bundle fallback.
   8 | maintainer@emeraldcoastsystemsgroup.com | Render typed answers with the shared DISPLAY_ONLY_RESPONSE_CAPABILITIES profile (a model-authored oshal:gallery/oshal:download now degrades to escaped text instead of loading a remote image or rendering an arbitrary link; a bundle without the profile falls back to the escaped renderer), hydrate the shared [data-mermaid] diagram output as well as the legacy .mermaid blocks, and load Mermaid from the same-origin lock-pinned build copy under /dist/vendor/mermaid instead of the floating mermaid@11 jsDelivr import (JVV-007).
   9 | maintainer@emeraldcoastsystemsgroup.com | Follow a turn the server reports as still working (2026-09-27): once /ask/result carries a progress note, the thinking bubble shows it and polling continues for as long as the server keeps the job (expiresInMs) instead of giving up after ~5 minutes, so the late answer replaces the note in the same bubble. A turn nobody reported as still working keeps the old ceiling and message.
+  10 | maintainer@emeraldcoastsystemsgroup.com | Hide unavailable fleet overview data, clear stale roster/activity visuals, and admit work polling only while the current fleet snapshot is readable.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -748,11 +749,12 @@ tick();
    The backdrop IS the live swarm. Every registered bot is a node (online = lit); any bot actively
    working a swarm work-item GRINDS — hard pulse, a spinning work-arc, particles streaming to the
    hub (work flowing to Jarvis), and its task title floating beside it. Fed by /overview
-   (roster + online) and /api/swarm/work-items (who's working on what) — gated GETs the signed-in
-   cockpit session can read. Positions stable across polls (keyed by agentId). Colours from TC.glow. */
+   (roster + online) and /api/swarm/work-items (who's working on what) — operator-only fleet
+   reads. Positions stable across polls (keyed by agentId). Colours from TC.glow. */
 const ncv=$('nodes'), nctx=ncv.getContext('2d');
 let NW=0,NH=0; const NDPR=Math.min(devicePixelRatio||1,2);
 let nodes=[], nt=0, clusterCenters={}, callout=null, nextCallout=3;
+let fleetVisible=false, fleetVersion=0, activityVersion=0;
 /* The orb's centre when the clusters were last laid out. If the orb moves after
    layout() (late web-font reflow, mobile address-bar resize, conversation scroll),
    the node-map must re-centre on it — otherwise the eyeball and the field drift
@@ -820,8 +822,27 @@ function layout(){
 function sizeNodes(){ NW=innerWidth; NH=innerHeight; ncv.width=NW*NDPR; ncv.height=NH*NDPR; nctx.setTransform(NDPR,0,0,NDPR,0,0); layout(); }
 sizeNodes(); addEventListener('resize', sizeNodes);
 /* Roster + online status from /overview (carries role + capabilities for grouping). */
+function validFleet(bots){
+  return Array.isArray(bots)&&bots.every(b=>b&&typeof b==='object'&&typeof b.agentId==='string'&&b.agentId.trim());
+}
+/* Clear transient activity independently of the last admitted roster. */
+function clearFleetActivity(){
+  activityVersion++;
+  setActivity([]); callout=null; nextCallout=nt+3;
+  if(nodeTipEl){ nodeTipEl.classList.remove('on'); nodeTipEl.innerHTML=''; }
+}
+/* Missing or unreadable fleet data cannot retain identities from an earlier privilege. */
+function clearFleet(){
+  fleetVisible=false; fleetVersion++;
+  clearFleetActivity(); nodes=[]; clusterCenters={};
+  nctx.clearRect(0,0,NW,NH);
+}
 function setNodes(bots){
-  const list=Array.isArray(bots)?bots:[];
+  if(!validFleet(bots)){ clearFleet(); return; }
+  fleetVisible=true; fleetVersion++;
+  const list=bots, ids=new Set(list.map(b=>b.agentId));
+  nodes=nodes.filter(n=>ids.has(n.id));
+  clearFleetActivity();
   list.forEach((b)=>{ const n=nodeById(b.agentId);
     if(n){ n.on=!!b.online; n.active=!!b.active; n.name=b.name||n.name; n.role=b.role||n.role; n.caps=b.capabilities||n.caps; n.roster=true; }
     else { const nn=placeNode(b.agentId,{name:b.name||'',role:b.role||'',caps:b.capabilities||[],on:!!b.online,roster:true}); nn.active=!!b.active; nodes.push(nn); } });
@@ -950,12 +971,19 @@ addEventListener('mousemove', (e) => {
   nodeTipEl.classList.add('on');
 });
 addEventListener('mouseout', (e) => { if (!e.relatedTarget && nodeTipEl) nodeTipEl.classList.remove('on'); });
-/* Live "who's grinding" poll — work-items map a bot to its active task; refresh briskly so the
-   field genuinely tracks the swarm. Gated GET; degrades silently if signed out. */
+/* Poll global work only after an admitted fleet snapshot; later snapshots supersede old responses. */
 async function loadActivity(){
+  if(!fleetVisible) return;
+  const epoch=fleetVersion, request=++activityVersion;
+  const current=()=>fleetVisible&&epoch===fleetVersion&&request===activityVersion;
   try{ const r=await fetch('/api/swarm/work-items',{credentials:'include'});
-    if(!r.ok) return; const j=await r.json(); setActivity(j.workItems||j.items||[]);
-  }catch(_){}
+    if(!current()) return;
+    if(!r.ok){ clearFleetActivity(); return; }
+    const j=await r.json(); if(!current()) return;
+    const items=j.workItems||j.items;
+    if(!Array.isArray(items)){ clearFleetActivity(); return; }
+    setActivity(items);
+  }catch(_){ if(current()) clearFleetActivity(); }
 }
 
 /* ================= DOM + state ================= */
@@ -1131,7 +1159,8 @@ function firstLine(md) {
 function shortDate(d) { const t = new Date(d); if (isNaN(t)) return String(d || '—'); return t.toLocaleDateString([], { month: 'short', day: 'numeric' }); }
 
 function renderSwarm(bots) {
-  if (!bots || !bots.length) return ccRow('codicon-circuit-board', 'Swarm', '—', 'No bots registered');
+  if (!validFleet(bots)) return '';
+  if (!bots.length) return ccRow('codicon-circuit-board', 'Swarm', '0/0', 'No bots registered');
   const on = bots.filter((b) => b.online).length, total = bots.length;
   return ccRow('codicon-circuit-board', 'Swarm', on + '/' + total, (total - on) + ' offline');
 }
@@ -1156,11 +1185,17 @@ async function loadOverview() {
   const cc = $('cc');
   try {
     const r = await fetch('/api/jarvis/overview', { credentials: 'include' });
-    if (r.status === 401) { cc.innerHTML = `<div class="cc-row"><span class="lbl err">Sign in to see status</span></div>`; return; }
+    if (!r.ok) {
+      clearFleet();
+      cc.innerHTML = `<div class="cc-row"><span class="lbl err">${r.status===401?'Sign in to see status':'Status unavailable'}</span></div>`;
+      return;
+    }
     const j = await r.json();
+    setNodes(j.bots);
     cc.innerHTML = renderSwarm(j.bots) + renderComms(j.comms) + renderActivity(j.activity) + renderCalendar(j.calendar);
-    setNodes(j.bots || []);   // light up the ambient swarm field with live online status
+    if(fleetVisible) void loadActivity();
   } catch (e) {
+    clearFleet();
     cc.innerHTML = `<div class="cc-row"><span class="lbl err">Status unavailable</span></div>`;
   } finally { ccLoading = false; }
 }
