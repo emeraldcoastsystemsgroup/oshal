@@ -29,6 +29,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP operator administration refusals and caller-summary compatibility.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Register connector/channel administration refusals and caller override/link compatibility.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP workflow administration and shared publishing regressions with member-work compatibility.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | Register mounted global swarm telemetry and Plane diagnostic operator boundaries with normal processing compatibility.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -175,6 +176,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/workflow-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-publishing-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-runtime.spec.ts' },

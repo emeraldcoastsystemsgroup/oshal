@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added run list and work item query routes for operator visibility
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Restricted private GitHub provider processing to operators
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Restrict global escalation records to operators before querying the store.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Restrict global run/work-item telemetry and shared Plane diagnostics to operators before reads.
  */
 
 import { Router } from 'express';
@@ -26,12 +27,12 @@ const logger = createChildLogger({ module: 'swarm-orchestration-routes' });
 export function createSwarmOrchestrationRoutes(controller: SwarmOrchestrationController): Router {
   const router = Router();
 
-  router.get('/smoke', controller.smokeTest);
+  router.get('/smoke', requiresOperator, controller.smokeTest);
   router.post('/providers/github/process', requiresOperator, controller.processProvider);
   router.post('/providers/:provider/process', controller.processProvider);
-  router.get('/runs', controller.listRuns);
-  router.get('/runs/:runId', controller.getRun);
-  router.get('/work-items', controller.listWorkItems);
+  router.get('/runs', requiresOperator, controller.listRuns);
+  router.get('/runs/:runId', requiresOperator, controller.getRun);
+  router.get('/work-items', requiresOperator, controller.listWorkItems);
   router.get('/escalations', requiresOperator, controller.listEscalations);
   router.post('/tickets', controller.submitTickets);
 
