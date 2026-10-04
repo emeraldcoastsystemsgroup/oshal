@@ -9,10 +9,11 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Show source field in processing summary card for diagnostic visibility
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added smoke-test controls and result rendering to the swarm debug window
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added recent runs list, work item details with execution output and verification results
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Import the same debug hooks through the browser-only barrel so server ownership binders stay outside the UI bundle.
  */
 
 import React, { useDeferredValue } from 'react';
-import { useDebugStream, useSwarmDebugPanel } from '../services';
+import { useDebugStream, useSwarmDebugPanel } from '../browser';
 
 /**
  * @description DebugWindow UI component. Displays logs, SSE events, and a local swarm control panel.
