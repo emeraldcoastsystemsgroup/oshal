@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pin production composition for service-secret-first signed HTTP authorization, verified identity forwarding, replay shutdown, key-role separation, and unsigned runtime/fallback prohibition.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin canonical encoded trusted-user headers on unsigned compatibility fallbacks.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "Bot runtime consolidation": the unsigned legacy any-bot runtime is now refused unconditionally rather than only when delegation material is configured, so the prohibition case pins the unconditional refusal and that the entrypoint no longer execs any-bot/server/app.js at all.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Follow the moved code. Token Chase replay left bot-node-server.ts for bot-node-token-chase-replay-route.ts (4b4a7f50), taking the "// ── /api/token-chase/replay-call" comment this section used as its end boundary, so the case threw "Missing wiring boundary". The swarm-execute section now ends at the replay route's registration call, the statement that follows it. The four ordering assertions and the identity-forwarding assertions are unchanged.
  */
 
 import { readFileSync } from 'node:fs';
@@ -26,7 +27,8 @@ function between(text: string, start: string, end: string): string {
 describe('bot-node delegation production wiring', () => {
   it('orders machine authentication, signed delegation, entitlement, and execution', () => {
     const server = source('src/app/bot-node-server.ts');
-    const route = between(server, "app.post(\n    '/api/swarm-execute'", '// ── /api/token-chase/replay-call');
+    // Token Chase replay moved to its own route module (4b4a7f50); its registration now ends this section.
+    const route = between(server, "app.post(\n    '/api/swarm-execute'", 'registerBotNodeTokenChaseReplayRoute(app, {');
     const machine = route.indexOf('authorizeBotNodeExecutionCall');
     const delegation = route.indexOf('delegationRuntime.authorize');
     const entitlement = route.indexOf('executeEntitlementGate');

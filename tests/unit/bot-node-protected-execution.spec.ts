@@ -8,9 +8,12 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin the call-time framework-tool bridge to the verified execution, owner, bot and isolated workspace rather than request-controlled provider options.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove a signed fallbackOrder survives real HTTP provider-authority forwarding and malformed fallback chains are rejected before task/provider use.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Derive the protected single-shot marker only for direct requests whose server-resolved brokered tool set is empty; a protected request with an application tool keeps the existing bridge path and never receives the marker.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Follow the moved code. Token Chase replay left bot-node-server.ts for bot-node-token-chase-replay-route.ts (4b4a7f50), so slicing the server at its app.post found nothing (-1). The guard now reads the module itself. Inside the route, the protected-transport refusal precedes executeReplay. The module's only provider call sits inside executeReplay, above the route, so the model is reachable only after that refusal. The server registers the route behind authorizeBotNodeCall. No comparison can fall back to -1.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Verify the provider call is structurally inside executeReplay so an adjacent or top-level call cannot satisfy the replay transport regression.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { startProtectedWorkerFixture, remoteEnvelope, REMOTE_AGENT, REMOTE_APP, REMOTE_ISSUER, REMOTE_SUB } from '../fixtures/bot-node-protected-execution';
 import { protectedBotWorkspaceId } from '@/app/bot-node-protected-workspace';
 
@@ -283,9 +286,37 @@ describe('protected production ingress wiring', () => {
     const server = readFileSync('src/app/bot-node-server.ts', 'utf8').replace(/\r\n/g, '\n');
     const route = server.slice(server.indexOf("app.post(\n    '/api/swarm-execute'"));
     expect(route.indexOf('delegationRuntime.authorize')).toBeLessThan(route.indexOf('createProtectedBotDispatchContext()'));
-    const replay = server.slice(server.indexOf("app.post('/api/token-chase/replay-call'"));
-    expect(replay.indexOf('assertBotNodeApplicationTransport')).toBeGreaterThan(-1);
-    expect(replay.indexOf('assertBotNodeApplicationTransport')).toBeLessThan(replay.indexOf('generateResponse'));
+    // Token Chase replay lives in its own module (4b4a7f50), registered behind machine authentication.
+    expect(server).toMatch(/registerBotNodeTokenChaseReplayRoute\(app, \{[^}]*authorize: authorizeBotNodeCall/);
+    const replayModule = readFileSync('src/app/bot-node-token-chase-replay-route.ts', 'utf8').replace(/\r\n/g, '\n');
+    const routeStart = replayModule.indexOf("app.post('/api/token-chase/replay-call'");
+    expect(routeStart).toBeGreaterThan(-1);
+    const replay = replayModule.slice(routeStart);
+    const transport = replay.indexOf('assertBotNodeApplicationTransport');
+    expect(transport).toBeGreaterThan(-1);
+    expect(replay.indexOf('executeReplay(')).toBeGreaterThan(transport);
+    assertReplayProviderContained(replayModule);
     expect(readFileSync('src/app/bot-node-runtime.ts', 'utf8')).toContain('runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId)');
   });
 });
+
+/**
+ * @description Verify the sole provider call belongs to the replay helper body rather than an adjacent or top-level statement.
+ * @param sourceText The replay module read as source data.
+ * @returns Nothing when the model call is structurally contained; fails the case otherwise.
+ */
+function assertReplayProviderContained(sourceText: string): void {
+  const parsed = ts.createSourceFile('replay-route.ts', sourceText, ts.ScriptTarget.Latest, true);
+  const execute = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'executeReplay');
+  if (!execute || !ts.isFunctionDeclaration(execute) || !execute.body) throw new Error('Replay helper body missing');
+  const calls: ts.CallExpression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'generateResponse') calls.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  expect(calls).toHaveLength(1);
+  expect(calls[0].getStart(parsed)).toBeGreaterThan(execute.body.getStart(parsed));
+  expect(calls[0].getEnd()).toBeLessThan(execute.body.getEnd());
+}
