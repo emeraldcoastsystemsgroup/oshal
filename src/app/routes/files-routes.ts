@@ -16,6 +16,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 Stage 2: POST /upload also accepts provider=oshal-local (uploadBytes grew the branch) — the always-present local store no longer needs a connector to receive a file.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 fix: callerSub resolves the trusted service-rail identity first (getTrustedServiceUserSub) — the artifact-handle relay redeems files-browser sources by re-fetching /download as the minting caller over that rail, and the session-only resolution 401'd it (found live; the mount widened to serviceSecretOr in the same change).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | DELETE / also accepts provider=oshal-local (one file in the caller's own local store; storage-browse guards the path and refuses folders), so a file the surface uploaded without a connector can be removed the same way — the live-acceptance class-material case cleans up its synthetic PDF through it.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The router re-enters every service-secret request as the named user (requireTrustedServiceUserIdentity, the jarvis-routes precedent) before any handler. The serviceSecretOr mount left those requests under the global OPERATOR stamp, so the connector-token refresh UPDATE on oshal_connections ran RLS-bypassed for a relay call while the same user's browser call ran as themselves. A service call naming no user is now refused 403 (it already resolved to no caller); session calls are unchanged. Pinned by the files-service-user driver in tests/unit/machine-write-identity.spec.ts.
  *
  * @module files-routes
  */
@@ -23,6 +24,7 @@ import { Router, raw, type Request, type Response } from 'express';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import { getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
 import type { AppContext } from '@/app/composition/app-context';
 import { getValidAccessToken } from './connectors-routes';
 import { listRoots, browse, readBytes, previewFile, uploadBytes, deleteEntry, type StorageProvider } from './storage-browse';
@@ -63,6 +65,10 @@ function needDropbox(res: Response): void {
  */
 export function createFilesRoutes(ctx: AppContext, apiDir: string): Router {
   const router = Router();
+  // The mount is serviceSecretOr(requiresAuth), and the global identity middleware stamps a
+  // service-secret request as OPERATOR. Re-enter as the named user (non-operator) before any
+  // handler runs, so a relay call reaches the database exactly as that user's browser would.
+  router.use(requireTrustedServiceUserIdentity);
 
   /** GET / — the file-browser surface. */
   router.get('/', (_req: Request, res: Response) => {

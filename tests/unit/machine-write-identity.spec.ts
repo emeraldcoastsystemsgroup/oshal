@@ -15,6 +15,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Keep the internal-tool identity probe on its intended grant-denial path by supplying the request-start executor descriptor now required by the fail-closed MCP boundary.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: readLocationTokenBinding joins the machine-auth markers (a location credential is a per-credential bearer the token-auth middleware admits on one path), so the core device ingest is discovered; its driver sends a real bearer through the real createCliTokenAuthMiddleware and the real location router over HTTP, answers the device read as the recorded owner, and observes the device subject 'device:<id>' with isOperator false on the connection at the observation INSERT, with the row's subject equal to it.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | The Jarvis driver drives the write again. c18f057a made POST /tasks/:id/delivered read the owner's row back through filterJarvisResultRows before the UPDATE; the driver's pool answered that read with no row, so the handler replied 200 {ok:false} and never wrote. The pool now serves the owner's row, and the driver fails unless the route answers {ok:true}. Inventory entry added for agent-provider-mount.ts, which discovery finds since its mount applies serviceSecretOr(requiresAuth) itself (cea82ded); it issues no query, and both routers it mounts are already inventoried.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Closed the discovery blind spot (docs/backlog/machine-auth-discovery-blind-spot.md, done-when 1): the markers now include serviceSecretOr and getTrustedServiceUserSub, the two helpers routes really use to admit the service rail. That re-finds artifact-exchange-core (stale only because a17f8d28 dropped its literal header) and surfaces six files, each inventoried after reading it end to end (machine-write-inventory-service-rail.ts). The one owner-scoped service writer among them, /api/files, now narrows a service caller to the named user in its router; the files-service-user driver proves both halves: a service call naming no user is refused 403, and the connection lookup runs as that user with isOperator false.
  */
 
 /**
@@ -72,6 +73,7 @@ import { createProfileStudioIngestRoutes } from '@/app/routes/profile-studio-ing
 import { createApplyIngestRoutes, type ApplyCompletionRuntime } from '@/app/routes/apply-ingest-routes';
 import { createFacebookDataDeletionRoute } from '@/app/routes/connectors-routes';
 import { createJarvisRoutes } from '@/app/routes/jarvis-routes';
+import { createFilesRoutes } from '@/app/routes/files-routes';
 import { createTestLabGoldenRoutes } from '@/app/routes/test-lab-golden';
 import { createInternalToolBridgeRoutes } from '@/app/routes/internal-tool-bridge-routes';
 import { createMessageRoutes } from '@/app/routes/message-routes';
@@ -106,6 +108,12 @@ const MACHINE_AUTH_MARKERS: readonly RegExp[] = [
   /x-service-secret/i,
   /hasValidServiceSecret/,
   /serviceSecretOk/,
+  // The two helpers routes actually use to admit the service rail (docs/backlog/
+  // machine-auth-discovery-blind-spot.md). Without them a file whose only machine auth is a
+  // serviceSecretOr mount or getTrustedServiceUserSub was invisible, and an entry whose file
+  // dropped its literal header (artifact-exchange-core, a17f8d28) read as stale.
+  /serviceSecretOr\b/,
+  /getTrustedServiceUserSub/,
   /requireServiceSecret(?:WhenConfigured)?/,
   /authorizeBotNode/,
   /x-twilio-signature/i,
@@ -327,6 +335,27 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
       const body = await response.json() as { ok?: boolean };
       // ok:true is required: a pre-check that blocks the write must fail loudly, not read as "no write".
       if (!response.ok || body.ok !== true) throw new Error(`Jarvis identity probe failed: HTTP ${response.status} ${JSON.stringify(body)}`);
+    } finally {
+      await close();
+    }
+    return observations;
+  },
+
+  /** GET /api/files/list — the ADR-139 relay rail, narrowed by the router to the named user. */
+  'files-service-user': async () => {
+    vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
+    const observations: WriteObservation[] = [];
+    // The connection lookup is the first owner-scoped operation of the token path; the refresh
+    // UPDATE that can follow runs later in the same request, under the same identity.
+    const pool = capturingPool(observations, () => ({ rows: [], rowCount: 0 }), /FROM oshal_connections/i, 0);
+    const router = createFilesRoutes({ pool } as never, process.cwd());
+    const { url, close } = await serveServiceUserRoute('/api/files', router);
+    try {
+      const endpoint = `${url}/api/files/list`;
+      await assertMissingServiceOwnerRejected(endpoint);
+      const response = await fetch(endpoint, { headers: serviceUserHeaders('auth0|files-owner') });
+      // No connection row is served, so the route answers 409 (connect Dropbox) after the lookup ran.
+      if (response.status !== 409) throw new Error(`files identity probe failed: HTTP ${response.status}`);
     } finally {
       await close();
     }
