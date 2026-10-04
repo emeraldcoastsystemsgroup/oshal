@@ -28,6 +28,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com  | Reuse authorization_remote_dispatch_required when an endpoint-less local rail cannot execute protected queued work, keeping every typed refusal inside the reviewed source census.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Apply injected evidence/result bindings around dedicated reason-only execution; bound work never falls back to localhost.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Pass the canonical runtime resolver into protected queue shaping so explicit `bot-default` resolves and signs its record even when the legacy push-on-dispatch compatibility flag is off.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | The privileged ticket-type set now comes from @/shared/middleware/superadmin (isPrivilegedTicketType), the same definition the ticket route uses to refuse a non-super-admin filer, so the door and this queue gate cannot disagree about which types are privileged.
  */
 
 import * as http from 'node:http';
@@ -46,7 +47,7 @@ import {
 } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
-import { isSuperAdminSub } from '@/shared/middleware/superadmin';
+import { isPrivilegedTicketType, isSuperAdminSub } from '@/shared/middleware/superadmin';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { RefusalError } from '@/shared/refusal-events';
@@ -135,10 +136,6 @@ export async function pushOnDispatchFields(
   };
 }
 
-/** Ticket types whose worker can modify the platform itself — dispatch is restricted to
- *  super-admin-owned tickets. Hardcoded (not manifest-declared) so a manifest edit can
- *  never silently widen who can task the developer bot. */
-const PRIVILEGED_TICKET_TYPES: ReadonlySet<string> = new Set(['oshal-dev']);
 
 /** Minimal Response-ish shape this module needs from the localhost send-message call. */
 interface SendMessageResponse {
@@ -638,7 +635,7 @@ export async function dispatchManifestWorkerTicket(
   // Privileged-workflow gate (ADR-081): the oshal-developer bot can commit + push this
   // repo, so only tickets OWNED by an allowlisted super-admin sub may reach it. Escalate
   // (terminal) rather than defer — a denied ticket must not re-dispatch every poll.
-  if (PRIVILEGED_TICKET_TYPES.has(workflow.ticketType) && !isSuperAdminSub(ticket.ownerSub)) {
+  if (isPrivilegedTicketType(workflow.ticketType) && !isSuperAdminSub(ticket.ownerSub)) {
     logger.warn(
       { ticketId, ticketType: workflow.ticketType, ownerSub: ticket.ownerSub ?? null },
       'Privileged ticketType denied — owner is not on the super-admin allowlist',

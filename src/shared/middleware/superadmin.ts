@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Explicit super-admin role for the Developer Console (ADR-077). Double-gated + fail-closed + debuggable decision trace.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | isSuperAdminSub(sub) for QUEUE-side gating (ADR-081): dispatch has no Request, only ticket.ownerSub. Sub-allowlist-only by design — the console capability flag gates the browser console, not the oshal-dev workflow (the manifest's presence is that capability), and the email allowlist can't be checked without a session.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match super-admin OIDC subjects exactly and case-sensitively; only email allowlists retain case-insensitive normalization. Whitespace/case variants can no longer alias a privileged subject.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | PRIVILEGED_TICKET_TYPES / isPrivilegedTicketType moved here from dispatch-manifest-worker.ts so the ticket route (refuses a non-super-admin filer at the door) and the queue gate (refuses a non-super-admin owner at dispatch) read ONE definition.
  */
 
 import type { Request, Response, NextFunction } from 'express';
@@ -132,6 +133,20 @@ export function isSuperAdmin(req: Request): boolean {
 export function isSuperAdminSub(sub: string | null | undefined): boolean {
   if (typeof sub !== 'string' || sub.length === 0) return false;
   return parseSubjectAllowlist(process.env.OSHAL_SUPERADMIN_SUBS).has(sub);
+}
+
+/** Ticket types whose worker can modify the platform itself (ADR-081). Hardcoded, not
+ *  manifest-declared, so a manifest edit can never silently widen who can task the developer bot. */
+export const PRIVILEGED_TICKET_TYPES: ReadonlySet<string> = new Set(['oshal-dev']);
+
+/**
+ * @description Whether a ticket type is privileged: filing one requires a super-admin at the
+ * ticket route, and dispatching one requires a super-admin owner at the queue.
+ * @param ticketType - The ticket type to test.
+ * @returns true for a privileged type.
+ */
+export function isPrivilegedTicketType(ticketType: string | null | undefined): boolean {
+  return typeof ticketType === 'string' && PRIVILEGED_TICKET_TYPES.has(ticketType);
 }
 
 /** A request that has passed (or been evaluated by) the super-admin gate. */

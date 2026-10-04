@@ -15,6 +15,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: cockpit ticket chat no longer grants blanket automatic tool approval; executor policy must authorize each operation.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | GET /:ticketId answers where a graph ticket is parked (CKR-13 / D6). A graph ticket is dispatched from `approved` and nothing writes an in_process_* status, so an operator saw "Approval Required" and a status history with no way to tell which node of which workflow was waiting or what had just finished - that lived in metadata and a workflow_run_steps row nobody joined. Added only when the ticket IS a graph run, so every other ticket's payload is byte-identical.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Record the authenticated caller on resume transitions so graph-gate approvals have a decision actor instead of a misleading system actor.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Ticket filing integrity (ticket-filing-guard.ts) on POST / and PATCH /:ticketId: a non-operator pin (metadata.targetAgentId) must pass the direct-call entitlement, a parent the caller cannot read is refused 404 like a missing one (BACKLOG "POST /api/tickets accepts any parentTicketId", decided: refuse), and a privileged ticket type needs a super-admin filer. An operator can no longer set another owner on a privileged ticket, because the queue gate checks the owner. PATCH checks only fields whose value changes.
  */
 
 import { Router } from 'express';
@@ -29,7 +30,9 @@ import {
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import { canAccessResource, isOperator, getCaller } from '@/shared/middleware/authz';
+import { isPrivilegedTicketType } from '@/shared/middleware/superadmin';
 import { canReadTicketApplicationResult } from './ticket-application-access';
+import { refuseTicketAuthorityFields } from './ticket-filing-guard';
 import { emitAuditEvent, type AuditDecision } from '@/features/governance';
 import type { TaskStatus } from '@/shared/types';
 
@@ -115,11 +118,19 @@ export function createTicketRoutes(ctx: AppContext): Router {
         return;
       }
       logger.info({ parsedTitle: parsed.data.title, parsedType: parsed.data.ticketType }, 'Parsed ticket input');
+      const refusal = await refuseTicketAuthorityFields(ctx, req, parsed.data);
+      if (refusal) {
+        logger.warn({ error: refusal.error, ticketType: parsed.data.ticketType }, 'Ticket create refused at the door');
+        res.status(refusal.status).json({ error: refusal.error });
+        return;
+      }
       // Stamp the creating user's OIDC sub so the ticket is owned (per-user "my tickets" queues).
+      // A privileged ticket keeps its (super-admin) filer as owner: the queue gate checks the owner.
       const callerSub = getCaller(req).sub;
+      const mayAssignOwner = isOperator(req) && !isPrivilegedTicketType(parsed.data.ticketType);
       const ticket = await ctx.ticketService.createTicket({
         ...parsed.data,
-        ownerSub: isOperator(req) ? parsed.data.ownerSub ?? callerSub : callerSub,
+        ownerSub: mayAssignOwner ? parsed.data.ownerSub ?? callerSub : callerSub,
       });
       logger.info({ ticketId: ticket.ticketId, storedType: (ticket as any).ticketType }, 'Ticket created by route');
       res.status(201).json(ticket);
@@ -198,7 +209,15 @@ export function createTicketRoutes(ctx: AppContext): Router {
     const { ticketId } = req.params;
     logger.info({ ticketId }, 'Update ticket requested');
     try {
-      if (!(await requireTicketAccess(ctx, req, res, ticketId as string))) return;
+      const ticket = await requireTicketAccess(ctx, req, res, ticketId as string);
+      if (!ticket) return;
+      const current = ticket as { ticketType?: string | null; parentTicketId?: string | null; metadata?: Record<string, unknown> | null };
+      const refusal = await refuseTicketAuthorityFields(ctx, req, req.body ?? {}, current);
+      if (refusal) {
+        logger.warn({ ticketId, error: refusal.error }, 'Ticket update refused at the door');
+        res.status(refusal.status).json({ error: refusal.error });
+        return;
+      }
       await ctx.ticketService.updateTicket(ticketId as string, req.body);
       res.json({ status: 'updated' });
     } catch (error) {

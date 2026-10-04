@@ -31,6 +31,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP workflow administration and shared publishing regressions with member-work compatibility.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Register mounted global swarm telemetry and Plane diagnostic operator boundaries with normal processing compatibility.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Register actual Token Chase spending HTTP gates and caller-bound replay attribution with qualified isolated provider/cost seams.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com | Register ticket filing integrity over the real ticket router: pinned-agent entitlement, unreadable-parent refusal and the privileged-type filer check, on create and on PATCH.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -191,6 +192,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/bot-node-swarm-execute-auth.spec.ts' },
     { level: 'unit', path: 'tests/unit/owner-principal-issuer.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-isolation-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-filing-integrity.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },
