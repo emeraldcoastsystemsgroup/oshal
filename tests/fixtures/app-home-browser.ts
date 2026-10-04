@@ -1,10 +1,11 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise real Cockpit Home and Jarvis documents using isolated, explicitly synthetic app summaries and account preferences.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Mount canonical Cockpit palettes before the retained Jarvis fixture's legacy theme alias.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Serve synthetic cockpit display choices at the platform-owned preference path and preserve the actual Express asset-helper type.
  */
 import express from 'express';
 import { resolve } from 'node:path';
@@ -35,8 +36,8 @@ function homeRoutes(app: express.Application, state: ReturnType<typeof homeState
   app.get('/api/ui/profile', (_req, res) => res.json({ profile: { name: 'framework-default', displayName: 'Synthetic Home',
     defaultView: 'home', ribbon: { items: ['home', 'settings'], dynamicTools: { allow: [] } } } }));
   app.get('/api/swarm/apps/home-plan', (_req, res) => res.status(state.planStatus).json({ apps: state.entries }));
-  app.get('/api/home/preferences', (_req, res) => res.status(state.preferenceStatus).json({ preferences: state.preferences, revision: state.revision }));
-  app.put('/api/home/preferences', express.json(), (req, res) => {
+  app.get('/api/cockpit/home/preferences', (_req, res) => res.status(state.preferenceStatus).json({ preferences: state.preferences, revision: state.revision }));
+  app.put('/api/cockpit/home/preferences', express.json(), (req, res) => {
     state.writes.push(req.body);
     if (state.saveStatus !== 200) { res.status(state.saveStatus).json({ error: 'Synthetic display save unavailable.' }); return; }
     if (req.body.revision !== state.revision) { res.status(409).json({ error: 'Synthetic revision conflict.' }); return; }
@@ -57,7 +58,7 @@ function homeRoutes(app: express.Application, state: ReturnType<typeof homeState
 }
 
 /** @description Reuse the actual Jarvis client with inert read responses and no provider implementation. */
-function jarvisRoutes(app: express.Application, state: ReturnType<typeof homeState>) {
+function jarvisRoutes(app: express.Express, state: ReturnType<typeof homeState>) {
   app.use('/cockpit/css/themes', express.static(resolve('src/pages/cockpit/css/themes')));
   attachJarvisBrowserAssets(app);
   app.get('/api/jarvis/', (_req, res) => res.sendFile(resolve('src/api/jarvis.html')));

@@ -1,8 +1,11 @@
 /**
  * CHANGE LOG
- * SEQ | AUTHOR | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise default-on display choices, source identity, safe highlights, and preference route ownership.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove daily summaries retain explicit classifications, account choices and unavailable states without hiding directory destinations.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Declare a synthetic concierge in the catalog fixture so maintained manifest validation reaches the unchanged source assertions.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import express from 'express';
@@ -22,7 +25,7 @@ describe('Home source contract and display preferences', () => {
     const dir = mkdtempSync(join(tmpdir(), 'home-catalog-'));
     try {
       const file = join(dir, 'oshal-app.yaml');
-      writeFileSync(file, 'name: example\ndisplayName: Example\nroutes:\n  - {module: routes/app.js, factory: createApp, mountPath: /api/example, auth: oidc}\nsummary:\n  path: /api/example/summary\n  metricsPointer: /metrics\nui:\n  static:\n    - {toolName: example-home, label: Example, iframeUrl: /api/example}\n');
+      writeFileSync(file, 'name: example\ndisplayName: Example\nchatBot: synthetic-catalog-concierge\nroutes:\n  - {module: routes/app.js, factory: createApp, mountPath: /api/example, auth: oidc}\nsummary:\n  path: /api/example/summary\n  metricsPointer: /metrics\nui:\n  static:\n    - {toolName: example-home, label: Example, iframeUrl: /api/example}\n');
       const [plan] = buildHomePlan([readManifest(file)]);
       expect(plan.summary[0]).toMatchObject({ metricsPointer: '/metrics', surfaces: ['example-home'] });
     } finally { rmSync(dir, { recursive: true, force: true }); }

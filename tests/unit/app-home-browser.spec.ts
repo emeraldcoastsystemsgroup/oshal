@@ -1,12 +1,13 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove daily Home geometry, stable real Jarvis draft, authorized directory, saved choices and honest probe failures in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify exact canonical palette colors in the actual parent and Jarvis frame as well as layout geometry.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Assert real populated and unavailable directory centering with the full Cockpit reset at desktop and phone widths.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Verify shipped Home refresh and saved choices use the platform-owned preference path while retaining the actual draft and frame.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
@@ -110,6 +111,8 @@ it('keeps the actual Jarvis document and typed draft through late probes, source
     expect(await input.inputValue()).toBe('Keep this unsent draft');
     expect(await frame.evaluate(() => (window as any).homeDocumentToken)).toBe(token);
     expect(fixture.home.calls.filter(call => call === 'GET /api/jarvis/')).toHaveLength(1);
+    expect(fixture.home.calls.filter(call => call === 'GET /api/cockpit/home/preferences')).toHaveLength(2);
+    expect(fixture.home.calls.some(call => call.includes('/api/home/preferences'))).toBe(false);
     expect(fixture.home.calls.filter(call => call.startsWith('POST '))).toEqual([]);
   } finally { release(); }
 }, 30000);
@@ -127,6 +130,8 @@ it('persists account hiding without removing directory reachability or resetting
   await page.getByRole('button', { name: 'All applications', exact: true }).click();
   await page.getByRole('searchbox').fill('source-3'); expect(await page.locator('#appsHomeDirectory li').count()).toBe(1);
   expect(fixture.home.writes).toEqual([{ preferences: { version: 1, hiddenApps: ['source-3'] }, revision: 0 }]);
+  expect(fixture.home.calls.filter(call => call === 'PUT /api/cockpit/home/preferences')).toHaveLength(1);
+  expect(fixture.home.calls.some(call => call.includes('/api/home/preferences'))).toBe(false);
 }, 30000);
 
 it('shows a failed source as unavailable rather than zero and keeps setup behind disclosure', async () => {

@@ -2,11 +2,12 @@
  * =============================================================================
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the real Cockpit boot, navigation and iframe controller over isolated synthetic application responses.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow a synthetic long application brand to exercise the real responsive header geometry.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Supply explicit synthetic profile and dynamic-tool variants for real contextual-sidebar navigation tests.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Serve cockpit preferences independently of installed Smart Home route ownership and type the callback as its actual Express instance.
  * =============================================================================
  */
 import express from 'express';
@@ -82,7 +83,7 @@ function readResponses(app: express.Application, current: ReturnType<typeof stat
     '/api/agents': { agents: [] }, '/api/swarm/bots/registry': { bots: [] }, '/api/providers': [],
     '/api/config': {}, '/api/config/ownership': null, '/api/config/rag': { config: {} },
     '/api/v1/metrics/summary': {}, '/api/dev-console/access': { superAdmin: false },
-    '/api/swarm/apps/home-plan': { apps: [] }, '/api/home/preferences': { preferences: { version: 1 }, revision: 0 },
+    '/api/swarm/apps/home-plan': { apps: [] }, '/api/cockpit/home/preferences': { preferences: { version: 1 }, revision: 0 },
     '/api/jarvis/tasks': { tasks: [] },
   };
   for (const [path, body] of Object.entries(reads)) app.get(path, (_req, res) => res.json(body));
@@ -122,7 +123,7 @@ function assets(app: express.Application) {
  * @param configure Optional synthetic routes registered before the default fixture responses.
  * @returns Local origin, controlled synthetic responses and complete server cleanup.
  */
-export async function startWorkspaceNavigationFixture(configure?: (app: express.Application) => void) {
+export async function startWorkspaceNavigationFixture(configure?: (app: express.Express) => void) {
   const app = express(), current = state();
   configure?.(app);
   readResponses(app, current); surfaceResponses(app, current); assets(app);

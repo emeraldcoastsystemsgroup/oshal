@@ -2,11 +2,12 @@
  * =============================================================================
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Serve the actual Cockpit DOM, theme/settings/Home/ribbon modules and shared Budgets surface with synthetic read-only HTTP data.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real compact header disclosure and relocated theme control in the component fixture.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Include the real workspace navigation that owns the OSHAL menu and shared chooser controls.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Serve cockpit preferences independently of installed Smart Home route ownership.
  * =============================================================================
  */
 import express from 'express';
@@ -76,7 +77,7 @@ function fixtureReads(app: express.Application) {
     '/api/ui/profile': { profile }, '/api/auth/user': { sub: 'theme-fixture', guestMode: false },
     '/api/cli-tokens/whoami': { operator: false }, '/api/tools': { tools: [] }, '/api/tools/dynamic': { tools: [] },
     '/api/ui/workspaces': { workspaces: [] },
-    '/api/swarm/apps/home-plan': homePlan(), '/api/home/preferences': { preferences: { version: 1 }, revision: 0 },
+    '/api/swarm/apps/home-plan': homePlan(), '/api/cockpit/home/preferences': { preferences: { version: 1 }, revision: 0 },
     '/api/jarvis/tasks': { tasks: [] }, '/api/budgets': { budgets: [] },
     '/fixture/summary': { tiles: [{ label: 'Sample items', value: '3', tone: 'neutral' }],
       items: [{ text: 'A small example update, with no connected source.', tone: 'neutral' }] },

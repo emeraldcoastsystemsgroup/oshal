@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-145 D9: the cross-app Home view. One card per installed group/app showing what happened (the app's own summary probe, or its jarvis_tasks when it declares none) and what still needs you (its readiness probes). Every probe is asked HERE, in the signed-in user's own session — core never impersonates the caller and never reads an app's tables.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Add saved display choices, stable metric catalogs, and traceable suite/page highlights.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Keep a stable Jarvis conversation beside bounded daily areas and details; retain the full searchable authorized directory.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Read and save personal display choices through the cockpit platform namespace rather than Smart Home routes.
  */
 import { ordered, move, catalog, selected, highlights } from './app-home-model.js';
 import { dailyAreas, dailyRows, areaHtml, updatesHtml, directoryHtml } from './app-home-daily.js';
@@ -204,7 +205,7 @@ export class AppsHomeView {
     this.editor = null;
     this.mount(container);
     const [plan, prefs, tasks] = await Promise.all([
-      askProbe('/api/swarm/apps/home-plan'), askProbe('/api/home/preferences'), askProbe('/api/jarvis/tasks'),
+      askProbe('/api/swarm/apps/home-plan'), askProbe('/api/cockpit/home/preferences'), askProbe('/api/jarvis/tasks'),
     ]);
     if (generation !== this.generation) return;
     this.planReady = plan.ok;
@@ -368,7 +369,7 @@ export class AppsHomeView {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10000);
       let response;
-      try { response = await fetch('/api/home/preferences', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preferences: next, revision: this.revision }), signal: controller.signal }); }
+      try { response = await fetch('/api/cockpit/home/preferences', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preferences: next, revision: this.revision }), signal: controller.signal }); }
       finally { clearTimeout(timer); }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not save display settings.');

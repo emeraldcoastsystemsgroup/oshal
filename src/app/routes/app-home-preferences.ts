@@ -1,9 +1,12 @@
 /**
  * CHANGE LOG
- * SEQ | AUTHOR | DESCRIPTION
- * 1 | Codex | Persist bounded Home display preferences by authenticated subject with revision conflicts.
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Persist bounded Home display preferences by authenticated subject with revision conflicts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Mount cockpit display preferences in the platform namespace while retaining session ownership and revision checks.
  */
-import { Router } from 'express';
+import { Router, type Application, type RequestHandler } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
 import { getCaller, hasAuthenticatedUserIdentity } from '@/shared/middleware/authz';
 
@@ -93,4 +96,12 @@ export function createAppHomePreferenceRoutes(ctx: AppContext): Router {
     } catch { res.status(503).json({ error: 'Home preferences could not be saved.' }); }
   });
   return router;
+}
+
+/** @description Keep personal cockpit choices outside installed applications' owned route prefixes.
+ * @param app Platform HTTP application. @param ctx Existing request-scoped database context.
+ * @param requiresAuth Verified session middleware. @returns Nothing; mounts the existing owner-only router.
+ */
+export function mountAppHomePreferenceRoutes(app: Application, ctx: AppContext, requiresAuth: RequestHandler): void {
+  app.use('/api/cockpit/home/preferences', requiresAuth, createAppHomePreferenceRoutes(ctx));
 }
