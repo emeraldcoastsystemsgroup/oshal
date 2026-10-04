@@ -154,6 +154,26 @@ platform hub, returns the logo to the landing application and hides the header's
 (inputs `landingApp` and `operator` on `GET /api/ui/profile`). Operators, focused `?app=` requests,
 assets and deployments without a focused landing are unchanged.
 
+What the server lock covers (2026-10-04):
+
+- **Every spelling of a surface.** One pathless guard ahead of every mount decides on the
+  *canonical* path (`canonicalSurfacePath`, `operatorSurfaceKind`): percent-decoded, doubled slashes
+  and dot segments collapsed, a trailing `index.html` stripped, lowercased. Express routes and
+  `express.static` match case-insensitively and resolve dot segments, so the decision has to as well:
+  `/Cockpit/`, `/COCKPIT/index.html`, `/cockpit/js/../index.html`, `/cockpit//` and `/%63ockpit/` are
+  the cockpit document; `/experience/index.html`, `/experience/nexus.html`, `/experience/simple.html`
+  and any other `/experience/*.html` are experience pages. A malformed escape under a surface root is
+  decided as a surface. GET and HEAD are decided; assets and other paths pass untouched.
+- **`?app=` focuses the cockpit document only.** `/portal`, `/nexus`, `/simple` and the experience
+  pages are not an application's shell, so `?app=` on them no longer lets a non-operator through.
+- **The profile route holds the caller to manifest profiles.** For a non-operator on a focused
+  landing, a requested name that does not synthesise for them — an unknown name, a disk-only
+  profile such as `oshal-framework`, a case variant, or an experience whose row their RLS scope
+  cannot read — answers `404 {error: 'experience_unavailable', landingApp, operator}` instead of the
+  disk or built-in "Default full-operator profile". With no name they get the landing application
+  through the same synthesis and `app.open` path, never the deployment's env profile. Operators and
+  deployments without a focused landing keep the disk fallback.
+
 ## Verification
 
 - `tests/unit/experience-simple-chat-browser.spec.ts` and `tests/unit/simple-chat-kit.spec.ts`: Simple chat (`/simple`)
@@ -233,6 +253,18 @@ assets and deployments without a focused landing are unchanged.
   route with the real kit and synthetic answers for exactly the reads the page already makes, and proves the company and
   family cards, every refusal said with no figure, the in-frame action to the full page, and the full page starting
   unchanged without an audience or with one it does not provide.
+- Shell lock: `tests/unit/experience-shell-lock.spec.ts` (the pure decision over every canonical
+  spelling, the malformed-escape rule and the cockpit-only `?app=` exemption);
+  `tests/unit/cockpit-shell-lock-routes.spec.ts` (the real route registration over a raw socket, so
+  dot segments and `%2e` escapes reach the server unnormalised, plus HEAD);
+  `tests/unit/ui-profile-focused-refusal.spec.ts` (the real profile route and `UIProfileService`, with
+  the refusal fed into the real `RibbonNav._init`); `tests/unit/ui-profile-rls-hidden-experience-postgres.spec.ts`
+  (the real repository and service over a disposable PostgreSQL as the NOSUPERUSER NOBYPASSRLS
+  `oshal_app` role: a person-scoped experience row another member cannot read is refused 404);
+  `tests/unit/ribbon-profile-refusal.spec.ts` and `tests/unit/ribbon-shell-lock.spec.ts` (the ribbon's
+  lock decision and refusal state). The live case `node scripts/operations/live-acceptance.js shell-lock`
+  asks the installed build as a non-operator on a mapped host (it needs `OSHAL_VERIFY_SECOND_PAT` and
+  `OSHAL_VERIFY_FOCUSED_HOST`).
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.

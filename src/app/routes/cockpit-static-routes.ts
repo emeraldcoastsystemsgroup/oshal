@@ -11,13 +11,14 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Serve /simple (simple.html, docs/architecture/simple-chat.md) behind requiresAuth like every experience entry page: the opt-in plain text screen over the caller's Jarvis thread.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): with the optional `shellLock` ports, a non-operator on a deployment whose landing names an application is redirected from the plain cockpit document (incl. index.html, decided before the static mount) and every experience entry page to that landing; operators, focused ?app= requests and assets are untouched. A customer's staff opened the product they were sold and found the operator cockpit one click away.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Route legacy experience entries through installed package open authorization while preserving shared assets and focused landing behavior.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | The shell lock is ONE pathless guard ahead of every mount, deciding on the canonical path (experience-shell-lock.ts operatorSurfaceKind) instead of an exact-string route list. Express 5 matched the old list case-insensitively but compared the raw req.path, and express.static decodes and collapses dot segments, so /Cockpit/, /cockpit/js/../index.html, /cockpit// and /experience/index.html served operator documents to a non-operator on a focused host. Only GET/HEAD requests for a surface are authenticated and decided; assets and every other path pass straight through.
  */
 
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createChildLogger } from '@/shared/logger';
-import { OPERATOR_SURFACES, shellRedirectFor } from '@/app/experience-shell-lock';
+import { operatorSurfaceKind, shellRedirectFor } from '@/app/experience-shell-lock';
 import { registerCockpitVendorAssets } from './cockpit-vendor-assets';
 
 const logger = createChildLogger({ module: 'cockpit-static-routes' });
@@ -101,21 +102,12 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
     next();
   };
 
-  // Shell lock: registered ONCE over every operator surface, ahead of every static mount, so
-  // neither `/cockpit/index.html` nor the `/experience/` directory index can bypass the document
-  // routes. Assets never pass through it (they are not surfaces).
-  const shellLockGuard: express.RequestHandler = (req, res, next) => {
-    const lock = options.shellLock;
-    if (!lock) { next(); return; }
-    const redirect = shellRedirectFor({
-      operator: lock.isOperator(req), landingPath: lock.landingPath(req), pathname: req.path,
-      requestedApp: req.query.app ?? req.query.profile,
-    });
-    if (!redirect) { next(); return; }
-    logger.info({ path: req.path, redirect }, 'Operator surface requested by a non-operator on a focused-landing deployment; redirecting to the landing');
-    res.redirect(302, redirect);
-  };
-  options.app.get([...OPERATOR_SURFACES], options.requiresAuth, shellLockGuard);
+  // Shell lock: ONE pathless guard, registered ahead of every static mount and document route. It
+  // decides on the canonical path (decoded, doubled slashes and dot segments collapsed, index.html
+  // stripped, lowercased) — the document Express's case-insensitive routes and express.static would
+  // actually serve — so no spelling of a surface reaches its handler undecided. Assets are not
+  // surfaces and never pass through the decision.
+  if (options.shellLock) options.app.use(createShellLockGuard(options.shellLock, options.requiresAuth));
 
   registerCockpitVendorAssets(options.app, options.requiresAuth, noCache);
   options.app.use('/cockpit', options.requiresAuth, noCache, express.static(options.cockpitDir));
@@ -186,6 +178,31 @@ export function registerCockpitStaticRoutes(options: CockpitStaticRoutesOptions)
   // NOTE: /shared/ui/js (surface-theme.js) is mounted in server.ts BEFORE the OIDC middleware —
   // NOT here. This function runs after OIDC, so a mount here would 302 to /login (the exact bug the
   // CSS mount in server.ts already dodges). Keep the theme bootstrap's mount beside the CSS one.
+}
+
+/**
+ * @description The shell-lock guard. A GET or HEAD for an operator surface — in any spelling the
+ * routes or the static mounts would serve — is authenticated first, then a non-operator on a
+ * focused-landing deployment is redirected to that landing. Every other request passes untouched,
+ * so the guard can sit ahead of every mount without authenticating assets or public paths.
+ * @param lock - The deployment's operator check and landing resolver.
+ * @param requiresAuth - The sign-in middleware the surfaces already require.
+ * @returns The pathless middleware.
+ */
+function createShellLockGuard(lock: NonNullable<CockpitStaticRoutesOptions['shellLock']>, requiresAuth: express.RequestHandler): express.RequestHandler {
+  return (req, res, next) => {
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || !operatorSurfaceKind(req.path)) { next(); return; }
+    void requiresAuth(req, res, (err?: unknown) => {
+      if (err) { next(err); return; }
+      const redirect = shellRedirectFor({
+        operator: lock.isOperator(req), landingPath: lock.landingPath(req), pathname: req.path,
+        requestedApp: req.query.app ?? req.query.profile,
+      });
+      if (!redirect) { next(); return; }
+      logger.info({ path: req.path, redirect }, 'Operator surface requested by a non-operator on a focused-landing deployment; redirecting to the landing');
+      res.redirect(302, redirect);
+    });
+  };
 }
 
 // Read the most specific HTTP status code available from Express sendFile errors.
