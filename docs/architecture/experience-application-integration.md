@@ -15,7 +15,7 @@ application-hosting baseline.
 | E3 composite roles | Deployed; installed lifecycle checks pass | Atomic assignment and reviewed optional-member upgrade, durable retry receipts, deny precedence, overlap-safe revoke, actual expiry, restart persistence and PostgreSQL RLS refusal checks pass |
 | E4 Home pilot | Released and installed | Selected required and optional member screens open; a temporary unpriced list note persists across reload and is removed; existing Smart Home and Education IDs and records are preserved |
 | E5 remaining six | All six released and installed | All seven entries pass desktop, phone and keyboard checks; named member views, the package chooser and preserved Central assistant/Simple chat are exercised through the real signed-in browser |
-| E6 installed acceptance | Bounded installed checks pass; full UX and cross-user acceptance remain open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. A second real authenticated non-admin identity is qualified; privacy checks await the reviewed boundary fixes and coordinated deployment. The full audience/member-view acceptance and performance receipts below remain outstanding |
+| E6 installed acceptance | Bounded installed checks pass; full UX and cross-user acceptance remain open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. A second real authenticated non-admin identity is qualified; the original boundary repairs are merged and standard deployment checks pass; a further focused-cockpit boot correction and current-image privacy checks remain open. The full audience/member-view acceptance and performance receipts below remain outstanding |
 
 The `experience` compatibility floor now supplies package hosting and discovery:
 `GET /api/ui/experiences` lists active scope-visible packages under current authorization;
@@ -91,9 +91,10 @@ partial work from successful empty reads across all seven experiences. Valid com
 feeds remain visible; unknown counts stay unknown. Read-only retry preserves unsent
 shell input and refuses to replace an open member frame. Operational notices use
 concise language, with source/HTTP details in the existing About or provenance panel.
-This shared-renderer work is tracked in [PR #1048](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1048).
-It is not deployed, and isolated browser evidence does not close the original installed
-audience, member-data or performance acceptance matrix above.
+This shared-renderer work is merged through [PR #1048](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1048)
+and included in deployed core `a775d2a2187cd8ea8346a667d59f3c4c07ebcf7c`.
+Isolated browser evidence does not close the original installed audience, member-data
+or performance acceptance matrix above.
 
 The `experience-roles` floor requires migration 185 and the existing Access management
 authority. `GET /api/authorization/composites` lists current readable templates and
@@ -329,9 +330,9 @@ No skip acceptance or hook bypass was used. Actual deployed verification, instal
 Test Lab results, lifecycle boundaries and cleanup/preservation are recorded in the
 delivery status above. Final privacy acceptance remains open. Subsequent route
 assessment confirmed unscoped cockpit ticket streams, global escalation reads and
-project discovery, plus focused-shell refusal gaps. These core repairs require
-independent source review, merge, coordinated deployment and the second real
-authenticated non-admin check before the experience work is complete.
+project discovery, plus focused-shell refusal gaps. These core repairs have independent source review and are merged and deployed at the
+follow-up revision below. Actual nonoperator private-read/admin boundaries and the
+later focused-cockpit boot correction remain required before overall acceptance closes.
 The stopped assessment has been recovered. Its 31 flagged records are grouped API
 assessments. A separate adversarial report recorded 22 confirmed and five refuted
 verdict groups; four flagged groups were never reached. Those counts describe that saved assessment,
@@ -340,10 +341,40 @@ operator-only global administration while preserving normal caller-owned and exp
 shared work. The follow-up source repairs below apply that decision without relabelling
 historical verdicts as new live results.
 
-### Follow-up changes awaiting merge and deployment
+### Follow-up release and remaining acceptance
 
-The latest code is pushed to GitHub for review. None of the following PRs is merged
-or deployed; the installed release recorded above remains the deployment evidence.
+Release and live-acceptance checkpoint: 2026-10-04, 05:45 UTC.
+
+All four follow-up PRs are merged at main
+`a775d2a2187cd8ea8346a667d59f3c4c07ebcf7c`, tree
+`6a504451aab3d97bfb64f9487b3857b4a8adef25`, after independent source review and normal
+publication/committed-head type gates. Roger explicitly approved this sole-maintainer
+release through the existing repository-administrator exception; protection settings
+were retained. The bounded test counts below remain their original source-phase
+receipts, rather than results for every later live finding.
+
+The standard deployment receipt on 2026-10-04 records that revision on image
+`3761258e456f`: API plus 36 bots healthy, parity clean, and API RestartCount unchanged
+at zero through the recreate. The storm probe, bot-role authority, Jarvis response and
+ticket dispatch checks pass. At 05:10 UTC, independent readiness and recovery receipts
+verify six of six stores persistent on the same process without a restart; this does
+not establish durability during the earlier fallback interval.
+
+The original strict nineteen-table preservation comparison fails solely on
+`lm_rewards`, with its 25-row count unchanged; the other eighteen digests and stable
+member IDs match. The deployed rewards GET updates `updated_at`, but the original
+whole-table baseline cannot prove unchanged old boxes, inventory or equipped fields.
+The strict failure is retained, without substituting a new timestamp-free baseline.
+
+The genuine qualified Google viewer has no operator role and all app assignments
+denied. Its actual focused `/portal` redirect to
+`/cockpit/?app=little-monsters` passes. This does not complete the private-read/admin
+API matrix. Fresh normal boot on this image also exposes a native Global Settings
+fallback when the focused app's own default is filtered out. The separate Profile
+Settings click guard correctly refuses; a narrowly scoped registration/profile-modal
+correction has independent source review and 40 passing isolated browser checks;
+at this checkpoint it still awaits publication, deployment and a fresh live check. No
+privileged read or write success is inferred from the visible controls.
 
 | Change | Review and bounded validation |
 | --- | --- |
@@ -370,11 +401,13 @@ the actual shipped class over an owned loopback server, with synthetic API respo
 and verified browser cleanup.
 
 Independent source reviews and normal committed-head publication/type gates establish
-reviewable code. Repository policy still requires a non-author GitHub approval before
-merge. Release the shell server before its client and experience descendants, deploy
-through the normal verification path, then perform actual matched-host nonoperator
-privacy checks and the still-open extended UX matrix. Existing qualified identities
-are sufficient; fixtures or operator-only checks cannot replace that final evidence.
+reviewed source; focused checks remain distinct from a full shared-suite verdict.
+At that checkpoint, actual matched-host nonoperator private/admin checks, the focused-client follow-up and
+the original full seven-experience/all-admitted member, audience, private-view,
+performance and Test Lab acceptance remain open. Existing qualified identities are
+sufficient; fixtures or operator-only checks cannot replace that evidence. The strict
+preservation failure and current owned expiring acceptance-grant cleanup remain open;
+historical cleanup receipts do not remove the current assignments.
 
 Cockpit private reads use the verified owner, recorded issuer and current protected
 result authority. Streams recheck each event and heartbeat and close on refusal.

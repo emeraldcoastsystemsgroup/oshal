@@ -24,6 +24,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep focused profile refusals closed and preserve the server's shell-lock inputs.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client). Every non-OK, unreadable or timed-out profile answer (AbortSignal bound) is the closed PROFILE_UNAVAILABLE fallback whether or not ?app= is set, and a refusal locks unless the caller is an operator; the framework fallback that unlocked a plain document on a 502 is gone. A locked shell registers no platform views at all and always collapses platform chrome. The header doors are drawn closed in index.html and opened only on an unlocked verdict (cockpit-shell-doors.js). platform-hub-ready and app-navigate {view} are accepted only from the registered hub frame's own window on this origin; the surface-bridge relay posts only the {tool} form. Operators see no change after the verdict.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Extract shell reads instead of growing the oversized ribbon; bound identity prerequisites and profile together and validate successful profile shape before opening doors.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Refuse native and marked platform profile entries during locked registration so filtered app defaults cannot boot a hidden global workbench.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -781,6 +782,8 @@ export class RibbonNav {
     const items = this.profile?.ribbon?.items ?? [];
     const resolved = [];
     for (const item of items) {
+      const id = typeof item === 'string' ? item : item?.id;
+      if (this.shellLocked && (byId.has(id) || id === PLATFORM_HUB_ID || item?.platformTool === true)) continue;
       if (typeof item === 'string') {
         const found = byId.get(item);
         if (found) resolved.push({ ...found });
