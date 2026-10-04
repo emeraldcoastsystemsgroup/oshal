@@ -1,16 +1,18 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | BACKLOG "One slow boot drops the task, message and memory stores to in-memory for the life of the process": share the one shape a store's Postgres activation may be asked for again, so a transient boot failure degrades the next operation rather than the whole process lifetime.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Own the kept pool's idle-client errors. Keeping the pool is what makes a retry possible, and it also means this module is now the holder of a long-lived pg Pool: with no 'error' listener, an idle client whose connection dies is rethrown by EventEmitter as an uncaught exception and takes the api process down. Surfaced by the recovery guard, which raised two 'Connection terminated unexpectedly' exceptions when the fixture database went away under a recovered pool.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Recover idle startup fallback automatically through the same kept-pool activation, with one unref cooldown retry and existing SYSTEM schema policy.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { recordPersistenceMode } from '@/shared/observability';
 import { createRetryableReady } from './retryable-ready';
+import { createPersistenceRetryScheduler } from './persistence-retry-scheduler';
 
 const logger = createChildLogger({ module: 'persistence-activation' });
 
@@ -74,7 +76,7 @@ export interface PersistenceActivation {
  * therefore made that store non-persistent for the life of the process, and the only tell was a
  * single ERROR line. Three stores lost that race on the 2026-09-15 00:25:11Z boot at once.
  *
- * Three deliberate properties:
+ * Four deliberate properties:
  *  - **The attempt is memoized and the memo is dropped on failure** (`createRetryableReady`),
  *    so concurrent callers share one in-flight bootstrap and the next caller after a failure
  *    starts a fresh one. This is the shape the authorization wiring and the Entra bridge use.
@@ -87,50 +89,40 @@ export interface PersistenceActivation {
  *    memory so the process still comes up when Postgres is genuinely unavailable. What changes is
  *    that the fallback is now a state the next operation can leave, and one the persistence-mode
  *    registry (and therefore /api/readiness) can see.
+ *  - **Idle fallback recovers automatically.** One unref cooldown timer invokes the same memoized
+ *    readiness operation under SYSTEM scope. No user work is required to re-attempt activation.
  *
  * @param options - The store identity, its pool, and its idempotent schema bootstrap.
- * @returns An activation whose `ready()` reports the store's current mode and retries on demand.
+ * @returns An activation whose `ready()` reports the store's current mode and retries idle failures or on demand.
  */
 export function createPersistenceActivation(options: PersistenceActivationOptions): PersistenceActivation {
   const { store, pool, activate } = options;
   const cooldownMs = options.retryCooldownMs ?? persistenceRetryCooldownMs();
 
-  if (!pool) {
-    recordPersistenceMode({ store, mode: 'unconfigured', attempts: 0 });
-    logger.info({ store }, 'Store persistence not configured; serving from memory by deployment shape');
-    return { ready: async () => false, persistent: () => false };
-  }
+  if (!pool) return unconfiguredActivation(store);
 
   // Keeping the pool means owning its idle-client errors. `pg` emits 'error' on the Pool when an
   // IDLE client's connection dies - a database restart, a network blip - after it has already
   // discarded that client; the next acquire opens a fresh connection. With no listener,
   // EventEmitter rethrows it as an uncaught exception and takes the process down, which is the
   // bill for keeping a pool alive rather than ending it.
-  pool.on('error', error => {
-    logger.error(
-      { err: error, store },
-      'Idle Postgres client for this store errored; the pool has discarded it and the next operation opens a fresh connection',
-    );
-  });
+  observeIdlePoolErrors(pool, store);
 
   let persistent = false;
   let attempts = 0;
   let reportedFailure = 0;
   let lastFailureAt = 0;
   recordPersistenceMode({ store, mode: 'memory', attempts: 0, detail: 'persistence not attempted yet' });
+  const retry = createPersistenceRetryScheduler(pool, store, cooldownMs, () => ready());
 
   const attempt = createRetryableReady(async () => {
     attempts += 1;
     const attemptNumber = attempts;
     await activate(pool);
     persistent = true;
+    retry.cancel();
     recordPersistenceMode({ store, mode: 'persistent', attempts: attemptNumber });
-    logger.info(
-      { store, attempts: attemptNumber },
-      attemptNumber === 1
-        ? 'Store persistence mode enabled (postgres)'
-        : 'Store persistence RECOVERED; it had been serving from memory since an earlier failed attempt',
-    );
+    reportActivationEnabled(store, attemptNumber);
   });
 
   const ready = async (): Promise<boolean> => {
@@ -138,6 +130,7 @@ export function createPersistenceActivation(options: PersistenceActivationOption
       return true;
     }
     if (lastFailureAt > 0 && Date.now() - lastFailureAt < cooldownMs) {
+      retry.schedule(lastFailureAt);
       return false;
     }
     try {
@@ -152,14 +145,37 @@ export function createPersistenceActivation(options: PersistenceActivationOption
         recordPersistenceMode({ store, mode: 'memory', attempts, detail: describe(error) });
         logger.error(
           { err: error, store, attempts, retryAfterMs: cooldownMs },
-          'Store persistence activation failed; SERVING FROM MEMORY (writes are lost on restart) until a later operation re-attempts it',
+          'Store persistence activation failed; SERVING FROM MEMORY (writes are lost on restart) until automatic or on-demand activation succeeds',
         );
       }
+      retry.schedule(lastFailureAt);
       return false;
     }
   };
 
   return { ready, persistent: () => persistent };
+}
+
+/** @description Record a database-less deployment shape without scheduling recovery. */
+function unconfiguredActivation(store: string): PersistenceActivation {
+  recordPersistenceMode({ store, mode: 'unconfigured', attempts: 0 });
+  logger.info({ store }, 'Store persistence not configured; serving from memory by deployment shape');
+  return { ready: async () => false, persistent: () => false };
+}
+
+/** @description Own idle errors from the retained pool without replacing it or terminating the process. */
+function observeIdlePoolErrors(pool: Pool, store: string): void {
+  pool.on('error', error => {
+    logger.error({ err: error, store },
+      'Idle Postgres client for this store errored; the pool has discarded it and the next operation opens a fresh connection');
+  });
+}
+
+/** @description Keep the original first-activation and recovery diagnostics unchanged. */
+function reportActivationEnabled(store: string, attempts: number): void {
+  logger.info({ store, attempts }, attempts === 1
+    ? 'Store persistence mode enabled (postgres)'
+    : 'Store persistence RECOVERED; it had been serving from memory since an earlier failed attempt');
 }
 
 /**

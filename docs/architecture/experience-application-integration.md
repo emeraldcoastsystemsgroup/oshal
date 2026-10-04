@@ -7,6 +7,48 @@ application-hosting baseline.
 
 ## Delivery status
 
+Current checkpoint: **2026-10-04, 18:45 UTC**. Overall acceptance remains open.
+The installed checks below are historical, revision-qualified evidence; they do not
+establish completion of every current member screen or audience journey.
+
+Core [PR #1059](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1059) fixes the
+browser import boundary that blocked the preceding standard deployment. Its merged
+revision `657802d9cee3cd89d81e9332006bd086fdeb550e` passed the maintained authorization
+gate: 651 cases in 46 files, native exit zero. The subsequent standard deployment
+passed image/parity, 37-container health, restart-storm, bot authority, Jarvis and
+ticket-dispatch probes. Both the focused education HTTPS host and the core HTTPS
+host report that revision. The strict comparison against this release's fresh
+baseline preserves all nineteen member tables, standing access and the complete
+seven package file maps and install stamps. All seven remain **1.0.1**. This fresh
+comparison does not replace the earlier retained `lm_rewards` preservation failure.
+
+Runtime readiness nevertheless returns **503**: memory, swarm-run, escalation and
+subtask lifecycle stores remain in memory fallback after startup connection
+timeouts. Task and message storage recovered on later operations. The idle stores
+have no automatic retry; the subtask instance has no normal read-only HTTP recovery
+path. A narrow automatic recovery correction has passed source review; its actual
+regression checks, publication, deployment and current-process durability proof
+are pending at this checkpoint. Container health is not persistence acceptance.
+
+Home **1.0.2** is reviewed and audited in the application trunk, with audited source
+`2997503e4f129056d579209d820ed1d89f3d55b0`, but is not installed. The normal registry
+preflight confirms the existing Home owner and Purchasing dependency, then refuses
+selection of that source: the sole configured built-in registry points to the public
+`oshal-apps` repository. Its live 61-entry catalog contains none of the seven
+experience packages. Public export resets trunk audit bindings to pending, so the
+private audit cannot be represented as a verified public-store release. The
+supported local Git installation path is being reviewed; no registry, credential,
+grant or package installation was changed by these reads.
+
+The existing Google viewer's refreshed access review denies all seven entries,
+Little Monsters and Purchasing without an application assignment. Its focused
+shell and Profile work, and a reload shows the current empty-view access guidance.
+These are genuine ordinary-account observations, not positive member or teacher
+acceptance. Direct administrative API navigation was blocked by the browser client
+before a response could be observed; it supplies no live HTTP denial verdict.
+Current private/admin boundaries and the original admitted member, audience,
+Create, Test Lab, performance and accessibility journeys still require completion.
+
 | Packet | Current state | Completion evidence |
 | --- | --- | --- |
 | E1 inventory and contracts | Source inventory and delivery contract recorded here | The tables below identify source owners and migration gates |
