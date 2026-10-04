@@ -31,6 +31,11 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP workflow administration and shared publishing regressions with member-work compatibility.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Register mounted global swarm telemetry and Plane diagnostic operator boundaries with normal processing compatibility.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Register actual Token Chase spending HTTP gates and caller-bound replay attribution with qualified isolated provider/cost seams.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com | Register ticket filing integrity over the real ticket router: pinned-agent entitlement, unreadable-parent refusal and the privileged-type filer check, on create and on PATCH.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Register global project registry administration: non-operator create/rename/archive refused, operator allowed, own-ticket project assignment unaffected.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com | Register protected parent selection: a parent GET refuses (the owner after a result-rights revocation, the exact-principal twin, an operator without result access) is refused on POST and PATCH with the missing-parent 404, writing nothing; the owner with current rights still files under it.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Register controller ticket chat retirement: every caller (own, foreign, bare task id, unknown id, operator) naming a privileged bot gets 410 legacy_execution_route_retired, the orchestrator is never reached, and nothing is linked or created.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com | Register PUT /tickets/:id/state access: another user's ticket or bare task id is refused with the missing-id 404 and nothing moves, the owner still changes their own, and a revoked owner is refused a protected ticket or task.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -177,6 +182,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/workflow-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-publishing-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/cockpit-project-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-spending-authority-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
@@ -191,6 +197,10 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/bot-node-swarm-execute-auth.spec.ts' },
     { level: 'unit', path: 'tests/unit/owner-principal-issuer.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-isolation-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-filing-integrity.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-filing-protected-parent.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-chat-retired.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-state-compat-access.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },

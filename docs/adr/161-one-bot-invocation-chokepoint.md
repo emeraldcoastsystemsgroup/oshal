@@ -115,12 +115,25 @@ package reaches a kernel bot the sanctioned way.
 
 | call site | what it serves |
 |---|---|
-| `ticket-routes.ts` `POST /api/tickets/:ticketId/chat` | a cockpit surface — the browser calls it |
+| ~~`ticket-routes.ts` `POST /api/tickets/:ticketId/chat`~~ | **retired 2026-10-04**, see the amendment below |
 | `schedule-runtime.ts` scheduled prompt dispatch | every scheduled model turn |
 | `judge-routes.ts`, `persona-eval-routes.ts`, `test-lab-golden.ts` (two) | judge and evaluation lanes |
 | `remote-client-chat-bridge.ts` | the remote-client bridge |
 | `jarvis-orchestrator.ts` (one call) | a sub-step of a turn already admitted upstream |
 | `linkedin-assistant-routes.ts` (one call) | one path beside its three admitted ones |
+
+**Amendment 2026-10-04: ticket chat retired, not migrated.** `POST /api/tickets/:ticketId/chat` now
+answers `410 legacy_execution_route_retired` and names `POST /api/tasks/:taskId/messages`, the same
+answer the any-bot ticket chat already gave. It was retired rather than routed through the chokepoint
+for two reasons:
+
+- **Nothing in the product called it.** The cockpit's `chatOnTicket` client method was defined but
+  never invoked, and the cockpit chats through the canonical message door.
+- **The gap was wider than missing admission.** The route posted into an existing task id with no
+  ownership check, and it ran the turn with no owner attribution. A migrated copy would have
+  re-created the canonical turn a third time.
+
+Guard: [tests/unit/ticket-chat-retired.spec.ts](../../tests/unit/ticket-chat-retired.spec.ts).
 
 `jarvis-orchestrator.ts` and `linkedin-assistant-routes.ts` appear in BOTH lists on purpose: their
 main paths go through the gate and each retains exactly one direct call. An earlier draft of this

@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Apply exact-principal current result checks to ticket detail and queue listings.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | canReadTicket: the one by-id ticket read verdict (owner or operator, AND current result rights), so loading a ticket by id and selecting it as a parent cannot drift apart again.
  */
 import type { Request } from 'express';
 import type { AppContext } from '../composition-root';
 import type { InternalTicket } from '@/entities/ticket';
+import { canAccessResource } from '@/shared/middleware/authz';
 import { canReadProtectedResult } from '@/shared/protected-results';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 
@@ -27,4 +29,14 @@ export async function canReadTicketApplicationResult(ctx: AppContext, req: Reque
       return actor;
     });
   } catch { return false; }
+}
+
+/** @description The by-id ticket read verdict: the caller owns the ticket or is an operator, AND current
+ * exact-principal application rights admit its result surface. The /api/tickets router loads a ticket by id and
+ * accepts it as a parent through this one predicate, so those two answers cannot drift apart.
+ * @param ctx Canonical task store and actor resolver. @param req Verified request. @param ticket Loaded ticket.
+ * @returns Whether the caller may read the ticket.
+ */
+export async function canReadTicket(ctx: AppContext, req: Request, ticket: InternalTicket): Promise<boolean> {
+  return canAccessResource(req, ticket.ownerSub ?? null) && await canReadTicketApplicationResult(ctx, req, ticket);
 }

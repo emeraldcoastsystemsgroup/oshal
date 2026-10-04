@@ -8,10 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Create the ignored cleanup receipt directory in a fresh isolated checkout before writing the browser-close result.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove the page follows a turn the server reports as still working: the thinking bubble shows the server's note, polling continues past the note, and the late answer replaces it in the same bubble - the surface half of the 2026-09-27 late-answer fix.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove omitted or unreadable fleet snapshots clear stale roster/activity UI and prevent global work polling while retaining personal panels and operator true zero.
  */
-import { type Browser, type Page, type Frame } from 'playwright';
+import { type Browser, type BrowserContext, type Page, type Frame } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dashboardGate, dashboardState, dashboardMediaFile, startJarvisDashboardFixture, type DashboardTask } from '../fixtures/jarvis-dashboard';
 import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 
@@ -36,9 +37,11 @@ afterAll(async () => {
 }, BROWSER_HOOK_TIMEOUT_MS);
 
 /** @description Read the real current page with all outbound origins blocked. */
-async function openDashboard(width = 1280, height = 800, embedded = false, theme = 'workspace', persistedSessionId?: string) {
+async function openDashboard(width = 1280, height = 800, embedded = false, theme = 'workspace', persistedSessionId?: string,
+  prepare?: (context: BrowserContext) => Promise<void>) {
   const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce', permissions: ['microphone'] });
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.base ? route.continue() : route.abort());
+  if (prepare) await prepare(context);
   await context.addInitScript(value => localStorage.setItem('cockpit-theme', value), theme);
   // A thread id this browser bookmarked on an earlier visit — the page reads it before any turn.
   if (persistedSessionId) await context.addInitScript(value => localStorage.setItem('jarvisSessionId', value), persistedSessionId);
@@ -363,4 +366,159 @@ it('shows the still-working note, keeps following the turn and replaces the note
     expect(convo).not.toContain('taking unusually long');
     expect(errors).toEqual([]);
   } finally { await context.close(); }
+});
+
+interface FleetControls {
+  overview: Record<string, unknown>;
+  status: number;
+  failOverview: boolean;
+  workStatus: number;
+  workItems: Array<Record<string, unknown>>;
+  workReads: number;
+  workWait?: Promise<void>;
+}
+const FLEET_BOT = { agentId: 'fixture-worker', name: 'Fixture worker', role: 'engineering', capabilities: [], online: true };
+
+/** @description Intercept only fixture fleet reads before the shipped document boots; personal panels remain real render paths. */
+async function openFleet(bots: unknown = [FLEET_BOT], omitted = false) {
+  const controls: FleetControls = { overview: {
+    ...(omitted ? {} : { bots }), comms: { signals: [{ subject: 'Own communications visible' }] },
+    activity: { openCount: 1, tickets: [{ id: 'own', title: 'Own work visible' }] },
+    calendar: { events: [{ when: '2026-10-04', title: 'Own calendar visible' }] },
+  }, status: 200, failOverview: false, workStatus: 200,
+    workItems: [{ assignedAgentId: FLEET_BOT.agentId, status: 'executing', title: 'Fixture active work' }], workReads: 0 };
+  const opened = await openDashboard(1280, 800, false, 'workspace', undefined, async context => {
+    await context.route('**/api/jarvis/overview', async route => {
+      if (controls.failOverview) { await route.abort(); return; }
+      await route.fulfill({ status: controls.status, json: controls.overview });
+    });
+    await context.route('**/api/swarm/work-items', async route => {
+      controls.workReads++;
+      const status = controls.workStatus, body = JSON.stringify({ items: controls.workItems });
+      if (controls.workWait) await controls.workWait;
+      await route.fulfill({ status, contentType: 'application/json', body });
+    });
+  });
+  try {
+    await expect.poll(() => opened.surface.locator('#cc .cc-row').filter({ has: opened.surface.locator('.lbl', { hasText: /^Work$/ }) }).getAttribute('title')).toContain('Own work visible');
+  } catch (error) { await opened.context.close(); throw error; }
+  return { ...opened, controls };
+}
+
+/** @description Inspect actual shipped lexical state and tooltip DOM; old-source mutation still reaches behavioral assertions. */
+async function fleetSnapshot(surface: Page | Frame) {
+  return surface.evaluate<{ visible: boolean; nodes: Array<{ id: string; busy: boolean; task: string; taskCount: number }>;
+    clusters: string[]; callout: unknown; tooltip: string; tipOn: boolean }>(`({ visible: typeof fleetVisible === 'undefined' ? true : fleetVisible,
+    nodes: nodes.map(n=>({id:n.id,busy:n.busy,task:n.task,taskCount:n.taskCount})),
+    clusters:Object.keys(clusterCenters),callout,tooltip:nodeTipEl.innerHTML,tipOn:nodeTipEl.classList.contains('on') })`);
+}
+
+/** @description Populate an actual successful work read and visible transient tooltip/callout before testing cleanup. */
+async function seedFleetActivity(surface: Page | Frame) {
+  await surface.evaluate('loadActivity()');
+  await surface.evaluate(`callout=pickCallout(); nodeTipEl.innerHTML='Fixture worker task'; nodeTipEl.classList.add('on');`);
+  expect((await fleetSnapshot(surface)).nodes.some((n: { busy: boolean }) => n.busy)).toBe(true);
+}
+
+/** @description Ensure denial removes identities/transient global work without changing the personal request draft. */
+async function expectFleetCleared(surface: Page | Frame) {
+  expect(await fleetSnapshot(surface)).toMatchObject({ visible: false, nodes: [], clusters: [], callout: null, tooltip: '', tipOn: false });
+  expect(await surface.locator('#cc').textContent()).not.toContain('Swarm');
+}
+
+describe('Jarvis fleet admission', () => {
+  it('keeps own panels and composer when ordinary overview omits fleet and never polls global work', async () => {
+    const { surface, context, controls, errors } = await openFleet(undefined, true);
+    try {
+      await expectFleetCleared(surface);
+      await surface.evaluate('loadActivity()'); expect(controls.workReads).toBe(0);
+      expect(await surface.locator('#cc .cc-row').filter({ has: surface.locator('.lbl', { hasText: /^Comms$/ }) }).getAttribute('title')).toContain('Own communications visible');
+      expect(await surface.locator('#cc .cc-row').filter({ has: surface.locator('.lbl', { hasText: /^Next$/ }) }).getAttribute('title')).toContain('Own calendar visible');
+      await surface.locator('#typein').fill('Keep my unfinished request.');
+      await surface.evaluate('loadOverview()');
+      expect(await surface.locator('#typein').inputValue()).toBe('Keep my unfinished request.');
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  it.each([{ label: 'nonempty', bots: [FLEET_BOT] }, { label: 'empty', bots: [] }])(
+    'retains operator nonempty or genuine empty fleet ($label)', async ({ bots }) => {
+    const { surface, context, errors } = await openFleet(bots);
+    try {
+      expect(await surface.locator('#cc').textContent()).toContain(bots.length ? '1/1' : '0/0');
+      expect((await fleetSnapshot(surface)).visible).toBe(true);
+      if (!bots.length) expect(await surface.locator('#cc .cc-row').first().getAttribute('title')).toBe('No bots registered');
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  it('clears the prior roster, work, callout and tooltip when fleet becomes omitted', async () => {
+    const { surface, context, controls, errors } = await openFleet();
+    try {
+      await seedFleetActivity(surface); await surface.locator('#typein').fill('Preserve this draft.');
+      delete controls.overview.bots; await surface.evaluate('loadOverview()');
+      await expectFleetCleared(surface);
+      const reads = controls.workReads; await surface.evaluate('loadActivity()'); expect(controls.workReads).toBe(reads);
+      expect(await surface.locator('#cc .cc-row').filter({ has: surface.locator('.lbl', { hasText: /^Work$/ }) }).getAttribute('title')).toContain('Own work visible');
+      expect(await surface.locator('#typein').inputValue()).toBe('Preserve this draft.');
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  it.each([{ bots: null }, { bots: [{ name: 'Missing actual identity' }] }])(
+    'refuses malformed fleet instead of inventing empty data (%j)', async ({ bots }) => {
+    const { surface, context, controls } = await openFleet();
+    try {
+      await seedFleetActivity(surface); controls.overview.bots = bots;
+      await surface.evaluate('loadOverview()'); await expectFleetCleared(surface);
+      expect(await surface.locator('#cc .cc-row').filter({ has: surface.locator('.lbl', { hasText: /^Work$/ }) }).getAttribute('title')).toContain('Own work visible');
+      expect(await surface.locator('#cc').textContent()).not.toContain('No bots registered');
+    } finally { await context.close(); }
+  });
+
+  it.each([401, 403, 500, 'network'] as const)('clears stale fleet when overview becomes unreadable (%s)', async status => {
+    const { surface, context, controls } = await openFleet();
+    try {
+      await seedFleetActivity(surface);
+      if (status === 'network') controls.failOverview = true; else controls.status = status;
+      await surface.evaluate('loadOverview()'); await expectFleetCleared(surface);
+      expect(await surface.locator('#cc').textContent()).toContain(status === 401 ? 'Sign in' : 'Status unavailable');
+    } finally { await context.close(); }
+  });
+
+  it('removes vanished roster membership instead of retaining the earlier snapshot', async () => {
+    const { surface, context, controls } = await openFleet();
+    try {
+      await seedFleetActivity(surface); controls.workItems = [];
+      controls.overview.bots = [{ ...FLEET_BOT, agentId: 'replacement-worker', name: 'Replacement worker' }];
+      await surface.evaluate('loadOverview()');
+      await expect.poll(async () => (await fleetSnapshot(surface)).nodes.map((n: { id: string }) => n.id)).toEqual(['replacement-worker']);
+      expect(await fleetSnapshot(surface)).toMatchObject({ callout: null, tooltip: '', tipOn: false });
+    } finally { await context.close(); }
+  });
+
+  it('clears busy/task/callout/tooltip after a denied work read without erasing admitted roster', async () => {
+    const { surface, context, controls } = await openFleet();
+    try {
+      await seedFleetActivity(surface); controls.workStatus = 403; await surface.evaluate('loadActivity()');
+      expect(await fleetSnapshot(surface)).toMatchObject({ visible: true, nodes: [{ id: FLEET_BOT.agentId,
+        busy: false, task: '', taskCount: 0 }], callout: null, tooltip: '', tipOn: false });
+      expect(await surface.locator('#cc').textContent()).toContain('1/1');
+    } finally { await context.close(); }
+  });
+
+  it('discards an old in-flight work response after fleet admission is withdrawn', async () => {
+    const { surface, context, controls } = await openFleet();
+    let release: (() => void) | undefined;
+    try {
+      controls.workWait = new Promise<void>(resolve => { release = resolve; });
+      const before = controls.workReads;
+      await surface.evaluate('window.fixturePendingWork=loadActivity(); void 0');
+      await expect.poll(() => controls.workReads).toBeGreaterThan(before);
+      delete controls.overview.bots; await surface.evaluate('loadOverview()');
+      await expectFleetCleared(surface); release!();
+      await surface.evaluate('window.fixturePendingWork'); await expectFleetCleared(surface);
+      expect(await surface.locator('#cc .cc-row').filter({ has: surface.locator('.lbl', { hasText: /^Work$/ }) }).getAttribute('title')).toContain('Own work visible');
+    } finally { release?.(); await context.close(); }
+  });
 });

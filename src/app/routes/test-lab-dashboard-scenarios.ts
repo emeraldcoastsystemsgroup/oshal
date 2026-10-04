@@ -7,6 +7,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Link the terminal-ticket return guard: the real-PostgreSQL suite proving a dead ticket closes its work row and says so once in the thread, instead of sitting at 'queued' and being injected into every turn as "in progress".
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Link the Home admission guard: the route-level suite proving Home offers an application only while current application policy admits it, converging with workspace discovery on grant, revocation and explicit deny.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Exercise the signed-in issuer-less Jarvis thread refusal and fresh-thread cleanup in the running Lab, not only the isolated browser suite.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Link the mounted Jarvis fleet admission guard alongside the actual dashboard browser regressions.
  */
 import type { Scenario } from './test-lab-scenarios';
 import { assetReadiness } from './test-lab-asset-readiness';
@@ -17,6 +18,7 @@ export const DASHBOARD_SCENARIOS: Scenario[] = [{
   description: 'Read compact Home/Jarvis assets and exercise a clearly labelled, owner-bound Jarvis thread-refusal fixture. The lifecycle step asks only for a deterministic weather-location clarification (no provider dispatch or model call), then deletes its own threads and chat ticket. Linked suites exercise browser layout, task grouping, drafts, navigation and summaries.',
   regressionTests: [
     { level: 'browser', path: 'tests/unit/jarvis-dashboard-browser.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-overview-fleet-route.spec.ts' },
     { level: 'browser', path: 'tests/unit/jarvis-legacy-thread-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/jarvis-no-brain-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-no-hosted-brain-honesty.spec.ts' },
