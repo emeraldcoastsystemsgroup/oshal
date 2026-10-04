@@ -16,6 +16,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | A run that files live fixtures can be interrupted: SIGINT/SIGTERM run what the case registered through the `onInterrupt` port (cancel its tickets, say how to finish), release the helper and exit 130; a `note` port lets a case report ids as it goes. `--cleanup-root=<id>` finishes an interrupted run of one case by its root id through the case's `cleanupRoot`. A crashed case prints NO RECEIPT instead of a receipt of zeros.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | A case may pass `timeoutMs` in the `api` port's options (fourth argument) to bound ONE call beyond the 30 s default: the storyboard-agy case's single POST /api/test-lab/run blocks for the whole render (the api runs the step inline; the bot dispatch budget is 420 s), and on 2026-10-02 the case crashed "aborted due to timeout" about 45 s in, before the render had answered. The default stays CALL_TIMEOUT_MS; a non-positive or non-numeric value is ignored; the other ports are unchanged.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | An `apiLogs(since)` port: the api container's own log lines (OSHAL_VERIFY_API_CONTAINER, default oshal-local-api), for the capability-stt case, which requires the api's resolution line to name capability stt, local-stt and the rung swarm-default. A separate port rather than `logs`, whose OSHAL_VERIFY_JARVIS_CONTAINER override would otherwise redirect an api-log read to the Jarvis container.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Carry the second caller's actual target origin and preflight a focused-shell-only run before any token request, without adding Host overrides or changing other cases' HTTP transport.
  */
 
 'use strict';
@@ -324,13 +325,13 @@ async function recordMeasurement(result, ports, write) {
  * @param {string} base - The box's base URL.
  * @param {string} secondToken - The second caller's token ('' when the runner has none).
  * @param {typeof fetch} [fetchImpl] - Fetch (a seam for the binding test).
- * @returns {Promise<{api: Function, upload: Function, ownerSub: string}|null>} The port, or null without a token.
+ * @returns {Promise<{api: Function, upload: Function, ownerSub: string, origin: string}|null>} The port, or null without a token.
  */
 async function secondCallerPort(base, secondToken, fetchImpl = fetch) {
   if (!secondToken) return null;
   const http = httpPorts(base, secondToken, fetchImpl);
   const who = await http.api('GET', '/api/cli-tokens/whoami').catch((error) => ({ status: 0, json: {}, error }));
-  return { api: http.api, upload: http.upload, ownerSub: who.status === 200 && typeof who.json.sub === 'string' ? who.json.sub : '' };
+  return { api: http.api, upload: http.upload, origin: base, ownerSub: who.status === 200 && typeof who.json.sub === 'string' ? who.json.sub : '' };
 }
 
 /**
@@ -374,6 +375,8 @@ async function main(argv, write = (line) => process.stdout.write(`${line}\n`)) {
   const token = proofRunner.readOperatorPat(process.env, envFile);
   if (!token) { write(`UNAVAILABLE: ${proofRunner.PAT_ENV} is neither exported nor in the .env; nothing was written.`); return 2; }
   const base = String(process.env.OSHAL_VERIFY_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const targetProblem = selected.length === 1 && selected[0].module.KEY === 'shell-lock' ? selected[0].module.originRefusal(base) : null;
+  if (targetProblem) { write(`UNAVAILABLE: ${targetProblem}; no caller request was sent.`); return 2; }
   const bound = await bindPorts(base, token, proofRunner.readNamedToken(process.env, envFile, common.SECOND_PAT_ENV));
   if (bound.error) { write(`UNAVAILABLE: ${bound.error}; nothing was written.`); return 2; }
   if (args.cleanupRoot) return cleanupRootRun(selected, args.cleanupRoot, bound, write);
