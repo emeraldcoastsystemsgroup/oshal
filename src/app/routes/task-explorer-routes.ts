@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Normalized wildcard route parameter handling after Session 68 task-explorer service decomposition
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CM-3: Added /explorer/tickets/:ticketId/status-history endpoint for Process tab
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Passed exact authenticated identity and explicit operator authority into workspace browse, tree, and preview handlers before filesystem resolution.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Scope fallback project discovery to current readable caller tasks.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -14,6 +15,7 @@ import { TaskExplorerService } from '@/features/task-explorer';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
+import { canReadCockpitTask } from './cockpit-resource-access';
 
 const logger = createChildLogger({ module: 'task-explorer-routes' });
 
@@ -27,7 +29,7 @@ export function createTaskExplorerRoutes(ctx: AppContext): Router {
   const router = Router();
   const service = new TaskExplorerService(ctx.taskStore, ctx.messageStore, ctx.workspaceService);
 
-  router.get('/projects', createProjectsHandler(service));
+  router.get('/projects', createProjectsHandler(service, ctx));
   router.get('/tickets/hierarchy', createHierarchyHandler(service));
   router.get('/tickets/:ticketId/activity', createActivityHandler(service));
   router.get('/metrics/summary', createMetricsHandler(service));
@@ -42,13 +44,18 @@ export function createTaskExplorerRoutes(ctx: AppContext): Router {
   return router;
 }
 
-function createProjectsHandler(service: TaskExplorerService) {
-  return async (_req: Request, res: Response): Promise<void> => {
+/** @description Scope fallback projects before deriving names or counts. @param service Explorer. @param ctx Runtime. @returns Caller project handler. */
+function createProjectsHandler(service: TaskExplorerService, ctx: AppContext) {
+  return async (req: Request, res: Response): Promise<void> => {
     const startedAt = Date.now();
     logger.info('GET /api/v1/projects');
 
     try {
-      const data = await service.listProjects();
+      const caller = getCaller(req).sub;
+      const operator = isOperator(req);
+      if (!operator && !caller) { res.status(401).json({ success: false, error: 'Authentication required' }); return; }
+      const data = await service.listProjects({ ownerSub: operator ? undefined : caller!,
+        canRead: task => canReadCockpitTask(ctx, req, task) });
       logger.info({ count: data.length, durationMs: Date.now() - startedAt }, 'GET /api/v1/projects complete');
       res.json({ success: true, data });
     } catch (error) {

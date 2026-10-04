@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted project CRUD routes from cockpit-routes.ts to satisfy 800-line refactoring trigger
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Scope project discovery to current readable owner records; expose the global registry only to operators.
  */
 
 import { Router } from 'express';
@@ -11,9 +12,8 @@ import type { Request, Response } from 'express';
 import { DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
+import { handleGetCockpitProjects } from './cockpit-private-projects';
 import {
-  buildProjectSelection,
-  buildProjectSelectionFromTask,
   loadProjectRegistry,
   readOptionalString,
   readRecord,
@@ -31,55 +31,7 @@ const logger = createChildLogger({ module: 'cockpit-project-routes' });
 export function createCockpitProjectRoutes(ctx: AppContext): Router {
   const router = Router();
 
-  router.get('/projects', async (_req: Request, res: Response) => {
-    try {
-      logger.info('GET /api/v1/projects');
-      const projects = new Map<string, { id: string; name: string; identifier: string; projectId: string; workspaceSlug: string; ticketCount?: number }>();
-
-      const registry = loadProjectRegistry(ctx);
-      for (const [id, entry] of registry) {
-        projects.set(id, { ...entry, ticketCount: 0 });
-      }
-
-      const internalTickets = await ctx.ticketService.listTickets({ limit: 500 }).catch(() => []);
-      for (const ticket of internalTickets as Array<Record<string, unknown>>) {
-        const metadata = readRecord(ticket.metadata);
-        const selection = buildProjectSelection(
-          readOptionalString(metadata.projectName) || readOptionalString(metadata.project),
-          readOptionalString(metadata.projectId),
-          readOptionalString(metadata.projectIdentifier),
-          readOptionalString(metadata.workspaceSlug),
-        );
-        const existing = projects.get(selection.id);
-        if (existing) {
-          existing.ticketCount = (existing.ticketCount || 0) + 1;
-        } else {
-          projects.set(selection.id, { ...selection, ticketCount: 1 });
-        }
-      }
-
-      const tasks = await ctx.taskStore.list({ limit: 500 });
-      for (const task of tasks) {
-        const selection = buildProjectSelectionFromTask(task as Record<string, unknown>);
-        if (!projects.has(selection.id)) {
-          projects.set(selection.id, { ...selection, ticketCount: 0 });
-        }
-      }
-
-      const registryIds = new Set(registry.keys());
-      const filtered = Array.from(projects.values()).filter(
-        (p) => (p.ticketCount && p.ticketCount > 0) || registryIds.has(p.id) || p.id === DEFAULT_PROJECT_ID,
-      );
-
-      res.json({
-        success: true,
-        projects: filtered.sort((left, right) => left.name.localeCompare(right.name)),
-      });
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to list projects');
-      res.json({ success: true, projects: [] });
-    }
-  });
+  router.get('/projects', handleGetCockpitProjects(ctx));
 
   router.post('/projects', async (req: Request, res: Response) => {
     try {

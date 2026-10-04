@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added escalation query route for triage dashboards
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added run list and work item query routes for operator visibility
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Restricted private GitHub provider processing to operators
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Restrict global escalation records to operators before querying the store.
  */
 
 import { Router } from 'express';
@@ -31,7 +32,7 @@ export function createSwarmOrchestrationRoutes(controller: SwarmOrchestrationCon
   router.get('/runs', controller.listRuns);
   router.get('/runs/:runId', controller.getRun);
   router.get('/work-items', controller.listWorkItems);
-  router.get('/escalations', controller.listEscalations);
+  router.get('/escalations', requiresOperator, controller.listEscalations);
   router.post('/tickets', controller.submitTickets);
 
   logger.info('Swarm orchestration routes registered');

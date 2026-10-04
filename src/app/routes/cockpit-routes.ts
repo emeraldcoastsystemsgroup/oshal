@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Inline bots no longer show OFFLINE. /metrics/agents, swarmAgentCount, and buildSwarmHealth now (a) read getActiveRegistry() at REQUEST time (the module-load snapshot ran before app bots registered, so dnd/spaces were absent) and (b) compute online/healthy via resolveDisplayOnline(heartbeat, container) — inline/api-hosted bots (container oshal-api) are online when the api is up; only dedicated bot-nodes stay heartbeat-gated. Fixes dnd (122 real runs) rendering offline. Routing/eligibility untouched.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Gated the ?scope=all override behind operator privilege (isOperator). Previously ANY authenticated user could pass ?scope=all to enumerate every tenant's tickets; non-operators are now always scoped to their own ownerSub regardless of the query param.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Mount GET /tickets/:ticketId/workflow (handleGetCockpitTicketWorkflow) before the generic ticket-detail route so the cockpit Workflow tab reads one owner- and application-scoped projection of the registered definition, recorded run, status history, gate receipts and child tickets.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com | Extract ticket SSE and enforce current owner/application rights before subscription and delivery.
  */
 
 import { Router } from 'express';
@@ -54,6 +55,7 @@ import {
 import { handleGetCockpitEscalationSummary } from './cockpit-escalation-summary-route';
 import { handleGetCockpitQueueHealth } from './cockpit-queue-health-route';
 import { handleGetCockpitTicketActivity } from './cockpit-ticket-activity-route';
+import { handleCockpitTicketStream, type TicketActivityListener } from './cockpit-ticket-stream-route';
 import { handleGetCockpitTicketDetail } from './cockpit-ticket-detail-route';
 import { handleGetCockpitTicketWorkflow } from './cockpit-ticket-workflow-route';
 import { getActiveRegistry } from '../extensions/swarm/swarm-bot-registry';
@@ -66,8 +68,6 @@ const SWARM_BOT_REGISTRY = getActiveRegistry();
 const logger = createChildLogger({ module: 'cockpit-routes' });
 
 // ═══ TICKET ACTIVITY EVENT BUS ═══
-
-type TicketActivityListener = (event: { ticketId: string; entry: Record<string, unknown> }) => void;
 
 /** @description Module-level set of SSE listeners for ticket activity updates. */
 const ticketActivityBus = new Set<TicketActivityListener>();
@@ -558,47 +558,7 @@ export function createCockpitRoutes(ctx: AppContext): Router {
    * the new entry is pushed without requiring a full reload.
    * GET /api/v1/tickets/:ticketId/activity/stream
    */
-  router.get('/tickets/:ticketId/activity/stream', (req: Request, res: Response) => {
-    const { ticketId } = req.params;
-    logger.info({ ticketId }, 'Ticket activity SSE connection opened');
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-
-    res.write(`event: connected\ndata: ${JSON.stringify({ ticketId, timestamp: Date.now() })}\n\n`);
-
-    // Register this connection with the activity event bus
-    const listener = (event: { ticketId: string; entry: Record<string, unknown> }) => {
-      if (event.ticketId === ticketId || event.ticketId === '*') {
-        try {
-          res.write(`event: ticket-activity\ndata: ${JSON.stringify(event.entry)}\n\n`);
-        } catch {
-          ticketActivityBus.delete(listener);
-        }
-      }
-    };
-    ticketActivityBus.add(listener);
-
-    // Heartbeat every 30 seconds
-    const heartbeat = setInterval(() => {
-      try {
-        res.write(`event: heartbeat\ndata: ${JSON.stringify({ timestamp: Date.now() })}\n\n`);
-      } catch {
-        clearInterval(heartbeat);
-        ticketActivityBus.delete(listener);
-      }
-    }, 30000);
-
-    req.on('close', () => {
-      logger.info({ ticketId }, 'Ticket activity SSE connection closed');
-      clearInterval(heartbeat);
-      ticketActivityBus.delete(listener);
-    });
-  });
+  router.get('/tickets/:ticketId/activity/stream', handleCockpitTicketStream(ctx, ticketActivityBus));
 
   // ═══ TICKET CREATION ═══
 

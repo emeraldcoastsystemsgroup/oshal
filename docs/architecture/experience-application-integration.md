@@ -307,5 +307,23 @@ The final normal store gate passes all 87 checks with zero failures, partial res
 skips or blocked checks, using disposable Linux/PostgreSQL/physics prerequisites.
 No skip acceptance or hook bypass was used. Actual deployed verification, installed
 Test Lab results, lifecycle boundaries and cleanup/preservation are recorded in the
-delivery status above. The remaining acceptance item is a second real authenticated
-non-admin privacy check.
+delivery status above. Final privacy acceptance remains open. Subsequent route
+assessment confirmed unscoped cockpit ticket streams, global escalation reads and
+project discovery, plus focused-shell refusal gaps. These core repairs require
+independent source review, merge, coordinated deployment and the second real
+authenticated non-admin check before the experience work is complete.
+
+Cockpit private reads use the verified owner, recorded issuer and current protected
+result authority. Streams recheck each event and heartbeat and close on refusal.
+Project discovery includes only admitted ticket/task records for ordinary callers;
+the global registry and escalation list require an operator. Activity details admit
+each contributing child and canonical task before exposing messages, counts or
+costs. Their costs come from admitted persisted tasks; unqualified direct SQL ticket
+totals cannot establish every contributor's read authority and are omitted on this
+surface. This can reduce displayed totals when task usage is absent; it does not
+change the underlying spend records.
+
+The isolated HTTP regression is `tests/unit/cockpit-private-reads-http.spec.ts`,
+registered in the protected remote application execution Test Lab scenario and
+`npm run test:remote-authorization`. Synthetic authentication and isolated policy
+fixtures prove source behavior; they do not replace live non-admin privacy evidence.

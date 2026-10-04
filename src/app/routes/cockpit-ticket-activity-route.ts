@@ -13,24 +13,23 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Carries costUnitLabel through the ticket-activity copy alongside providerId, so this surface labels a subscription price-equivalent and a BYO token count apart from metered spend instead of summing all three into one Est. Cost column.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | The direct cost summary's UNKNOWN_PROVIDER sentinel reads as ABSENT. It writes the literal 'unknown' for a NULL provider_id, which is truthy and which classifyCostUnit answers 'billed' for - so the cockpit rendered `unknown` in the Provider column labelled `billed`, asserting real metered money for a bot with no recorded provider. That is the majority case: 2,701 live chat_tasks rows carry a null provider_id.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Corrected what readRecordedEscalation says about precedence. ADR-163 settled swarm_escalations as a run-scoped attempt record, so the transition detail this route projects is the canonical one and the durable record enriches it; the comment still described the cockpit as preferring the durable store, which is the assumption the ADR retired.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Keep JSON activity on the same current owner/issuer/result boundary as its live stream.
  */
 
 import type { Request, Response } from 'express';
-import { UNKNOWN_PROVIDER } from '@/features/operational-intelligence';
 import {
   deriveTicketEscalationDetail,
   readTicketEscalatedAt,
   type TicketEscalationDetail,
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
-import { canAccessResource } from '@/shared/middleware/authz';
+import { canReadCockpitTask, canReadCockpitTicket } from './cockpit-resource-access';
+import { readVisibleActivityTasks, readVisibleActivityWorkItems, collectVisibleChildActivity, emptyChildActivity } from './cockpit-private-activity';
 import type { AppContext } from '../composition-root';
 import {
   type CockpitAgentUsageStats,
-  deriveCostUnitLabel,
   mergeAgentUsageMaps,
   mergeModelUsageMaps,
-  normalizeUsageByModel,
   pickPrimaryModel,
   rollupTaskUsage,
 } from './cockpit-cost-route-helpers';
@@ -40,25 +39,20 @@ import {
   buildLifecycleTimelineEntry,
   buildTimelineEntry,
   buildWorkspacePathFromWorkspaceId,
-  collectChildTimelines,
   ensureTimelineHasLifecycleEvent,
   mapOshalTicketStateToCockpitState,
   mapTaskStatus,
   normalizeWorkspaceDisplayPath,
-  readOptionalNumber,
   readOptionalString,
   readTaskAgentId,
   readTaskMessages,
-  readTasksForTicket,
   readTicketTaskLinks,
   readTicketWorkspaceLinks,
-  selectPrimaryTaskId,
   selectWorkspaceId,
 } from './cockpit-route-helpers';
 import {
   buildWorkItemTimelineEntries,
   deriveOshalTicketStateFromWorkItems,
-  readWorkItemsForInternalTicket,
 } from './cockpit-work-item-helpers';
 import { getActiveRegistry } from '../extensions/swarm/swarm-bot-registry';
 const SWARM_BOT_REGISTRY = getActiveRegistry();
@@ -93,11 +87,11 @@ export function handleGetCockpitTicketActivity(ctx: AppContext) {
 
       const internalTicket = await ctx.ticketService.getTicket(ticketId as string);
       if (internalTicket) {
-        if (!canAccessResource(req, internalTicket.ownerSub ?? null)) {
+        if (!await canReadCockpitTicket(ctx, req, internalTicket)) {
           res.status(404).json({ success: false, error: 'Ticket not found' });
           return;
         }
-        res.json(await buildInternalTicketActivityPayload(ctx, ticketId as string, internalTicket));
+        res.json(await buildInternalTicketActivityPayload(ctx, req, ticketId as string, internalTicket));
         return;
       }
 
@@ -115,26 +109,30 @@ export function handleGetCockpitTicketActivity(ctx: AppContext) {
   };
 }
 
-async function buildInternalTicketActivityPayload(
+type InternalActivityView = Awaited<ReturnType<typeof readInternalActivity>> & Awaited<ReturnType<typeof readInternalActivityUsage>>;
+
+/** @description Load only admitted activity sources. @param ctx Runtime. @param req Caller. @param ticketId Root ID. @param internalTicket Ticket. @returns Admitted root activity. */
+async function readInternalActivity(
   ctx: AppContext,
+  req: Request,
   ticketId: string,
   internalTicket: any,
-): Promise<Record<string, unknown>> {
+) {
   const taskLinks = await readTicketTaskLinks(ctx, ticketId);
-  const primaryTaskId = selectPrimaryTaskId(taskLinks);
   const linkedTaskIds = readLinkedTaskIds(taskLinks);
-  const linkedTasks = await readTasksForTicket(
+  const linkedTasks = await readVisibleActivityTasks(
     ctx,
+    req,
     ticketId,
     linkedTaskIds.length > 0 ? [...linkedTaskIds, ticketId] : [ticketId],
   );
   const linkedTask = linkedTasks[0] || null;
-  const resolvedTaskId = readOptionalString(linkedTask?.taskId) || primaryTaskId || null;
+  const resolvedTaskId = readOptionalString(linkedTask?.taskId) || null;
   const messages = resolvedTaskId
     ? await readTaskMessages(ctx, resolvedTaskId, ticketId)
     : [];
   const workItems = messages.length === 0
-    ? await readWorkItemsForInternalTicket(ctx, internalTicket as Record<string, unknown>)
+    ? await readVisibleActivityWorkItems(ctx, req, internalTicket)
     : [];
   const runtimeStatus = deriveOshalTicketStateFromWorkItems(workItems);
   const timeline = ensureTimelineHasLifecycleEvent(
@@ -150,17 +148,30 @@ async function buildInternalTicketActivityPayload(
       type: 'ticket',
     }),
   );
+  const { cockpitState, escalation, workspaceLookupId, workspacePath } = await readActivityWorkspace(ctx, req, ticketId, internalTicket, linkedTask, runtimeStatus);
+  return { linkedTasks, messages, workItems, runtimeStatus, timeline, cockpitState, escalation, workspaceLookupId, workspacePath };
+}
+
+/** @description Resolve workspace and escalation for an admitted ticket. @param ctx Runtime. @param req Caller. @param ticketId Ticket ID. @param internalTicket Ticket. @param linkedTask Admitted task. @param runtimeStatus Visible status. @returns Display context. */
+async function readActivityWorkspace(ctx: AppContext, req: Request, ticketId: string, internalTicket: any, linkedTask: Record<string, unknown> | null, runtimeStatus: string | null | undefined) {
   const workspaceLinks = await readTicketWorkspaceLinks(ctx, ticketId);
-  const inheritedWorkspaceLinks = workspaceLinks.length === 0 && internalTicket.parentTicketId
-    ? await readTicketWorkspaceLinks(ctx, internalTicket.parentTicketId)
+  const parent = internalTicket.parentTicketId ? await ctx.ticketService.getTicket(internalTicket.parentTicketId) : null;
+  const inheritedWorkspaceLinks = workspaceLinks.length === 0 && parent && await canReadCockpitTicket(ctx, req, parent)
+    ? await readTicketWorkspaceLinks(ctx, parent.ticketId)
     : [];
   const workspaceId = selectWorkspaceId(workspaceLinks.length > 0 ? workspaceLinks : inheritedWorkspaceLinks);
   const cockpitState = mapOshalTicketStateToCockpitState(runtimeStatus || internalTicket.status);
   const escalation = await readRecordedEscalation(ctx, ticketId, internalTicket, runtimeStatus);
-  const workspaceLookupId = await resolveRootWorkspaceTicketId(ctx, internalTicket);
+  const workspaceLookupId = await resolveRootWorkspaceTicketId(ctx, req, internalTicket);
   const workspacePath = await resolveWorkspaceDisplayPath(ctx, workspaceId, linkedTask, workspaceLookupId);
-  const directOwnUsage = await readDirectTicketUsageSummary(ctx, ticketId);
-  const ownUsage = directOwnUsage || rollupTaskUsage(linkedTasks);
+  return { cockpitState, escalation, workspaceLookupId, workspacePath };
+}
+
+/** @description Merge admitted root and child usage. @param ctx Runtime. @param req Caller. @param ticketId Root ID. @param internalTicket Ticket. @param related Admitted activity. @returns Private activity totals. */
+async function readInternalActivityUsage(ctx: AppContext, req: Request, ticketId: string, internalTicket: any, related: Awaited<ReturnType<typeof readInternalActivity>>) {
+  const { linkedTasks, timeline } = related;
+  // Unqualified SQL totals cannot prove each contributor's read authority.
+  const ownUsage = rollupTaskUsage(linkedTasks);
   const ticketProject = buildProjectSelection(
     readOptionalString(internalTicket?.metadata?.projectName) || readOptionalString(internalTicket?.metadata?.project),
     readOptionalString(internalTicket?.metadata?.projectId) || readOptionalString(internalTicket?.metadata?.project_id),
@@ -170,18 +181,8 @@ async function buildInternalTicketActivityPayload(
 
   const isRoot = !internalTicket.parentTicketId;
   const childRollup = isRoot
-    ? await collectChildTimelines(ctx, ticketId)
-    : {
-      entries: [],
-      children: [],
-      totalChildCost: 0,
-      totalChildInputTokens: 0,
-      totalChildOutputTokens: 0,
-      totalChildTokens: 0,
-      totalChildRequests: 0,
-      usageByModel: {},
-      usageByAgent: {},
-    };
+    ? await collectVisibleChildActivity(ctx, req, ticketId)
+    : emptyChildActivity();
   const mergedTimeline = isRoot && childRollup.entries.length > 0
     ? [...timeline, ...childRollup.entries]
     : timeline;
@@ -196,9 +197,13 @@ async function buildInternalTicketActivityPayload(
   const totalTokens = ownUsage.totalTokens + childRollup.totalChildTokens;
   const totalRequests = ownUsage.totalRequests + childRollup.totalChildRequests;
 
+  return { ticketProject, childRollup, mergedTimeline, totalUsageByModel, totalUsageByAgent, contributingBots, totalCost, totalInputTokens, totalOutputTokens, totalTokens, totalRequests };
+}
+
+/** @description Format admitted ticket detail. @param internalTicket Ticket. @param view Admitted fields. @returns Ticket view. */
+function renderInternalActivityTicket(internalTicket: any, view: InternalActivityView) {
+  const { runtimeStatus, cockpitState, escalation, workspaceLookupId, workspacePath, ticketProject, childRollup, totalCost } = view;
   return {
-    success: true,
-    ticket: {
       id: internalTicket.ticketId,
       externalId: readOptionalString(internalTicket.externalId)
         || readOptionalString(internalTicket.external_id)
@@ -225,8 +230,13 @@ async function buildInternalTicketActivityPayload(
       workspacePath,
       escalation: escalation.detail,
       escalatedAt: escalation.escalatedAt || undefined,
-    },
-    cost: {
+  };
+}
+
+/** @description Format admitted usage only. @param internalTicket Ticket. @param view Admitted totals. @returns Cost view. */
+function renderInternalActivityCost(internalTicket: any, view: InternalActivityView) {
+  const { ticketProject, totalUsageByModel, totalUsageByAgent, contributingBots, totalCost, totalInputTokens, totalOutputTokens, totalTokens, totalRequests } = view;
+  return {
       ticketId: internalTicket.ticketId,
       projectId: ticketProject.projectId,
       projectName: ticketProject.name,
@@ -241,10 +251,21 @@ async function buildInternalTicketActivityPayload(
       usageByAgent: totalUsageByAgent,
       contributingBots,
       modelId: pickPrimaryModel(totalUsageByModel),
-    },
-    timeline: mergedTimeline,
-    messageCount: (messages.length > 0 ? messages.length : workItems.length) + childRollup.entries.length,
   };
+}
+
+/** @description Compose activity exclusively from admitted contributors. @param ctx Runtime. @param req Caller. @param ticketId Root ID. @param internalTicket Ticket. @returns Private activity. */
+async function buildInternalTicketActivityPayload(
+  ctx: AppContext,
+  req: Request,
+  ticketId: string,
+  internalTicket: any,
+): Promise<Record<string, unknown>> {
+  const related = await readInternalActivity(ctx, req, ticketId, internalTicket);
+  const view = { ...related, ...await readInternalActivityUsage(ctx, req, ticketId, internalTicket, related) };
+  return { success: true, ticket: renderInternalActivityTicket(internalTicket, view),
+    cost: renderInternalActivityCost(internalTicket, view), timeline: view.mergedTimeline,
+    messageCount: (view.messages.length || view.workItems.length) + view.childRollup.entries.length };
 }
 
 /**
@@ -288,23 +309,26 @@ async function readRecordedEscalation(
   };
 }
 
+/** @description Read admitted legacy task activity. @param ctx Runtime. @param req Caller. @param ticketId Requested ID. @returns Private payload or absence. */
 async function buildFallbackTaskActivityPayload(
   ctx: AppContext,
   req: Request,
   ticketId: string,
 ): Promise<Record<string, unknown> | null> {
-  const fallbackTasks = await readTasksForTicket(ctx, ticketId, [ticketId]);
-  const task = fallbackTasks[0] || null;
-  if (!task) {
+  const fallbackTasks = await readVisibleActivityTasks(ctx, req, ticketId, [ticketId]);
+  const taskId = readOptionalString(fallbackTasks[0]?.taskId);
+  const canonicalTask = taskId ? await ctx.taskStore.get(taskId) : null;
+  const task: Record<string, unknown> | undefined = fallbackTasks[0];
+  if (!canonicalTask || !task) {
     return null;
   }
-  if (!canAccessResource(req, readOptionalString(task.ownerSub) ?? null)) {
+  if (!await canReadCockpitTask(ctx, req, canonicalTask)) {
     return null;
   }
 
   let messages: any[] = [];
   try {
-    messages = await ctx.messageStore.getByTask(ticketId);
+    messages = await ctx.messageStore.getByTask(canonicalTask.taskId);
   } catch (error) {
     logger.warn({ err: error, ticketId }, 'Task message lookup failed for activity fallback');
   }
@@ -325,10 +349,13 @@ async function buildFallbackTaskActivityPayload(
   const contributingBots = sortContributingBots(usageByAgent);
   const taskProject = buildProjectSelectionFromTask(task as Record<string, unknown>);
 
-  return {
-    success: true,
-    ticket: {
-      id: readOptionalString(task.taskId) || ticketId,
+  return { success: true, ticket: renderFallbackTicket(task, ticketId, taskProject, taskUsage),
+    cost: renderFallbackCost(task, taskProject, taskUsage, usageByAgent, contributingBots), timeline, messageCount: messages.length };
+}
+
+/** @description Render legacy detail from an admitted canonical task. @param task Task. @param ticketId Requested ID. @param taskProject Visible project. @param taskUsage Visible usage. @returns Ticket view. */
+function renderFallbackTicket(task: Record<string, unknown>, ticketId: string, taskProject: ReturnType<typeof buildProjectSelectionFromTask>, taskUsage: ReturnType<typeof rollupTaskUsage>) {
+  return {     id: readOptionalString(task.taskId) || ticketId,
       externalId: readOptionalString(task.externalId)
         || readOptionalString(task.external_id)
         || readOptionalString(task.taskId)
@@ -346,9 +373,12 @@ async function buildFallbackTaskActivityPayload(
       projectId: taskProject.projectId,
       projectIdentifier: taskProject.identifier,
       workspaceSlug: taskProject.workspaceSlug,
-    },
-    cost: {
-      ticketId: task.taskId,
+  };
+}
+
+/** @description Render caller-visible task costs. @param task Task. @param taskProject Project. @param taskUsage Admitted usage. @param usageByAgent Visible agents. @param contributingBots Visible bots. @returns Cost view. */
+function renderFallbackCost(task: Record<string, unknown>, taskProject: ReturnType<typeof buildProjectSelectionFromTask>, taskUsage: ReturnType<typeof rollupTaskUsage>, usageByAgent: ReturnType<typeof applyAgentNames>, contributingBots: ReturnType<typeof sortContributingBots>) {
+  return {     ticketId: task.taskId,
       projectId: taskProject.projectId,
       projectName: taskProject.name,
       estimatedCost: taskUsage.totalCost,
@@ -362,110 +392,9 @@ async function buildFallbackTaskActivityPayload(
       usageByAgent,
       contributingBots,
       modelId: taskUsage.modelId,
-    },
-    timeline,
-    messageCount: messages.length,
   };
 }
 
-async function readDirectTicketUsageSummary(
-  ctx: AppContext,
-  ticketId: string,
-): Promise<null | {
-  totalCost: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalTokens: number;
-  totalRequests: number;
-  usageByModel: Record<string, ReturnType<typeof normalizeUsageByModel>[string]>;
-  usageByAgent: Record<string, CockpitAgentUsageStats>;
-  modelId: string | null;
-}> {
-  try {
-    const summary = await ctx.swarm?.costTrackingService?.queryCostByTicket(ticketId);
-    if (!summary || !hasCostData(summary)) {
-      return null;
-    }
-
-    const usageByModel = normalizeUsageByModel(summary.usageByModel);
-    const usageByAgent = normalizeDirectUsageByAgent(summary.usageByAgent);
-
-    // Per-model totalCost may have been estimated from fallback pricing inside
-    // normalizeUsageByModel. Sum those so the ticket-level total reflects the estimate
-    // instead of the persisted $0 value.
-    const estimatedTotalFromModels = Object.values(usageByModel)
-      .reduce((sum, stats) => sum + (stats.totalCost || 0), 0);
-    const rawTotalCost = readOptionalNumber(summary.totalCost) || 0;
-    const totalCost = rawTotalCost > 0 ? rawTotalCost : estimatedTotalFromModels;
-
-    // Backfill agent-level cost when it was persisted as 0: proportionally distribute
-    // the ticket totalCost across agents by their share of total tokens.
-    const totalTokensAcrossAgents = Object.values(usageByAgent)
-      .reduce((sum, stats) => sum + (stats.totalTokens || 0), 0);
-    if (totalCost > 0 && totalTokensAcrossAgents > 0) {
-      Object.values(usageByAgent).forEach((stats) => {
-        if (!stats.totalCost && stats.totalTokens > 0) {
-          stats.totalCost = totalCost * (stats.totalTokens / totalTokensAcrossAgents);
-        }
-      });
-    }
-
-    return {
-      totalCost,
-      totalInputTokens: readOptionalNumber(summary.totalInputTokens) || 0,
-      totalOutputTokens: readOptionalNumber(summary.totalOutputTokens) || 0,
-      totalTokens: readOptionalNumber(summary.totalTokens) || 0,
-      totalRequests: readOptionalNumber(summary.totalRequests) || 0,
-      usageByModel,
-      usageByAgent,
-      modelId: pickPrimaryModel(usageByModel),
-    };
-  } catch (error) {
-    logger.warn({ err: error, ticketId }, 'Direct ticket cost rollup failed for activity route');
-    return null;
-  }
-}
-
-function hasCostData(summary: any): boolean {
-  return (readOptionalNumber(summary?.totalCost) || 0) > 0
-    || (readOptionalNumber(summary?.totalTokens) || 0) > 0
-    || (readOptionalNumber(summary?.totalRequests) || 0) > 0
-    || Object.keys(summary?.usageByModel || {}).length > 0
-    || Object.keys(summary?.usageByAgent || {}).length > 0;
-}
-
-/** The direct cost summary writes 'unknown' for an absent provider. Absent is what it means. */
-function readDirectProviderId(value: unknown): string | null {
-  const provider = readOptionalString(value) || null;
-  return provider === UNKNOWN_PROVIDER ? null : provider;
-}
-
-function normalizeDirectUsageByAgent(value: unknown): Record<string, CockpitAgentUsageStats> {
-  const normalized: Record<string, CockpitAgentUsageStats> = {};
-
-  Object.entries(readRecord(value)).forEach(([agentId, stats]) => {
-    const record = readRecord(stats);
-    normalized[agentId] = {
-      agentId,
-      agentName: readOptionalString(record.agentName) || agentId,
-      // This route has its OWN copy of the direct-summary normalizer. The field has to be
-      // carried here too, or the Provider column blanks on the ticket-activity surface alone.
-      // The direct summary writes the UNKNOWN_PROVIDER sentinel for a NULL provider_id, and it
-      // LOOKS like a provider: truthy, and classifyCostUnit answers 'billed' for it. Left alone
-      // the cockpit rendered `unknown` in the Provider column labelled `billed` — real metered
-      // money asserted for a bot with no recorded provider, which is the majority of live rows.
-      providerId: readDirectProviderId(record.providerId),
-      costUnitLabel: deriveCostUnitLabel(readDirectProviderId(record.providerId)),
-      totalInputTokens: readOptionalNumber(record.totalInputTokens) || 0,
-      totalOutputTokens: readOptionalNumber(record.totalOutputTokens) || 0,
-      totalTokens: readOptionalNumber(record.totalTokens) || 0,
-      totalCost: readOptionalNumber(record.totalCost) || 0,
-      totalRequests: readOptionalNumber(record.totalRequests) || 0,
-    };
-  });
-
-  return normalized;
-}
 
 function applyAgentNames(usageByAgent: Record<string, CockpitAgentUsageStats>): Record<string, CockpitAgentUsageStats> {
   const nameLookup = buildAgentNameLookup();
@@ -519,6 +448,7 @@ function readRecord(value: unknown): Record<string, unknown> {
 
 async function resolveRootWorkspaceTicketId(
   ctx: AppContext,
+  req: Request,
   internalTicket: Record<string, unknown>,
 ): Promise<string> {
   let currentTicketId = readOptionalString(internalTicket.ticketId) || '';
@@ -527,8 +457,8 @@ async function resolveRootWorkspaceTicketId(
 
   while (currentParentId && depth < 12) {
     const parentTicket = await ctx.ticketService.getTicket(currentParentId);
-    if (!parentTicket) {
-      return currentParentId;
+    if (!parentTicket || !await canReadCockpitTicket(ctx, req, parentTicket)) {
+      return currentTicketId;
     }
 
     currentTicketId = parentTicket.ticketId;

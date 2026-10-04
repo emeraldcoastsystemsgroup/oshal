@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Rebuilt task explorer service as a thin facade over decomposed project, activity, and workspace services for Session 68
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Tightened facade method signatures to preserve concrete payload types after service decomposition
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Threaded exact authenticated subjects and explicit operator authority into every workspace filesystem operation.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Carry caller scoping and current read checks into project discovery.
  */
 
 import type { IMessageStore } from '@/entities/message';
@@ -43,10 +44,11 @@ export class TaskExplorerService {
   /**
    * @description Lists task explorer projects derived from task metadata.
    *
+   * @param options - Verified owner scope and current read predicate.
    * @returns Project summaries sorted by ticket count
    */
-  async listProjects(): ReturnType<TaskExplorerProjectService['listProjects']> {
-    return this.measure('listProjects', () => this.projectService.listProjects());
+  async listProjects(options?: Parameters<TaskExplorerProjectService['listProjects']>[0]): ReturnType<TaskExplorerProjectService['listProjects']> {
+    return this.measure('listProjects', () => this.projectService.listProjects(options));
   }
 
   /**
