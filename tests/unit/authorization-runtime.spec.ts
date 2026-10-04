@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise authorization through real package loading, activation and mounted HTTP routes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove remote execution generations retract during reload and disable.
@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07 through real package loading and mounted routes: a non-widening catalog upgrade keeps an existing grant working on the new binding with no revoke or re-grant and records the installer migration event; a widening one refuses with the review id while the installed package keeps serving, and loads once an administrator approves that review.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Exercise signed callback revocation, exact refreshed owners and retirement across deferred verifier, directory and real resource-policy boundaries.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Hold the real policy's final tier resolver to prove revocation cannot hide behind an effective-policy snapshot.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Keep owner-only cockpit preferences reachable while an ungranted installed Smart Home namespace stays refused.
  */
 /** Real temporary package activation and Express dispatch; persistence is isolated, policy and lifecycle are real. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -26,6 +27,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApplicationAuthorizationRuntime, applicationAuthorizationMode } from '@/app/composition/application-authorization-runtime';
 import { ManifestRouteMounterImpl } from '@/app/composition/manifest-route-mounter';
 import { createApplicationAuthorizationGate } from '@/app/middleware/application-authorization-gate';
+import { createSwarmAppGateMiddleware } from '@/app/middleware/swarm-app-gate-middleware';
+import { createAppHomePreferenceRoutes, mountAppHomePreferenceRoutes } from '@/app/routes/app-home-preferences';
+import { hasAuthenticatedUserIdentity } from '@/shared/middleware/authz';
 import type { AppAccessResolver } from '@/features/swarm-apps';
 import { ApplicationAuthorizationService, CATALOG_MIGRATION_INSTALLER, MemoryAuthorizationStore } from '@/features/application-authorization';
 import { SwarmAppService, type SwarmAppManifest, type SwarmApplicationRecord } from '@/features/swarm-apps';
@@ -139,6 +143,64 @@ async function call(path = '/records/owned', { user = 'alice', method = 'GET', h
   const body = await response.text();
   return { status: response.status, body: body ? JSON.parse(body) : null };
 }
+
+/** @description Mount the actual platform seam behind real loaded-app ownership and policy gates.
+ * @returns Isolated origin, owner-query receipts and complete listener cleanup.
+ */
+async function cockpitPreferenceBoundary() {
+  hasCatalog = false;
+  await apps.loadApp(writePackage(manifest({ name: 'home', displayName: 'Smart Home', authorization: undefined,
+    routes: [{ module: 'routes.js', factory: 'createRoutes', mountPath: '/api/home', auth: 'oidc' }] })));
+  const calls: Array<{ sql: string; params: unknown[] }> = [];
+  let revision = 4;
+  const pool = { query: async (sql: string, params: unknown[]) => {
+    calls.push({ sql, params });
+    if (sql.startsWith('SELECT')) return { rows: [{ home_dashboard: { version: 1, hiddenApps: ['display-fixture'] }, home_revision: revision }] };
+    if (params[2] !== revision) return { rows: [] };
+    return { rows: [{ home_revision: ++revision }] };
+  } };
+  const ctx = { pool } as unknown as AppContext, app = express(); app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as Request & { oidc: unknown }).oidc = { isAuthenticated: () => req.get('x-fixture-user') === 'alice',
+      user: { sub: alice.sub }, idTokenClaims: { iss: alice.issuer }, fetchUserInfo: async () => ({ sub: alice.sub }) }; next();
+  });
+  const requiresAuth: RequestHandler = (req, res, next) => {
+    if (hasAuthenticatedUserIdentity(req)) { next(); return; } res.status(401).json({ error: 'fixture_auth_required' });
+  };
+  const access: AppAccessResolver = { resolveForPrincipal: async (appName, userSub) => ({ appName, userSub, tier: 'admin', bundle: null, source: 'default' }) };
+  app.use(createSwarmAppGateMiddleware(apps, access), createApplicationAuthorizationGate(apps, runtime));
+  mountAppHomePreferenceRoutes(app, ctx, requiresAuth);
+  // The old platform handler would still be protected by Smart Home's outer gate.
+  app.use('/api/home/preferences', requiresAuth, createAppHomePreferenceRoutes(ctx));
+  const listener = app.listen(0, '127.0.0.1'); await new Promise<void>(done => listener.once('listening', done));
+  return { origin: `http://127.0.0.1:${(listener.address() as AddressInfo).port}`, calls,
+    close: async () => { listener.closeAllConnections(); await new Promise<void>(done => listener.close(() => done())); } };
+}
+
+it('admits session-owned cockpit preferences without a Smart Home role and retains its application refusal', async () => {
+  const fixture = await cockpitPreferenceBoundary(), path = '/api/cockpit/home/preferences';
+  const headers = { 'x-fixture-user': 'alice', 'Content-Type': 'application/json' };
+  try {
+    expect(apps.ownerOf('/api/home/preferences')?.appName).toBe('home'); expect(apps.ownerOf(path)).toBeNull();
+    const old = await fetch(fixture.origin + '/api/home/preferences', { headers });
+    expect(old.status).toBe(403); expect((await old.json()).error).toBe('authorization_app_admin_required');
+    expect(fixture.calls).toEqual([]); expect(observations.filter(row => row.phase === 'handler')).toEqual([]);
+    const loaded = await fetch(fixture.origin + path + '?userSub=other-owner', { headers });
+    expect(loaded.status).toBe(200); expect(loaded.headers.get('cache-control')).toBe('no-store');
+    expect(await loaded.json()).toEqual({ preferences: { version: 1, hiddenApps: ['display-fixture'] }, revision: 4 });
+    expect(fixture.calls[0].params).toEqual([alice.sub]);
+    const save = await fetch(fixture.origin + path, { method: 'PUT', headers,
+      body: JSON.stringify({ preferences: { version: 1, hiddenApps: ['next-display'] }, revision: 4, userSub: 'other-owner' }) });
+    expect(save.status).toBe(200); expect(await save.json()).toEqual({ preferences: { version: 1, hiddenApps: ['next-display'] }, revision: 5 });
+    expect(fixture.calls[1].params).toEqual([alice.sub, JSON.stringify({ version: 1, hiddenApps: ['next-display'] }), 4]);
+    const stale = await fetch(fixture.origin + path, { method: 'PUT', headers, body: JSON.stringify({ preferences: { version: 1 }, revision: 4 }) });
+    expect(stale.status).toBe(409);
+    const before = fixture.calls.length;
+    expect((await fetch(fixture.origin + path)).status).toBe(401);
+    expect((await fetch(fixture.origin + path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(401);
+    expect(fixture.calls).toHaveLength(before); expect((await store.read()).assignments).toEqual([]);
+  } finally { await fixture.close(); }
+});
 
 beforeEach(async () => {
   vi.stubEnv('APP_PACKAGE_DYNAMIC_ROUTES', 'true'); vi.stubEnv('APP_ACCESS_ENFORCEMENT', 'enforce');

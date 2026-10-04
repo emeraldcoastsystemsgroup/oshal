@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Mount /api/calendar behind requiresAuth in content and assistant group: full CRUD for Google Calendar meetings and events.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mount /api/capability-providers behind requiresAuth beside /api/voice (ADR-173 S1): the operator surface that reads and writes the capability swarm rows; every route inside refuses anyone but an operator session.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The /api/capability-providers mount also gets the provider-offer store (ADR-173 S1b: unit prices and quota labels).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Mount personal cockpit display choices outside the installed Smart Home application namespace.
  * -----------------------------------------------------------------------------
  */
 
@@ -428,8 +429,8 @@ export function mountSystemAuxiliaryRoutes(
   const { createSwarmPresetRoutes } = require('./routes/swarm-preset-routes');
   app.use('/api', requiresAuth, createConfigHealthRoutes(ctx));
   app.use('/api', requiresAuth, createOnboardingRoutes(ctx));
-  const { createAppHomePreferenceRoutes } = require('./routes/app-home-preferences');
-  app.use('/api/home/preferences', requiresAuth, createAppHomePreferenceRoutes(ctx));
+  const { mountAppHomePreferenceRoutes } = require('./routes/app-home-preferences');
+  mountAppHomePreferenceRoutes(app, ctx, requiresAuth);
   app.use('/api', requiresAuth, createWhatsNewRoutes());
   app.use('/api', requiresAuth, createSwarmPresetRoutes(ctx));
 

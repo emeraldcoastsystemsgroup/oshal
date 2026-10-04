@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard that a ticket escalated more than once is dated by its CURRENT escalation: the payload carries escalatedAt over the real route even when that escalation recorded no reason, and selectEscalationDetail discards a durable record written for an earlier run rather than presenting it as the current explanation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-163 D3 flipped the precedence these cases pinned: the canonical transition detail now explains an escalation and the run-scoped swarm_escalations record enriches it, instead of the run record winning outright whenever it named a reason. The two cases are rewritten to assert the merged shape — the canonical reason AND the run record's retryClass, which the old single-record assertions could not both check — not relaxed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Pin the same-timestamp tie: two escalations stamped in one millisecond and returned newest first must resolve to the first row, so the newer escalation (which recorded no reason) is not replaced by the older one's stale reason. Deterministic rows, not a race on the store clock.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fixture only: the mounted cockpit context resolves the existing session (OWNER_SUB) as an active verified actor, as production's application-authorization runtime always does. The activity route's ticket verdict (canReadCockpitTicket) already required one on main, so the three route cases answered 404 for want of an actor rather than for anything they assert. No assertion, projection or authority changed.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -267,6 +268,10 @@ describe('cockpit activity payload escalation projection', () => {
       taskStore: { list: async () => [], get: async () => null },
       messageStore: { getByTask: async () => [] },
       workspaceService: { getWorkspace: async () => null },
+      // The verified actor production resolves for this session: the same owner, active.
+      applicationAuthorization: {
+        resolveActor: async () => ({ sub: OWNER_SUB, issuer: 'https://escalation.fixture.test', isActive: true, isSwarmAdmin: false }),
+      },
     } as never));
     return app;
   }
