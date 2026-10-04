@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Name the active home, workspace or classroom consistently in search, loading and display-choice controls.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Finish contextual sidebar and access explanation wording.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  */
 (() => {
   'use strict';
@@ -75,7 +76,7 @@
   async function boot(loaded) {
     snapshot = loaded;
     if (!snapshot.me.authenticated) { root.innerHTML = `<div class="experience"><main class="home-main"><section class="hero"><div><h1>Sign in to open your ${space}.</h1><p>${link('Sign in', '/login', 'button primary')}</p></div></section></main></div>`; return; }
-    shell = S.createShell({ snapshot, layoutId: key, hooks: {} });
+    shell = S.createShell({ snapshot, layoutId: key, hooks: { onWorkChanged: repaint } });
     config = { ...defaultConfig(), ...(LIVE.prefs.get(`homebase:${key}`, {}) || {}) };
     thread = shell.createThread(LIVE.sessionId(), preset.assistantLabel);
     M = window.HOMEBASE_MODULES.create(moduleContext());
@@ -98,7 +99,7 @@
     return {
       esc, btn, link, pill, head, avatar, LIVE, S, data, state, preset, key, dueOn,
       config: () => config, me, displayName, snapshot: () => snapshot, isTeacher, isLearner, toolById, app, canConfigure,
-      thread: () => thread, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
+      thread: () => thread, shell: () => shell, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
       bubbleSeen: () => LIVE.prefs.get(`homebase:${key}:bubble`, '')
     };
   }
@@ -416,7 +417,7 @@
     const open = shell.openWork(), apps = new Set(open.map(w => w.appName));
     // Tickets awaiting approval lead; everything else keeps the work list's newest-first order.
     const shown = open.filter(awaitsApproval).concat(open.filter(w => !awaitsApproval(w))).slice(0, 6);
-    return `<section class="panel" data-module="projects">${head('Recent work', pill(`${open.length} open`))}${shown.map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || '<p class="subtle">No open tickets or tasks. Ask the assistant for something and it lands here.</p>'}<div class="summary-line"><div><strong>${open.length}</strong><small>Open items</small></div><div><strong>${apps.size}</strong><small>Applications involved</small></div><div><strong>${snapshot.botsOnline}</strong><small>Assistants online</small></div></div></section>`;
+    return `<section class="panel" data-module="projects">${head('Recent work', pill(shell.workCount(open.length, 'open')))}${shown.map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || shell.workEmpty('No open tickets or tasks. Ask the assistant for something and it lands here.')}<div class="summary-line"><div><strong>${esc(shell.workValue(open.length))}</strong><small>Open items</small></div><div><strong>${esc(shell.workValue(apps.size))}</strong><small>Applications involved</small></div><div><strong>${esc(shell.workValue(snapshot.botsOnline, ['overview']))}</strong><small>Assistants online</small></div></div></section>`;
   }
   /**
    * @description The person's own module. A learner gets their learning space; money shows only when Finance admits the
@@ -436,7 +437,7 @@
   function updates() {
     if (!config.updates) return '';
     const rows = (data.updates || []).slice(0, 4), work = snapshot.work.slice(0, 3);
-    return `<section class="panel" data-module="updates">${head(preset.updatesHeading)}${M.notices()}${rows.map(u => `<div class="update"><strong>${esc(u.who)}</strong><p>${esc(u.what)}</p><small>${esc(u.when)}${u.detail ? ` · ${esc(u.detail.slice(0, 90))}` : ''}</small></div>`).join('')}${work.map(w => `<div class="update"><strong>${esc(w.appName)}</strong><p>${esc(w.title)}</p><small>${esc(w.status.label)} · ${esc(LIVE.relativeTime(w.at))}</small></div>`).join('')}${rows.length || work.length ? '' : '<p class="subtle">Nothing new from your applications yet.</p>'}</section>`;
+    return `<section class="panel" data-module="updates">${head(preset.updatesHeading)}${M.notices()}${rows.map(u => `<div class="update"><strong>${esc(u.who)}</strong><p>${esc(u.what)}</p><small>${esc(u.when)}${u.detail ? ` · ${esc(u.detail.slice(0, 90))}` : ''}</small></div>`).join('')}${work.map(w => `<div class="update"><strong>${esc(w.appName)}</strong><p>${esc(w.title)}</p><small>${esc(w.status.label)} · ${esc(LIVE.relativeTime(w.at))}</small></div>`).join('')}${rows.length || work.length ? '' : shell.workEmpty('Nothing new from your applications yet.')}</section>`;
   }
   function peopleList() {
     const edu = data.edu, rows = [];
@@ -462,7 +463,7 @@
   function people() {
     const rows = peopleList(), note = peopleNote();
     const count = groupMembers().length;
-    return `<section class="panel" data-module="people">${head(key === 'family' ? (count > 1 ? `${count} people. One home.` : 'Our people') : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online.</p></section>`;
+    return `<section class="panel" data-module="people">${head(key === 'family' ? (count > 1 ? `${count} people. One home.` : 'Our people') : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${esc(shell.overviewCount(`${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online`))}.</p></section>`;
   }
   function apps() {
     const groups = hostGroups();
@@ -483,7 +484,7 @@
     const learner = isLearner();
     const heading = learner ? (key === 'family' ? `Your day, ${displayName().split(' ')[0]}.` : `Ready to explore, ${displayName().split(' ')[0]}?`) : preset.title;
     const admins = groupMembers().filter(m => m.role === 'admin').length;
-    const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.openWork().length} open items` : `${snapshot.apps.length} apps · ${shell.openWork().length} open items`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.openWork().length} open items · ${snapshot.botsOnline} assistants online`;
+    const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.workCount(shell.openWork().length, 'open items')}` : `${snapshot.apps.length} apps · ${shell.workCount(shell.openWork().length, 'open items')}`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.workCount(shell.openWork().length, 'open items')} · ${shell.overviewCount(`${snapshot.botsOnline} assistants online`)}`;
     const art = key === 'family' ? '<div class="family-scene" role="img" aria-label="A little house among green trees"><span class="plant"></span><span class="little-house"></span><span class="plant"></span></div>' : key === 'classroom' ? (data.edu && data.edu.installed ? '<img class="hero-monster" src="/api/education/logo-256.png" alt="Little Monsters study companion">' : '') : '<div class="company-emblem" aria-hidden="true"><span></span><span></span><span></span></div>';
     return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
   }
@@ -562,7 +563,7 @@
   function render() {
     // A notice shown just before a repaint (an add, then the list re-read) stays: the new toast element takes its text.
     const shown = document.getElementById('toast') ? document.getElementById('toast').textContent : '';
-    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn(`Configure ${space}`, 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
+    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn(`Configure ${space}`, 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${state.page === 'tool' ? '' : shell.workNotice()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
     if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'); const def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
     if (shown) document.getElementById('toast').textContent = shown;
     if (dialogKind) openDialog(dialogKind, dialogId);
@@ -605,6 +606,8 @@
   function aboutExtras() {
     const status = r => (!r ? '(reading)' : r.ok ? `(HTTP ${r.status})` : `(HTTP ${r.status || 'network'}${r.code ? `: ${esc(r.code)}` : ''})`);
     const lines = [];
+    const work = shell.workState(['tickets', 'tasks', 'overview']);
+    if (work.detail) lines.push(`<li>Work source details: ${esc(work.detail)}</li>`);
     if (key !== 'classroom') lines.push(`<li>People: your ${key === 'family' ? 'household' : 'team'} group ${status(data.group)}; names only where the swarm directory shares them.</li>`);
     if (key === 'family') lines.push(`<li>Check-ins: your own place from Location ${status(data.loc)}, as a place name and never coordinates. No one else’s place is read: this swarm has no group presence read.</li>`);
     if (data.progress) lines.push(`<li>Your progress: Little Monsters’ dashboard for you ${status(data.progress)}.</li>`);
@@ -727,6 +730,7 @@
   function onClick(e) {
     const b = e.target.closest('[data-action]'); if (!b) return; const a = b.dataset.action;
     if (a === 'close') return close();
+    if (a === 'retry-work') return shell.retryWork();
     if (a === 'page') { goPage(b.dataset.page); return; }
     if (ACTIONS[a]) { ACTIONS[a](b); return; }
     if (a === 'tool') { if (dialogKind) close(); openTool(b.dataset.tool); return; }

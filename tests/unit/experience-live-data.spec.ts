@@ -1,13 +1,14 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the experience adapter's joins and Jarvis ask flow headlessly: catalog authority order, suite grouping, work merging, summary caps, identity derivation, session roll on a refused thread, poll-to-terminal states and honest source reporting when a read fails.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | `related` is a group's installed required members from the plan, no longer the plan's integrationSources (a plain app relates to nothing through them)
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: localHref keeps a same-origin path and refuses every link the browser would resolve off the page origin (tab-split, backslash, protocol-relative, absolute, non-string); the poll-limit ask result carries code 'poll_limit'.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | speak(): a readback stopped before the swarm's synthesize answer arrives never creates an Audio element or a browser utterance; the browser engine reports progress from its boundary index, and swarm audio from its time over its duration.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment links that normalise to a '//' pathname ('/..//outside.example/x', '/.//…', '/%2e%2e//…', '/api/..//…') are refused, a same-origin dot segment is kept normalised and every kept path re-resolves to the page origin; an admitted workspace href that would leave the origin (dot-segment, absolute, non-string) falls back to the cockpit link.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove malformed successful overview cannot supply derived facts and its unavailable provenance agrees with visible source refusal.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -156,6 +157,22 @@ describe('experience adapter: client over an injected fetch', () => {
     expect(summary).toMatchObject({ ok: true, tiles: [{ label: 'T', value: '1' }], items: [{ text: 'hello' }] });
     const before = calls.length; await client.probeSummary(snap.apps[0]); expect(calls.length).toBe(before);
     expect(await client.probeSummary({ id: 'none', probes: [] })).toMatchObject({ none: true, ok: false });
+  });
+
+  it('withholds every derived fact from a malformed overview and names the unavailable source despite HTTP200', async () => {
+    const { fetch } = fakeFetch({ ...baseRoutes,
+      'GET /api/jarvis/tasks': okJson({ tasks: [{ id: 'kept', title: 'Admitted companion task', status: 'running' }] }),
+      'GET /api/jarvis/overview': okJson({ bots: [{ id: 'wrong-family', online: true }], activity: { openCount: 99 }, comms: { digest: 'Unqualified digest' }, calendar: { events: [{ title: 'Unqualified calendar event' }] } }),
+    });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.work.map((row: { ref: string }) => row.ref)).toEqual(['kept']);
+    expect(snap.sources.overview).toBe(200);
+    expect(snap.sourceValidity.overview).toBe(false);
+    expect(snap.unavailable).toEqual(['overview']);
+    expect(LIVE.sourceState(snap, ['overview'])).toMatchObject({ complete: false, kind: 'unavailable', message: 'Assistant status could not be loaded.', detail: 'Assistant status returned an unreadable response.' });
+    expect(snap.bots).toEqual([]); expect(snap.botsOnline).toBe(0);
+    expect(snap.calendarEvents).toEqual([]); expect(snap.comms).toBeNull();
+    expect(snap.openTickets).toBe(0);
   });
 
   it('paints in two phases: identity and catalog first, then work merged into the same snapshot arrays', async () => {

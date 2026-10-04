@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Match shared search and assistant wording to the active home, workspace or classroom.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Name the active space in the people strip accessibility label.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  */
 (function (root, factory) {
   var api = factory();
@@ -80,7 +81,7 @@
     /** @description The room strip: the home's assistant (with the swarm's online count) and the household's people and roles; people carry no online state because no presence source exists. */
     function room() {
       const snap = ctx.snapshot(), rows = members().length ? members() : [{ self: true, role: '' }];
-      const host = `<div class="room-person" data-person="assistant"><span class="room-avatar"><span class="assistant-orb" aria-hidden="true"></span>${snap.botsOnline ? '<span class="presence-dot" aria-hidden="true"></span>' : ''}</span><div><strong>${esc(ctx.preset.assistantLabel)}</strong><small>Room host · ${snap.botsOnline} of ${snap.bots.length} assistants online</small></div></div>`;
+      const host = `<div class="room-person" data-person="assistant"><span class="room-avatar"><span class="assistant-orb" aria-hidden="true"></span>${ctx.shell().workState(['overview']).complete && snap.botsOnline ? '<span class="presence-dot" aria-hidden="true"></span>' : ''}</span><div><strong>${esc(ctx.preset.assistantLabel)}</strong><small>Room host · ${esc(ctx.shell().overviewCount(`${snap.botsOnline} of ${snap.bots.length} assistants online`))}</small></div></div>`;
       const people = rows.slice(0, 5).map((m, i) => `<div class="room-person"><span class="room-avatar">${avatar(LIVE.initials(memberName(m)), i)}</span><div><strong>${esc(memberName(m))}${m.self ? ' · you' : ''}</strong><small>${m.role === 'admin' ? 'Admin' : m.role === 'member' ? 'Member' : 'Signed in'}</small></div></div>`).join('');
       return `<section class="room-strip" data-module="room" aria-label="People in this ${space}">${host}${people}</section>`;
     }
@@ -150,14 +151,14 @@
     function filesPage() {
       const rows = ctx.snapshot().work.filter(w => w.kind === 'task' && w.files && w.files.length).flatMap(w => w.files.map(f => ({ f, w })));
       const list = rows.map(({ f, w }) => `<div class="list-item"><span><span class="item-title">${ctx.S.fileLink(f) || esc(f.name || 'file')}</span><small>${esc(w.title)} · ${esc(w.at ? ago(w.at) : 'unknown time')}</small></span></div>`).join('');
-      return `<section class="panel" data-module="files"><div class="panel-kicker">JUST FOR YOU</div>${head('Files and drafts')}<h3>Files from your assistant</h3><div class="list-items">${list || '<p class="subtle">No finished Jarvis task has produced a file yet.</p>'}</div><div id="drafts-slot">${ctx.data.draftsHtml || '<p class="subtle">Reading your drafts…</p>'}</div></section>`;
+      return `<section class="panel" data-module="files"><div class="panel-kicker">JUST FOR YOU</div>${head('Files and drafts')}<h3>Files from your assistant</h3><div class="list-items">${list || ctx.shell().workEmpty('No finished Jarvis task has produced a file yet.', ['tasks'])}</div><div id="drafts-slot">${ctx.data.draftsHtml || '<p class="subtle">Reading your drafts…</p>'}</div></section>`;
     }
     /** @description Tasks: your open tickets and assistant tasks, and open classwork when Little Monsters answers for you. */
     function tasksPage() {
       const open = ctx.openWork(), classwork = ctx.assignments();
       const work = open.slice(0, 12).map(w => `<div class="list-item"><span><span class="item-title">${esc(w.title)}</span><small>${esc(w.appName)} · ${esc(w.status.label)} · ${esc(ago(w.at))}</small></span>${btn('Open ↗', 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('');
       const school = classwork.map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || 'Class')}${a.due_date ? ` · due ${esc(ctx.dueOn(a.due_date))}` : ''}</small></span></div>`).join('');
-      return `<section class="panel" data-module="tasks"><div class="panel-kicker">${esc(ctx.preset.name.toUpperCase())}</div>${head('Tasks', pill(`${open.length + classwork.length} open`))}<h3>Work</h3><div class="list-items">${work || '<p class="subtle">No open tickets or assistant tasks.</p>'}</div>${ctx.data.edu && ctx.data.edu.ok ? `<h3>Classwork</h3><div class="list-items">${school || '<p class="subtle">No open classwork.</p>'}</div>` : ''}</section>`;
+      return `<section class="panel" data-module="tasks"><div class="panel-kicker">${esc(ctx.preset.name.toUpperCase())}</div>${head('Tasks', pill(ctx.shell().workCount(open.length, 'open work items')))}<h3>Work</h3><div class="list-items">${work || ctx.shell().workEmpty('No open tickets or assistant tasks.')}</div>${ctx.data.edu && ctx.data.edu.ok ? `<h3>Classwork · ${classwork.length} open</h3><div class="list-items">${school || '<p class="subtle">No open classwork.</p>'}</div>` : ''}</section>`;
     }
 
     /* ── calendar ────────────────────────────────────────────────── */

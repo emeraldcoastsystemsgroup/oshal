@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Markup the caller types renders as text in the Jarvis thread (the demo's "input remains text" check).
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The demo's remaining interactions end to end: the directory's empty state, Studio's use-as-context, Commons drafts per room, keyboard tabs (arrows, Home, End), an application leading to its room, Room details and the private space opening (they opened nothing before), Orbit's hub ask and its way back, a fresh conversation and the phone-width menu.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Align day-focus wording with operational headings while retaining ordering, device memory and real games question checks.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -282,11 +283,11 @@ describe('day focus (workday / evening at home)', () => {
     homeTask();
     await open('/studio', '.running-row');
     expect(await page.locator('#scene-picker').inputValue()).toBe('workday');
-    expect(await page.locator('.studio-conversation h1').innerText()).toBe('Your whole swarm, within reach.');
+    expect(await page.locator('.studio-conversation h1').innerText()).toBe('Recent Work');
     const rows = () => page.locator('.running-row').evaluateAll(es => es.map(e => e.getAttribute('data-work')));
     expect(await rows()).not.toContain('task:task-home');
     await focus('evening');
-    await page.waitForFunction(() => document.querySelector('.studio-conversation h1')?.textContent === 'A little work. A little play.');
+    await page.waitForFunction(() => document.querySelector('.studio-conversation h1')?.textContent === 'Evening Work');
     const evening = await rows();
     expect(evening.indexOf('task:task-home')).toBeGreaterThanOrEqual(0);
     expect(evening.indexOf('task:task-home')).toBeLessThan(evening.indexOf(`ticket:${LEDGER}`));
@@ -305,9 +306,9 @@ describe('day focus (workday / evening at home)', () => {
     await open('/jarvis', '.full-jarvis');
     expect(await page.getByRole('button', { name: 'What can I play tonight?' }).count()).toBe(0);
     await focus('evening');
-    await page.waitForFunction(() => document.querySelector('.jarvis-greeting h1')?.textContent?.includes('Your evening is here.'));
+    await expect.poll(() => page.locator('.jarvis-greeting h1').innerText()).toMatch(/^Evening\s*Work overview$/);
     expect(await page.locator('.briefing-card .badge').first().innerText()).toBe('This evening · from your queue');
-    expect(await page.locator('.briefing-card h2').innerText()).toMatch(/things? before you switch off\./);
+    expect(await page.locator('.briefing-card h2').innerText()).toMatch(/^\d+ items? to review this evening\.$/);
     await page.getByRole('button', { name: 'What can I play tonight?' }).click();
     await page.waitForSelector('.conversation-list .message-content p strong');
     expect(fixture.state.asks[0].message).toBe('Which of my games could we play tonight: Synthetic arcade-games? Suggest one and what it needs.');
