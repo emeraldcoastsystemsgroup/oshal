@@ -154,6 +154,18 @@ platform hub, returns the logo to the landing application and hides the header's
 (inputs `landingApp` and `operator` on `GET /api/ui/profile`). Operators, focused `?app=` requests,
 assets and deployments without a focused landing are unchanged.
 
+The root redirect, document guard, profile lock and guest default use one request-aware landing
+helper (`resolveRequestLandingPath`): match `HOST_APP_MAP` against the actual ingress `Host`, with
+the existing numeric-port and case normalization. Caller-supplied `X-Forwarded-Host` cannot remove
+or borrow a focused-host hold. Forwarded protocol/IP handling and authentication are unchanged.
+This relies on the deployment preserving the public Host: the current tunnel's logged configuration
+has no `httpHostHeader` override, and the deployed
+[cloudflared 2025.10.1 implementation](https://github.com/cloudflare/cloudflared/blob/2025.10.1/ingress/origin_proxy.go)
+preserves it in that configuration. This is configured-source evidence. Separately, anonymous
+public requests on 2026-10-04 showed that caller-supplied `X-Forwarded-Host` survives the current
+Cloudflare edge/tunnel and controls Express `req.hostname`; no authenticated access claim was
+tested by that observation.
+
 What the server lock covers (2026-10-04):
 
 - **Every spelling of a surface.** One pathless guard ahead of every mount decides on the
@@ -257,14 +269,25 @@ What the server lock covers (2026-10-04):
   spelling, the malformed-escape rule and the cockpit-only `?app=` exemption);
   `tests/unit/cockpit-shell-lock-routes.spec.ts` (the real route registration over a raw socket, so
   dot segments and `%2e` escapes reach the server unnormalised, plus HEAD);
+  `tests/unit/host-app-map-http.spec.ts` (real root/static/profile HTTP admission despite conflicting
+  forwarded hosts, operator and authentication behavior, forwarded protocol/IP and the actual
+  acceptance runner's native-fetch Host transport), with guest mismatch cases in
+  `tests/unit/guest-next-links-and-seed.spec.ts`;
   `tests/unit/ui-profile-focused-refusal.spec.ts` (the real profile route and `UIProfileService`, with
   the refusal fed into the real `RibbonNav._init`); `tests/unit/ui-profile-rls-hidden-experience-postgres.spec.ts`
   (the real repository and service over a disposable PostgreSQL as the NOSUPERUSER NOBYPASSRLS
   `oshal_app` role: a person-scoped experience row another member cannot read is refused 404);
   `tests/unit/ribbon-profile-refusal.spec.ts` and `tests/unit/ribbon-shell-lock.spec.ts` (the ribbon's
   lock decision and refusal state). The live case `node scripts/operations/live-acceptance.js shell-lock`
-  asks the installed build as a non-operator on a mapped host (it needs `OSHAL_VERIFY_SECOND_PAT` and
-  `OSHAL_VERIFY_FOCUSED_HOST`).
+  asks the installed build as a non-operator on the actual mapped origin (it needs
+  `OSHAL_VERIFY_SECOND_PAT`, `OSHAL_VERIFY_FOCUSED_HOST` and `OSHAL_VERIFY_BASE_URL` set to that
+  focused HTTP(S) origin). The second caller's bound hostname must match before any case request;
+  the runner sends no `Host` or `X-Forwarded-Host` overrides. A shell-only run with the default
+  loopback URL and a different focused host reports unavailable before sending either token.
+  Native fetch discards a custom Host in the current runtime, which a real HTTP transport test
+  exposed; fake header assertions are not proof of a mapped-host run. A configured-origin
+  request still needs real non-operator execution after deployment; the anonymous edge fact
+  above does not establish that acceptance.
 - AI Test Lab card `experience-shells` (`test-lab-experience-scenarios.ts`): a read-only step over
   the entry pages and the feeds they join, classified as gap when the running image predates
   `src/experience`.

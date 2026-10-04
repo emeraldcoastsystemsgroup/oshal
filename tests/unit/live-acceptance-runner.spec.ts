@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | For the create-region-edit case: `--allow-paid` parses into the `allowPaid` option every selected case receives, false unless typed; every reply carries its raw body as `bytes` (a binary body with bytes that are not valid UTF-8 comes back exact); the multipart port names its file part `file.field` when given (`image`, which Create's upload route reads) and `file` otherwise.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Run the shipping HTTP ports against a real loopback Express/multer server: exact PNG bytes and digest, the single image part Create accepts, a refused default part there, legacy file-part compatibility, bearer isolation and anonymous reads.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | A case may bound ONE api call with its own `timeoutMs` (the storyboard-agy render blocks for the whole render): a never-answering fetch is aborted by the runner's own signal at the case's budget, while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it (the 30 s default applies).
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Bind truthful second-caller origin metadata and refuse a focused-shell-only run with a mismatched origin before any token request.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -292,7 +293,8 @@ describe('the host runner', () => {
     const { fetchImpl, seen } = whoamiFetch({ [TOKEN]: OWNER, [SECOND_TOKEN]: SECOND_OWNER });
     const bound = await runner.bindPorts(BASE, TOKEN, SECOND_TOKEN, fetchImpl);
     expect(bound.error).toBeUndefined();
-    expect(Object.keys(bound.ports.second).sort()).toEqual(['api', 'ownerSub', 'upload']);
+    expect(Object.keys(bound.ports.second).sort()).toEqual(['api', 'origin', 'ownerSub', 'upload']);
+    expect(bound.ports.second.origin).toBe(BASE);
     expect(bound.ports.second.ownerSub).toBe(SECOND_OWNER);
     expect(bound.ports.ownerSub).toBe(OWNER);
     seen.length = 0;
@@ -346,6 +348,24 @@ describe('the host runner', () => {
     for (const secret of [TOKEN, SECOND_TOKEN, OWNER, SECOND_OWNER]) expect(both.printed).not.toContain(secret);
     const one = await runMain(`OSHAL_VERIFY_OPERATOR_PAT=${TOKEN}\n`);
     expect(one.seen.map((s) => s.authorization)).toEqual([`Bearer ${TOKEN}`, `Bearer ${TOKEN}`]);
+  });
+
+  it('refuses a shell-only mismatched origin before resolving or sending either caller token', async () => {
+    const { fetchImpl, seen } = whoamiFetch({ [TOKEN]: OWNER, [SECOND_TOKEN]: SECOND_OWNER });
+    const lines: string[] = [];
+    const saved = { ...process.env };
+    const savedFetch = globalThis.fetch;
+    try {
+      Object.assign(process.env, { OSHAL_VERIFY_OPERATOR_PAT: TOKEN, OSHAL_VERIFY_SECOND_PAT: SECOND_TOKEN,
+        OSHAL_VERIFY_BASE_URL: BASE, OSHAL_VERIFY_FOCUSED_HOST: 'sales.fixture.invalid' });
+      globalThis.fetch = fetchImpl as unknown as typeof fetch;
+      expect(await runner.main(['shell-lock'], (line: string) => lines.push(line))).toBe(2);
+      expect(seen).toEqual([]);
+      expect(lines.join('\n')).toContain('OSHAL_VERIFY_BASE_URL');
+      expect(lines.join('\n')).toContain('no caller request was sent');
+      expect(lines.join('\n')).not.toContain(TOKEN);
+      expect(lines.join('\n')).not.toContain(SECOND_TOKEN);
+    } finally { process.env = saved; globalThis.fetch = savedFetch; }
   });
 
   it('parses --expect-store-bound and --allow-paid into the options every case receives', () => {
