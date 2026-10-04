@@ -10,6 +10,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Claim an owner-bound empty durable result atomically so stale shelf snapshots cannot restart a completed summary.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Atomically admit completed registered briefings without an ordinary-task fallback or stranded pending row.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Scope durable work rows to verified issuer and withhold protected source text from automatic prompts without derived lineage.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: ensureJarvisSchema / saveTaskPending / finishTask / findJarvisTaskSessionId / buildOpenWorkBlock / persistJarvisTurn / markJarvisSessionTaskStatus / mapJarvisTaskStatusFromTicketStatus / storedVisual (route decomposition, no behaviour change).
@@ -194,6 +195,26 @@ export async function finishTask(
       ],
     );
   } catch (err) { logger.warn({ err }, 'jarvis: finishTask failed'); }
+}
+
+/**
+ * @description Claim only the current owner's empty durable summary, preserving expired-job recovery.
+ * @param pool Existing durable shelf pool. @param taskId Exact work row. @param sub Current caller subject.
+ * @returns True only when the atomic update claimed a row; storage failure refuses without firing a model.
+ */
+export async function claimJarvisSummary(pool: AppContext['pool'], taskId: string, sub: string): Promise<boolean> {
+  try {
+    const claimed = await pool.query(
+      `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
+        WHERE id = $1 AND user_sub = $2 AND (result IS NULL OR result = '')
+          AND (status <> 'summarizing' OR summarize_started_at IS NULL
+            OR summarize_started_at < NOW() - INTERVAL '3 minutes')
+        RETURNING id`, [taskId, sub]);
+    return (claimed.rowCount ?? 0) > 0;
+  } catch (err) {
+    logger.error({ err, taskId }, 'jarvis: summary claim failed');
+    return false;
+  }
 }
 
 /** Resolve the original conversation so completed background work is durable in Discussion. */

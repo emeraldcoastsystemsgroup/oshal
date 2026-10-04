@@ -42,6 +42,7 @@
  * 36 | maintainer@emeraldcoastsystemsgroup.com   | Link authenticated stamped guest own-ticket read and refusal regressions through the real guest injector and guard; the runner remains isolated.
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Link global queue-health operator refusal and summary compatibility regressions without changing the isolated runner's read-only guidance.
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Register Jarvis direct ticket projections, exact-principal carrier reuse and current close refusal with provider-free HTTP/module fixtures.
+ * 39 | maintainer@emeraldcoastsystemsgroup.com | Register fixed no-lineage completion notice refusals and ordinary work compatibility through real isolated PostgreSQL and current application policy.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -183,6 +184,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/protected-jarvis-results.spec.ts' },
     { level: 'integration', path: 'tests/unit/jarvis-ticket-principal-scope-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-jarvis-thread-return.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-jarvis-completion-notice.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-private-reads-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/operator-administration-http.spec.ts' },

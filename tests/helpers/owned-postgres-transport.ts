@@ -1,8 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify a host-owned, isolated PostgreSQL lease before fixture initialization; fixed readonly contract, first-read server identity, fresh database and one-use claim. Never accept a deployment DSN or perform server cleanup.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Declare the failure binding as never-returning so strict control flow retains the existing refusal throw.
  */
 import { constants, openSync, closeSync, fstatSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { platform } from 'node:os';
@@ -12,7 +14,7 @@ const CONTRACT = '/contract/access.json';
 const MAX_BYTES = 8192;
 const KEYS = ['protocol', 'runId', 'containerId', 'network', 'purpose', 'spec', 'database', 'requestedImage',
   'imageId', 'host', 'port', 'user', 'password', 'nonce', 'expiresAt'].sort();
-const fail = (code: string): never => { throw new Error('Owned PostgreSQL refused: ' + code); };
+const fail: (code: string) => never = (code: string): never => { throw new Error('Owned PostgreSQL refused: ' + code); };
 type Contract = {
   protocol: 'owned-postgres-v1'; runId: string; containerId: string; network: string;
   purpose: string; spec: string; database: string; requestedImage: string; imageId: string;

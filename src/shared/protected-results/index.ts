@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Bind persisted protected output to controller-owned execution lineage and current exact-principal result access.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Record derived-result lineage so a protected answer can be published to a second controller-owned destination (a Jarvis conversation) without laundering it: linkResult joins the authority port, and recordDerivedProtectedResult re-asserts the owner's current rights on the SOURCE, links every contributing execution to the destination, then proves the destination now answers to the same executions. Nothing about who may read is relaxed - the destination simply inherits the source's checks.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Export isProtectedAgent helper to detect protected execution status without exposing raw authority setter; assert executions presence before task-result assertion in recordDerivedProtectedResult.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Classify completion notices through a configured stable authority and successfully known lineage state without granting private result access.
  */
 import type { AuthorizationActor } from '@/shared/application-authorization';
 
@@ -58,6 +59,33 @@ export async function hasProtectedTaskResults(taskId: string): Promise<boolean> 
  */
 export async function isProtectedAgent(agentId: string): Promise<boolean> {
   return access ? access.isProtectedAgent(agentId) : false;
+}
+
+/** @description Strict controller-known result state, separate from general result visibility. */
+export type ProtectedTaskNoticeState = 'protected-empty' | 'durable-only' | 'lineage' | 'unprotected';
+
+/** @description Classify an actual task without treating absent or failed authority as a known absence.
+ * @param task Actual stored source, never a synthesized result target. @returns Known state under one stable authority; faults propagate.
+ */
+export async function readProtectedTaskNoticeState(task: ProtectedResultTask): Promise<ProtectedTaskNoticeState> {
+  const authority = access;
+  if (!authority) throw new Error('protected_result_unavailable');
+  const executions = readProtectedResultExecutions(task.metadata);
+  const durable = await authority.hasTaskResults(task.taskId);
+  const protectedAgent = task.agentId ? await authority.isProtectedAgent(task.agentId) : false;
+  if (access !== authority || typeof durable !== 'boolean' || typeof protectedAgent !== 'boolean') {
+    throw new Error('protected_result_unavailable');
+  }
+  if (executions.length) return 'lineage';
+  if (durable) return 'durable-only';
+  return protectedAgent ? 'protected-empty' : 'unprotected';
+}
+
+/** @description Require configured stable authority, strict empty metadata, known absence of durable results and actual protected classification.
+ * @param task Actual stored source. @returns Whether only a status notice may be considered; no result read is granted.
+ */
+export async function isProtectedTaskWithoutResult(task: ProtectedResultTask): Promise<boolean> {
+  return await readProtectedTaskNoticeState(task) === 'protected-empty';
 }
 
 /**
