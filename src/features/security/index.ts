@@ -22,6 +22,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Exported the shared limiter-only mount classifier used by both runtime and CI route inventories.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Surface the SEC-01 legacy service-identity read guard through the feature barrel for route-layer containment without deep imports.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Surface the durable SEC-01 workload credential, PostgreSQL delegation authority, issuer, route metadata, and migration middleware.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Surface controller-registrar discovery and its comment-aware parsing so the CI route inventories scan the same registrar set as the Security Center instead of src/app/server.ts alone.
  *
  * @module features/security
  */
@@ -39,6 +40,14 @@ import type { ScanKind, ScannerReport } from './types';
 export * from './types';
 export { scanSecrets, auditRoutes, scanDependencies, detectThreats, monitorLedgers, auditAccess };
 export { PUBLIC_BY_DESIGN, isLimiterOnlyMiddleware, type ManifestRouteAuditEntry } from './route-audit';
+export {
+  balancedCallArgs,
+  CONTROLLER_ENTRY,
+  discoverControllerRegistrars,
+  stripRouteSourceComments,
+  type RegistrarSource,
+  type RegistrarSourceReader,
+} from './controller-route-registrars';
 export {
   auditRouteSurfaceContracts,
   ROUTE_SURFACE_CONTRACTS,

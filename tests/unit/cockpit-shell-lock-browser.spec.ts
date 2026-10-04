@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The focused-landing shell lock in Chromium over the real cockpit document and app.js boot (tests/fixtures/workspace-navigation.ts; only the profile answer is chosen per case). A refused profile with a ticket deep link shows the refusal and never asks for tickets; header Settings, Knowledge, Central assistant and Simple chat are not displayed, the logo returns to the landing, no platform view is registered, and neither a view navigation posted to the shell nor the Settings handler replaces the refusal. A locked allowed application keeps only its own rail and ignores the ticket link. An unreadable answer on the plain document stays closed. An unlocked verdict draws every door exactly as before.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise malformed profile refusal, phone layout and keyboard retry against the real document; count profile reads at the answering route.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove retained native profile entries cannot become a focused caller's boot fallback, including the filtered Little Monsters default and normal unlocked Settings.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser, BrowserContext, Page } from 'playwright';
@@ -83,6 +84,65 @@ const ribbonState = () => page.evaluate(() => {
 const mainText = () => page.locator('#mainContent').innerText();
 /** Two animation frames, so a posted message or a handler has had its chance to render. */
 const settle = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+
+/** @description Supply the remaining profile after caller filtering removes the Little Monsters default. */
+function filteredProfile(items: unknown[], defaultView = 'tool-lm-dashboard') {
+  return { status: 200, body: { ...LOCKED_APP, profile: { ...LOCKED_APP.profile, defaultView,
+    ribbon: { items, dynamicTools: { allow: [] } } } } };
+}
+
+/** @description Fail if the real boot constructed Global Settings, even when its responses are harmless fixtures. */
+function expectNoSettingsReads() {
+  expect(fixture.state.requests.filter(read => /^GET \/api\/(config(?:\/|$)|providers$)/.test(read))).toEqual([]);
+}
+
+it('a caller-filtered LM default cannot boot native Settings from the remaining string entry', async () => {
+  answer = filteredProfile(['settings']);
+  await open(`/cockpit/?app=${LANDING_APP}`);
+  await settle();
+  expect(await ribbonState()).toEqual({ locked: true, collapsed: true, views: [] });
+  expect(await mainText()).toContain('No views available');
+  expect(await page.locator('.settings-view').count()).toBe(0); expectNoSettingsReads();
+});
+
+for (const [label, items, defaultView] of [
+  ['an object Settings entry', [{ id: 'settings', label: 'Settings', section: 'bottom' }], 'tool-lm-dashboard'],
+  ['an explicit native Settings default', ['settings'], 'settings'],
+  ['a locked owned tool followed by Settings', [{ ...LOCKED_APP.profile.ribbon.items[0],
+    locked: { app: LANDING_APP, reason: 'application-role-required' } }, 'settings'], 'tool-fixture-editor'],
+  ['no registered entries', [], 'tool-lm-dashboard'],
+  ['a reserved platform hub and marked platform item', [{ id: 'tool-platform-hub', toolUi: { iframeUrl: '/cockpit/tools/platform.html' } },
+    { id: 'tool-fixture-platform', platformTool: true, toolUi: { iframeUrl: '/fixture/editor' } }], 'tool-platform-hub'],
+] as const) {
+  it(`keeps ${label} out of the focused normal-boot fallback`, async () => {
+    answer = filteredProfile([...items], defaultView);
+    await open(`/cockpit/?app=${LANDING_APP}`); await settle();
+    expect(await mainText()).toContain('No views available');
+    const expectedViews = label.startsWith('a locked owned') ? ['tool-fixture-editor'] : [];
+    expect((await ribbonState()).views).toEqual(expectedViews);
+    expect(await page.locator('.settings-view').count()).toBe(0); expectNoSettingsReads();
+  });
+}
+
+it('keeps every native string or object outside a locked registration list while retaining an admitted own tool', async () => {
+  const native = ['home', 'tickets', 'forge', 'chat', 'calendar', 'addressbook', 'dashboard', 'logs', 'settings', 'operations', 'connectors'];
+  answer = filteredProfile([...native, ...native.map(id => ({ id, label: id })), ...LOCKED_APP.profile.ribbon.items]);
+  await open(`/cockpit/?app=${LANDING_APP}`);
+  await page.frameLocator('.tool-view-container iframe').locator('#draft').waitFor();
+  expect((await ribbonState()).views).toEqual(['tool-fixture-editor']);
+  expect(await page.locator('.settings-view').count()).toBe(0); expectNoSettingsReads();
+  expect(errors).toEqual([]);
+});
+
+for (const operator of [false, true]) {
+  it(`preserves normal Settings boot when the ${operator ? 'operator focused' : 'unfocused'} verdict is unlocked`, async () => {
+    answer = { status: 200, body: { ...LOCKED_APP, operator, landingApp: operator ? LANDING_APP : null,
+      profile: { ...LOCKED_APP.profile, defaultView: 'settings', ribbon: { items: ['settings'], dynamicTools: { allow: [] } } } } };
+    await open('/cockpit/'); await page.locator('#settingsThemePicker').waitFor();
+    expect((await ribbonState()).locked).toBe(false);
+    expect(fixture.state.requests).toContain('GET /api/config'); expect(errors).toEqual([]);
+  });
+}
 
 it('a refused profile with a ticket link shows only the refusal, every door closed and nothing registered', async () => {
   answer = { status: 403, body: { error: 'experience_navigation_refused', landingApp: LANDING_APP, operator: false } };

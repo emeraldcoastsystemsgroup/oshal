@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Fixes a RED main. #605 made authorization grants (subject, issuer) pairs and added oshal.current_issuer to the GUC stamp, taking it from two parameters to three; this case still asserted the two-parameter shape and had been failing since. Updated to the real shape, and a second case added so the issuer is actually COVERED rather than merely tolerated - nothing in this spec asserted it reached Postgres at all, which is how the change landed without anyone noticing the pin.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Guards the ARITY of the identity stamp, which is what actually drifts. #605 added a third GUC parameter and left two specs asserting the two-parameter shape; the second was found only by an adversarial re-check, after the root cause had already been missed twice. Fixing each file as it surfaces does not stop the next one, so this fails when the parameter count changes and names every spec that asserts on the stamp, so the sweep is a list rather than a memory.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added src/app/routes/social-signal-subscriptions.ts to SYSTEM_SEAMS. Its cron joined every owner's subscriptions to the FORCE-RLS inbox sensor with no identity in scope, so deny-by-default stamped it anonymous and it produced no signal; both ticks now run through runSocialSignalPollAsSystem. Behavioral proofs: tests/unit/social-signal-subscriptions.spec.ts (the cron's stamp under deny) and tests/unit/social-signal-subscriptions-postgres.spec.ts (the enforcing role sees the rows only under the sentinel).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | The boot-chain seam follows the code. 708768f5 (BACKLOG #1788) moved the post-bootstrap installs and their runWithSystemIdentity wraps out of src/app/server.ts into src/app/composition/server-bootstrap-tasks.ts, leaving server.ts with no wrap of its own and this seam red for ten days. The seam now pins the wrap where the chain lives, and a new case pins that server.ts still hands the chain to that module instead of re-inlining it.
  */
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
@@ -167,7 +168,7 @@ function src(rel: string): string {
 describe('background runner seam coverage (static)', () => {
   // Files whose background DB work runs under the SYSTEM sentinel.
   const SYSTEM_SEAMS = [
-    'src/app/server.ts',                                                     // boot chain (autoLoad + seedDemoData)
+    'src/app/composition/server-bootstrap-tasks.ts',                         // boot chain (switch/capability snapshots, autoLoad, wiring audit, seedDemoData), out of server.ts since 708768f5
     'src/app/composition/app-runtime-factory.ts',                            // initializeToolRegistry bootstrap chain
     'src/app/extensions/swarm/agent-profile-boot-seeder.ts',                 // per-bot boot self-seed
     'src/app/extensions/swarm/inline-controller-bot-seeder.ts',              // inline controller bot seed
@@ -201,6 +202,12 @@ describe('background runner seam coverage (static)', () => {
       expect(src(file)).toMatch(/runWithSystemIdentity\s*\(/);
     });
   }
+
+  it('src/app/server.ts hands its background boot chain to the SYSTEM-wrapped bootstrap-tasks module', () => {
+    // The wrap is pinned on server-bootstrap-tasks.ts above; this pins the delegation, so the chain
+    // cannot move back into server.ts without one of the two cases going red.
+    expect(src('src/app/server.ts')).toMatch(/runServerBootstrapTasks\s*\(/);
+  });
 
   it('home-schedule per-user action is scoped to the OWNER (runWithRequestIdentity), not systemized', () => {
     // The one per-user exception: fireHomeAction re-scopes to the owner sub (mirrors the

@@ -4,7 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 guard. The composition is the thing most likely to be got wrong, so the mode table is tested AS a table. The cases that matter are the ones that currently fail open and silently: MOCK_OIDC on a deployment that serves other people, a mode that promises off-LAN reach with no overlay configured, and node tokens left optional while the retired swarm-wide shared secret is still accepted. Also pinned: an UNSET mode changes nothing and raises no violation, because a default chosen here would silently re-posture every existing box - the exact failure the mechanism exists to prevent.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixtures and the tenant-refusal case use OIDC_ISSUER_URL, the variable the OIDC middleware actually reads; the old OIDC_ISSUER_BASE_URL was read by this resolver alone, so the table was green while describing a variable no box sets. New cases pin the parity: the old name alone is not an identity provider, an explicit Keycloak realm is, and oidc.ts and deploy-mode.ts both read OIDC_ISSUER_URL.
  */
+import { readFileSync } from 'fs';
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   DEPLOY_MODES,
@@ -29,7 +32,7 @@ const COHERENT: Record<DeployMode, NodeJS.ProcessEnv> = {
   },
   tenant: {
     OSHAL_DEPLOY_MODE: 'tenant',
-    OIDC_ISSUER_BASE_URL: 'https://idp.example.com',
+    OIDC_ISSUER_URL: 'https://idp.example.com',
     REMOTE_CLIENT_REQUIRE_NODE_TOKEN: 'true',
   },
 };
@@ -71,7 +74,7 @@ describe('deploy modes (ADR-137)', () => {
     const resolved = resolveDeployPosture({
       OSHAL_DEPLOY_MODE: 'tenant', REMOTE_CLIENT_REQUIRE_NODE_TOKEN: 'true',
     });
-    expect(resolved.violations.map((v) => v.setting)).toContain('OIDC_ISSUER_BASE_URL');
+    expect(resolved.violations.map((v) => v.setting)).toContain('OIDC_ISSUER_URL');
   });
 
   it('refuses tenancy enforcement being explicitly switched off in tenant mode', () => {
@@ -118,11 +121,11 @@ describe('deploy modes (ADR-137)', () => {
 
   it('detects the shape of an undeclared environment', () => {
     expect(detectMode({ MOCK_OIDC: 'true' })).toBe('demo');
-    expect(detectMode({ OIDC_ISSUER_BASE_URL: 'https://idp' })).toBe('tenant');
+    expect(detectMode({ OIDC_ISSUER_URL: 'https://idp' })).toBe('tenant');
     expect(detectMode({ LOCAL_AUTH: 'true', HEADSCALE_URL: 'https://hs' })).toBe('connected');
     expect(detectMode({ LOCAL_AUTH: 'true' })).toBe('home');
     // LOCAL_AUTH with an IdP configured is a LOCAL_AUTH box, not a tenant one.
-    expect(detectMode({ LOCAL_AUTH: 'true', OIDC_ISSUER_BASE_URL: 'https://idp' })).toBe('home');
+    expect(detectMode({ LOCAL_AUTH: 'true', OIDC_ISSUER_URL: 'https://idp' })).toBe('home');
   });
 
   it('parses modes and treats blank as unset', () => {
@@ -143,5 +146,26 @@ describe('deploy modes (ADR-137)', () => {
     expect(open).toEqual(['demo']);
     const multi = DEPLOY_MODES.filter((m) => postureFor(m).multiTenant);
     expect(multi).toEqual(['tenant']);
+  });
+});
+
+describe('deploy-mode identity-provider parity with the OIDC middleware', () => {
+  const repoFile = (relative: string): string => readFileSync(path.resolve(__dirname, '..', '..', relative), 'utf8');
+
+  it('treats an explicit Keycloak realm as an identity provider, like the middleware does', () => {
+    expect(detectMode({ KEYCLOAK_URL: 'http://keycloak:8080' })).toBe('tenant');
+    expect(resolveDeployPosture({ ...COHERENT.tenant, OIDC_ISSUER_URL: undefined, KEYCLOAK_URL: 'http://keycloak:8080' }).violations)
+      .toEqual([]);
+  });
+
+  it('does not treat the old OIDC_ISSUER_BASE_URL name as an identity provider', () => {
+    // Nothing else in the tree reads that name; a box that sets only it has no working login.
+    expect(detectMode({ OIDC_ISSUER_BASE_URL: 'https://idp' })).toBe('home');
+  });
+
+  it('reads the same issuer variable the OIDC middleware reads', () => {
+    expect(repoFile('src/shared/middleware/oidc.ts')).toContain('OIDC_ISSUER_URL');
+    expect(repoFile('src/shared/deploy-mode/deploy-mode.ts')).toContain('env.OIDC_ISSUER_URL');
+    expect(repoFile('src/shared/deploy-mode/deploy-mode.ts')).not.toContain('env.OIDC_ISSUER_BASE_URL');
   });
 });

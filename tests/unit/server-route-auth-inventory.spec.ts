@@ -10,86 +10,32 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Classify handler-less limiter mounts with the runtime scanner's shared rule instead of the anonymous-route allowlist; synthetic limiter/open mounts pin both sides of the distinction.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Split parser-liveness assertions from allowlist integrity so governance-counted describe callbacks remain below fifty physical lines.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user route middleware as an authenticated mount posture so Graph and Jarvis cannot be misclassified as anonymous.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | SCOPE RESTORED TO THE WHOLE CONTROLLER. This guard parsed server.ts alone, and the 2026-09-24 server decomposition (708768f5) moved most /api mounts into server-auxiliary-routes.ts and registrar modules, so the inventory fell below its floors and the allowlist went stale — red for ten days with nothing blocking. It now scans every controller registrar discovered from server.ts's src/app import graph (discoverControllerRegistrars, shared with the Security Center), reports offenders as file:line, and pins that the discovery itself stays alive (entry and auxiliary registrar present, registrar count floor) so the next split cannot blind it the same way. The classifier and the allowlist semantics are unchanged.
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'fs';
+import * as path from 'path';
 import { UNGUARDED_ALLOWLIST } from '../helpers/unguarded-route-allowlist';
-import { isLimiterOnlyMiddleware } from '@/features/security';
+import {
+  balancedCallArgs,
+  discoverControllerRegistrars,
+  isLimiterOnlyMiddleware,
+  stripRouteSourceComments,
+  type RegistrarSource,
+} from '@/features/security';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// server.ts source-scanning helpers. The existing single-line idiom
+// Controller source-scanning helpers. The existing single-line idiom
 // (tests/unit/manifest-route-auth.spec.ts classifyMount) breaks on multi-line
 // mounts — e.g. app.post('/api/security/csp-report', …) puts the path on its own
 // line and /api/remote-clients spreads its middleware list over five. So this
 // spec strips comments (string-aware) and then extracts each mount's FULL
-// balanced-paren argument text before classifying it.
+// balanced-paren argument text before classifying it. The comment stripper and
+// paren walk are shared with the runtime scanner; the CLASSIFIER below is this
+// spec's own, so the two remain independent checks of the same mounts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * @description Replace comments with spaces (newlines preserved so indices keep their line
- * numbers) while leaving string/template literals intact — a `//` inside a URL string must
- * not eat the rest of the line, and a mount example inside a comment must not become a mount.
- * @param src - Raw TypeScript source.
- * @returns Source of identical length/line structure with comments blanked.
- */
-function stripComments(src: string): string {
-  const out: string[] = [];
-  type State = 'code' | 'line' | 'block' | 'single' | 'double' | 'template';
-  let state: State = 'code';
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    const pair = c + (src[i + 1] ?? '');
-    if (state === 'code') {
-      if (pair === '//') { state = 'line'; out.push(' '); continue; }
-      if (pair === '/*') { state = 'block'; out.push(' '); continue; }
-      if (c === "'") state = 'single';
-      else if (c === '"') state = 'double';
-      else if (c === '`') state = 'template';
-      out.push(c);
-    } else if (state === 'line') {
-      if (c === '\n') { state = 'code'; out.push(c); } else out.push(' ');
-    } else if (state === 'block') {
-      if (pair === '*/') { state = 'code'; out.push('  '); i++; } else out.push(c === '\n' ? c : ' ');
-    } else {
-      // Inside a string/template literal: copy verbatim, honour escapes, exit on the close quote.
-      if (c === '\\') { out.push(c, src[i + 1] ?? ''); i++; continue; }
-      if ((state === 'single' && c === "'") || (state === 'double' && c === '"') || (state === 'template' && c === '`')) {
-        state = 'code';
-      }
-      out.push(c);
-    }
-  }
-  return out.join('');
-}
-
-/**
- * @description Given comment-stripped source and the index of a mount's opening paren, return
- * the full argument text up to the MATCHING close paren — string-aware, so parens inside path
- * strings or template interpolations can not unbalance the walk.
- * @param text - Comment-stripped source.
- * @param openIdx - Index of the `(` that opens the call.
- * @returns The argument text (exclusive of the outer parens), or null when unterminated.
- */
-function balancedArgs(text: string, openIdx: number): string | null {
-  let depth = 0;
-  let quote: string | null = null;
-  for (let i = openIdx; i < text.length; i++) {
-    const c = text[i];
-    if (quote) {
-      if (c === '\\') { i++; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
-    if (c === '(') depth++;
-    else if (c === ')') {
-      depth--;
-      if (depth === 0) return text.slice(openIdx + 1, i);
-    }
-  }
-  return null;
-}
+const ROOT = path.resolve(__dirname, '..', '..');
 
 /**
  * @description Parse the mount's leading path argument(s): a string literal or an array of
@@ -108,8 +54,9 @@ function mountPaths(args: string): string[] {
   return [];
 }
 
-/** One extracted mount from server.ts. */
+/** One extracted mount from a controller registrar. */
 interface Mount {
+  file: string;
   method: string;
   paths: string[];
   args: string;
@@ -146,23 +93,24 @@ function middlewareArgs(args: string): string {
 }
 
 /**
- * @description Extract every app.<method>(…) mount whose path starts with /api/ from server.ts.
- * @param source - Raw server.ts source.
- * @returns The classified /api mount inventory.
+ * @description Extract every app.<method>(…) mount whose path starts with /api/ from one
+ * controller registrar.
+ * @param registrar - The registrar's repository-relative path and raw source.
+ * @returns The classified /api mount inventory for that file.
  */
-function extractApiMounts(source: string): Mount[] {
-  const stripped = stripComments(source);
+function extractApiMounts(registrar: RegistrarSource): Mount[] {
+  const stripped = stripRouteSourceComments(registrar.text);
   const mounts: Mount[] = [];
   const starts = /\bapp\.(use|get|post|put|patch|delete|all)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = starts.exec(stripped)) !== null) {
     const openIdx = m.index + m[0].length - 1;
-    const args = balancedArgs(stripped, openIdx);
+    const args = balancedCallArgs(stripped, openIdx);
     if (args === null) continue;
     const paths = mountPaths(args).filter((p) => p.startsWith('/api/'));
     if (!paths.length) continue;
     const line = stripped.slice(0, m.index).split('\n').length;
-    mounts.push({ method: m[1], paths, args, line, mode: classifyMount(args) });
+    mounts.push({ file: registrar.file, method: m[1], paths, args, line, mode: classifyMount(args) });
   }
   return mounts;
 }
@@ -179,35 +127,51 @@ describe('server route classifier shared limiter rule', () => {
   });
 });
 
-const source = readFileSync('src/app/server.ts', 'utf8');
-const mounts = extractApiMounts(source);
+const registrars = discoverControllerRegistrars(ROOT);
+const mounts = registrars.flatMap(extractApiMounts);
 const unguarded = mounts.filter((mount) => mount.mode === 'unguarded');
 
-describe('server.ts /api route-auth parser liveness', () => {
-  // Vacuous-pass tripwire: if the parser bitrots (server.ts refactor, idiom change) the
-  // inventory shrinks toward zero and every assertion below would pass while checking nothing.
-  // (Floor 90→85 on 2026-07-20: the trading carve — the last Wave-G carve — unmounted its four
-  //  surfaces (87 remain); an anti-bitrot floor, not a census, so it shrinks with the rips.)
+describe('controller registrar discovery stays alive', () => {
+  // The 2026-09-24 decomposition blinded a server.ts-only scan for ten days. These pins make the
+  // DISCOVERY itself fail loudly: the entry and the auxiliary cluster must be found, and the
+  // registrar count may not collapse toward the entry alone.
+  it('finds the controller entry and the auxiliary route cluster', () => {
+    const files = registrars.map((registrar) => registrar.file);
+    expect(files[0]).toBe('src/app/server.ts');
+    expect(files).toContain('src/app/server-auxiliary-routes.ts');
+  });
+
+  it('finds the registrar modules that receive app (not just the two composition files)', () => {
+    // 16 registrars at the time of writing (2026-10-04); a floor, not a census.
+    expect(registrars.length).toBeGreaterThanOrEqual(12);
+  });
+});
+
+describe('controller /api route-auth parser liveness', () => {
+  // Vacuous-pass tripwire: if the parser or the discovery bitrots, the inventory shrinks toward
+  // zero and every assertion below would pass while checking nothing. server.ts ALONE carries
+  // about 56 /api mounts, so a floor well above that proves the registrar walk is contributing.
+  // (Floor 85→140 on 2026-10-04 when the scope widened from server.ts to every registrar: 152
+  //  mounts across 16 files at the time; an anti-bitrot floor, not a census.)
   it('extracts the full /api mount inventory (parser is alive)', () => {
-    expect(mounts.length).toBeGreaterThanOrEqual(85);
+    expect(mounts.length).toBeGreaterThanOrEqual(140);
   });
 
   it('sees every guard posture in use (guard identifiers have not been renamed away)', () => {
     const modes = new Set(mounts.map((mt) => mt.mode));
     // If requiresAuth/serviceSecretOr/requiresOperator were renamed, mounts would drift into
     // 'unguarded' and the allowlist assertion below fails loudly — this pins the other side:
-    // all three postures must remain represented so a silent mass-reclassification is impossible.
-    // (Floor 80→75 on 2026-07-20: the trading carve removed three serviceSecretOr mounts —
-    //  78 guarded remain; same anti-bitrot rationale as the inventory floor above.)
+    // all postures must remain represented so a silent mass-reclassification is impossible.
+    // (Floor 75→120 on 2026-10-04 with the registrar-wide scope; same anti-bitrot rationale.)
     expect(modes.has('oidc')).toBe(true);
     expect(modes.has('delegated-or-oidc')).toBe(true);
     expect(modes.has('service-or-oidc')).toBe(true);
     expect(modes.has('operator')).toBe(true);
-    expect(mounts.filter((mt) => mt.mode !== 'unguarded').length).toBeGreaterThanOrEqual(75);
+    expect(mounts.filter((mt) => mt.mode !== 'unguarded').length).toBeGreaterThanOrEqual(120);
   });
 });
 
-describe('server.ts /api anonymous-by-omission guard', () => {
+describe('controller /api anonymous-by-omission guard', () => {
   // THE guard. authRequired:false means an unwrapped mount is anonymous-callable — every
   // unguarded /api mount must be individually reviewed and carry a written reason here.
   it('every unguarded /api mount is on the reviewed allowlist', () => {
@@ -217,11 +181,11 @@ describe('server.ts /api anonymous-by-omission guard', () => {
       .filter((mt) => !allowed.has(mt.path))
       .map(
         (mt) =>
-          `${mt.path} (app.${mt.method} at src/app/server.ts:${mt.line}) is mounted WITHOUT ` +
+          `${mt.path} (app.${mt.method} at ${mt.file}:${mt.line}) is mounted WITHOUT ` +
           `requiresAuth / serviceSecretOr / requiresOperator — it is anonymous-callable ` +
           `(oidc.ts runs authRequired:false). Either add a guard to the mount, or READ the ` +
           `route module end-to-end and add {path, reason} to UNGUARDED_ALLOWLIST in ` +
-          `tests/unit/server-route-auth-inventory.spec.ts citing its internal guard.`,
+          `tests/helpers/unguarded-route-allowlist.ts citing its internal guard.`,
       );
     expect(offenders).toEqual([]);
   });
@@ -234,7 +198,7 @@ describe('server.ts /api anonymous-by-omission guard', () => {
       .filter((e) => !unguardedPaths.has(e.path))
       .map(
         (e) =>
-          `${e.path} is allowlisted but no longer mounts unguarded in server.ts ` +
+          `${e.path} is allowlisted but no longer mounts unguarded in any controller registrar ` +
           `(guarded since, or unmounted/carved) — delete its UNGUARDED_ALLOWLIST entry.`,
       );
     expect(stale).toEqual([]);

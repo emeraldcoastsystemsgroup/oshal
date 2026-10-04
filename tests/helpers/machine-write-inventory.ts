@@ -19,7 +19,11 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/location-session.ts (ADR-169 L3): discovery matches it because it names the service secret, but it names it only to REFUSE it - every /api/location request presenting x-service-secret or an asserted subject header gets 401 before any handler runs, and the location handlers write only under the signed-in person's own owner session with is_operator off. No machine caller is admitted, so there is no machine write to inventory; the refusal is proven in tests/unit/location-browser-consent-postgres.spec.ts.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Exempt src/app/routes/test-lab-location-consent-scenarios.ts (ADR-169 L3 Test Lab card). Discovery matches it because its service-rail step sends x-service-secret on the loopback - but only as a negative probe that must be answered 401 by refuseLocationServiceRail, so no request it sends on the machine rail is admitted and nothing is written under it. Its only database writes are the lifecycle step's in-process calls for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = that person, is_operator off), erased and counted back to zero at the end. The round-1 PR omitted this entry and the discovery test went red on the branch.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | Inventory src/app/routes/location-device-routes.ts (ADR-169 L6, the core device ingest). Discovery finds it through the readLocationTokenBinding marker: its caller is a device under a per-credential bearer (a location credential, oshal_cli_tokens.location_device_id), admitted by the token-auth middleware on exactly its own presence path. The route verifies the token id against location_devices.credential_id and the token's user against the device's owner or group admins, then writes location_observations and location_current under the synthetic device subject 'device:<deviceId>' with isOperator false (runWithRequestIdentity plus the transaction-local GUC stamp), never under the minting admin. The driver in the spec authenticates a real bearer through the real middleware, answers the device read as the owner, and observes the device subject on the connection at the observation INSERT with the row's subject equal to it.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | Inventory src/app/extensions/swarm/routes/agent-provider-mount.ts. Since cea82ded the mount applies serviceSecretOr(requiresAuth) itself, so discovery finds it. It issues no query; both /api/agents routers it mounts are already inventoried (agent-runtime-bootstrap-read, fleet-default-provider-switch) and hold no owner-scoped data.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Spread SERVICE_RAIL_INVENTORY (machine-write-inventory-service-rail.ts) into the inventory: the six entry points discovery found once it matched serviceSecretOr and getTrustedServiceUserSub. Exempted jarvis-brief-routes.ts, which matches only through a doc comment. The sibling module keeps this file under the decomposition threshold.
  */
+
+import { SERVICE_RAIL_INVENTORY } from './machine-write-inventory-service-rail';
 
 /**
  * @description How a caller proves itself to a machine-reachable entry point. This is the axis
@@ -479,6 +483,26 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'store call; oshal_bot_provider_switch holds one fleet row and no per-person data.',
   },
   {
+    id: 'agent-provider-mount',
+    entryPoint: "app.use('/api/agents', serviceSecretOr(requiresAuth), …) for the config-runtime and provider-switch routers",
+    file: 'src/app/extensions/swarm/routes/agent-provider-mount.ts',
+    auth: 'service-secret',
+    ownerScopedTables: [],
+    identity: {
+      kind: 'no-owner-scoped-write',
+      why:
+        'A mount, not a handler: it applies serviceSecretOr(requiresAuth) itself to the two /api/agents '
+        + 'routers and issues no query (it only constructs the ProviderSwitchStore it hands them). What a '
+        + 'secret-holder may do is decided inside those routers, inventoried as agent-runtime-bootstrap-read '
+        + 'and fleet-default-provider-switch; oshal_bot_provider_switch is not owner-scoped.',
+    },
+    behaviorallyProven: true,
+    note:
+      'Discovery found it when the guard moved into this file (cea82ded) and its doc comment named '
+      + 'X-Service-Secret; the machine-secret behaviour of both mounted routers is proven where those '
+      + 'routers are inventoried.',
+  },
+  {
     id: 'claude-config-propagation-operator',
     entryPoint: 'POST/GET /api/swarm/config/propagate/claude-code-auth*',
     file: 'src/app/extensions/swarm/routes/config-propagation-routes.ts',
@@ -740,6 +764,8 @@ export const MACHINE_WRITE_INVENTORY: readonly MachineWriteEntry[] = [
       + 'unbound service secret 403, another owner reading a run or its mock mail 404, and a run '
       + 'report persisted as JSON under the owner-hash folder.',
   },
+  // Surfaced when discovery learned serviceSecretOr and getTrustedServiceUserSub (2026-10-04).
+  ...SERVICE_RAIL_INVENTORY,
 ];
 
 /**
@@ -775,6 +801,13 @@ export const DISCOVERY_EXEMPT_FILES: readonly { file: string; why: string }[] = 
       + 'lifecycle step for a uniquely tagged synthetic person, each inside withLocationOwnerSession (owner sub = '
       + 'that person, is_operator off), erased and counted back to zero; the 401 and the zero-row cleanup are '
       + 'driven by tests/unit/test-lab-location-consent-registration.spec.ts.',
+  },
+  {
+    file: 'src/app/routes/jarvis-brief-routes.ts',
+    why:
+      'Matches only because its doc comment names the main Jarvis router\'s serviceSecretOr mount. Its own two '
+      + 'routes (GET /brief, GET /brief.html) are each behind requiresAuth, read the caller\'s brief and write '
+      + 'nothing; it authenticates no machine caller.',
   },
 ];
 

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CKR-20 / R3.3 done-when (1) and (3). Every container that runs bot work mounts the SAME workspace volume read-write with no subpath, so every ticket's and every owner's working directory is a sibling of every other. ADR-060 already records that a directory layout on a shared read-write mount is attribution, not enforcement. Nothing here CHANGES that - the option is the operator's to choose (ADR-060 lists three, this repo's entry adds a fourth) - but an unmeasured property is one nobody notices changing, so the posture is pinned: the counts, the :rw, the absence of a subpath, and the exact mounting set. Asserted against the RESOLVED compose, because the mounts arrive through a `<<:` merge and a regex cannot tell an anchor from a service block. The second half pins why persona YAML does not help: runtimeToolMatchesCapabilities short-circuits for CORE_RUNTIME_TOOL_NAMES, and execute_command is in it - a reader who assumes capabilities gate the shell is repeating a belief this entry exists to correct.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the compose through loadComposeYaml (@/shared/config). The bare js-yaml load failed on the library's default merge-key limit once #869 took docker-compose.oshal-local.yml past 10000 units; the shared loader carries the repository's explicit budget and still resolves every `<<:` merge.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | futures-research-worker (30097d55, 2026-09-25) joined the shared read-write workspace without a CKR-20 review, turning the 39/40 count pin red for nine days. Reviewed 2026-10-04 under the operator's delegation: it does not trip reversal trigger 2 (core image and runtime, package supplies persona YAML only, reason-only tool-less dispatch, profile-gated off by default). The count pin becomes a NAME pin (REVIEWED_WORKSPACE_BOTS) so the next bot to join names itself in the failure and must be reviewed rather than re-counted.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -56,7 +57,7 @@ describe('the shared workspace mount posture is measured, not assumed', () => {
   });
 
   it('the mounting set is exactly the bot-anchor inheritors plus code-server', () => {
-    // 39 inheritors + code-server = 40. oshal-api is itself an inheritor, so the invariant is
+    // 40 inheritors + code-server = 41. oshal-api is itself an inheritor, so the invariant is
     // inheritors + 1, not + 2 — which is the arithmetic a reader is most likely to get wrong.
     const all = services();
     const inheritors = Object.entries(all)
@@ -65,12 +66,33 @@ describe('the shared workspace mount posture is measured, not assumed', () => {
       .sort();
     const mounting = [...new Set(workspaceMounts().map((m) => m.service))].sort();
 
-    expect(inheritors.length, 'the anchor inheritor count moved').toBe(39);
-    expect(mounting.length, 'the workspace mount count moved').toBe(40);
+    expect(inheritors, 'a bot joined or left the shared read-write workspace — review it under CKR-20 '
+      + '(does it run a store package\'s bot with a tool surface? that is reversal trigger 2), record the '
+      + 'decision in this file\'s change log, then update REVIEWED_WORKSPACE_BOTS').toEqual(REVIEWED_WORKSPACE_BOTS);
     expect(mounting, 'a service mounts the shared workspace that is neither a bot nor code-server')
       .toEqual([...inheritors, 'code-server'].sort());
   });
 });
+
+/**
+ * Every bot service that receives the shared read-write workspace, by NAME. A bare count let
+ * futures-research-worker join unreviewed (30097d55, 2026-09-25) and only surfaced as "39 became
+ * 40"; a name list makes the next arrival identify itself and forces the CKR-20 review below.
+ * Reviewed 2026-10-04: futures-research-worker does NOT trip CKR-20 reversal trigger 2. It runs the
+ * core oshal-bot image and core runtime code; its package supplies only persona YAML; its dispatch is
+ * reason-only and tool-less (no shell, so the cross-ticket traversal CKR-20 is about is unreachable
+ * from it); and it is profile-gated off until the package is installed. A package bot WITH a tool
+ * surface would trip the trigger.
+ */
+const REVIEWED_WORKSPACE_BOTS = [
+  'career-bot', 'cloud-ops-bot', 'code-developer', 'code-reviewer', 'deck-builder-bot', 'devops-bot',
+  'documentation-writer', 'eats-bot', 'email-bot', 'facebook-bot', 'finance-bot', 'futures-research-worker',
+  'general-bot', 'home-bot', 'identity-bot', 'incident-remediation-bot', 'incident-response-bot', 'jarvis-bot',
+  'movies-bot', 'oshal-api', 'oshal-developer', 'oshal-task-manager', 'queue-bot', 'rca-specialist',
+  'research-bot', 'rides-bot', 'sales-bot', 'security-analyst', 'self-healing-bot', 'shopping-bot',
+  'social-writer-bot', 'spotify-bot', 'storage-bot', 'system-architect', 'test-engineer', 'tester-bot',
+  'trading-bot', 'travel-bot', 'weather-bot', 'workflow-assistant',
+] as const;
 
 describe('persona capabilities do not gate the shell tool', () => {
   it('execute_command is a core runtime tool, so capability matching never sees it', async () => {

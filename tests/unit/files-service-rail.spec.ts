@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-139 doc-hub redeem guard (the fix's boundary, crossed for real): the /api/files mount composition — serviceSecretOr(requiresAuth) + createFilesRoutes — must accept the internal service rail (x-service-secret + x-oshal-user-sub) and resolve the trusted sub, because the artifact-handle relay redeems a files-browser source by re-fetching /download AS the minting caller over exactly that rail. Before the fix the mount was session-only and callerSub ignored the trusted header, so every doc-hub "Send to…" dispatch died as a 502 — this spec goes red if either half regresses. A wrong secret must still 401.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The files router now narrows a service caller to the named user before any handler (requireTrustedServiceUserIdentity), so the database connection carries that user rather than the global operator stamp. A rail call naming no user is therefore refused at that check, 403 trusted_service_user_sub_required, instead of the former 401 from a handler that resolved no caller. The relay call with a user and the wrong-secret 401 are unchanged.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -66,7 +67,11 @@ describe('/api/files over the internal service rail (ADR-139 doc-hub redeem)', (
   });
 
   it('the rail without a sub is authenticated but sub-less — files routes refuse it', async () => {
+    // The router narrows a service caller to the named user before any handler
+    // (requireTrustedServiceUserIdentity), so a rail call naming no user is refused there, 403,
+    // instead of reaching a handler that resolves no caller (the former 401).
     const r = await fetch(`${base}/api/files/roots`, { headers: { 'x-service-secret': SECRET } });
-    expect(r.status).toBe(401);
+    expect(r.status).toBe(403);
+    expect(await r.json()).toEqual({ error: 'trusted_service_user_sub_required' });
   });
 });

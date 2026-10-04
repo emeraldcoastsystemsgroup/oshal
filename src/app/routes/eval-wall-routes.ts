@@ -8,11 +8,12 @@
  *
  * Registration follows the register(app, ctx) shape requested by the wiring contract — it mounts
  * itself under /api/eval-wall behind the app's auth guard. It does NOT self-register; server.ts
- * calls registerEvalWallRoutes(app, ctx) once (see the wiring snippet in the task report).
+ * calls registerEvalWallRoutes(app, ctx, requiresAuth) once.
  *
  * CHANGE LOG
  * ---------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — summary + runs read endpoints.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | requiresAuth is now a required parameter. The optional guard let a caller that omitted it mount /api/eval-wall anonymous (oidc.ts runs authRequired:false); the only caller (server.ts) already passed it, so behavior is unchanged and the anonymous branch no longer exists for the controller route inventory to flag.
  * ---------------------------------------------------------------------------
  * @module eval-wall-routes
  */
@@ -151,22 +152,17 @@ export function createEvalWallRoutes(ctx: AppContext): Router {
 }
 
 /**
- * Mount the eval-wall API on the app. server.ts should call this once, after ctx is built,
- * passing the same requiresAuth guard used by the other /api routes.
- *
- * Usage (server.ts):
- *   import { registerEvalWallRoutes } from './routes/eval-wall-routes';
- *   registerEvalWallRoutes(app, ctx, requiresAuth);
- *
- * The auth guard is optional so this stays drop-in for environments that gate at a higher
- * layer; when omitted the router mounts unguarded (matching the caller's existing pattern).
+ * @description Mount the eval-wall API on the app, behind the session guard. server.ts calls
+ * this once, after ctx is built, passing the same requiresAuth guard as the other /api routes.
+ * The guard is REQUIRED: an optional guard meant a caller that omitted it mounted the router
+ * anonymous (authRequired:false), with nothing to flag it.
+ * @param app - The Express app.
+ * @param ctx - The composed app context.
+ * @param requiresAuth - The OIDC session guard; applied to every eval-wall route.
+ * @returns void
  */
-export function registerEvalWallRoutes(app: Express, ctx: AppContext, requiresAuth?: RequestHandler): void {
+export function registerEvalWallRoutes(app: Express, ctx: AppContext, requiresAuth: RequestHandler): void {
   const router = createEvalWallRoutes(ctx);
-  if (requiresAuth) {
-    app.use('/api/eval-wall', requiresAuth, router);
-  } else {
-    app.use('/api/eval-wall', router);
-  }
+  app.use('/api/eval-wall', requiresAuth, router);
   logger.info('eval-wall routes mounted at /api/eval-wall');
 }

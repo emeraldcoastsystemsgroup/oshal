@@ -4,9 +4,10 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the machine-only LLM governance check so an unset or incorrect internal secret is rejected and only the exact configured credential reaches quota evaluation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | requiresAuth is now a required parameter of registerLlmGovernanceRoutes: the app is built with a denying session guard, a new case proves GET /status refuses an anonymous caller through that guard (the former optional guard mounted it anonymous when omitted), and the /check cases prove the internal-token route is not behind the session guard.
  */
 
-import express from 'express';
+import express, { type RequestHandler } from 'express';
 import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { registerLlmGovernanceRoutes } from '@/app/routes/llm-governance-routes';
@@ -14,6 +15,13 @@ import { registerLlmGovernanceRoutes } from '@/app/routes/llm-governance-routes'
 const SAVED_INTERNAL_TOKEN = process.env.OSHAL_INTERNAL_TOKEN;
 const SAVED_SESSION_SECRET = process.env.SESSION_SECRET;
 let server: Server | undefined;
+let sessionGuardCalls = 0;
+
+/** @description A session guard that refuses every caller, the way requiresAuth refuses an anonymous one. */
+const denyingSessionGuard: RequestHandler = (_req, res) => {
+  sessionGuardCalls += 1;
+  res.status(401).json({ error: 'not_authenticated' });
+};
 
 /** @description Restores one environment value without converting absence into text. */
 function restoreEnv(name: string, value: string | undefined): void {
@@ -25,7 +33,7 @@ function restoreEnv(name: string, value: string | undefined): void {
 async function startGovernanceApp(): Promise<string> {
   const app = express();
   app.use(express.json());
-  registerLlmGovernanceRoutes(app, { pool: null });
+  registerLlmGovernanceRoutes(app, { pool: null }, denyingSessionGuard);
   server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -51,6 +59,7 @@ afterEach(async () => {
   restoreEnv('SESSION_SECRET', SAVED_SESSION_SECRET);
   await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
   server = undefined;
+  sessionGuardCalls = 0;
 });
 
 describe('LLM governance internal caller authentication', () => {
@@ -69,5 +78,19 @@ describe('LLM governance internal caller authentication', () => {
     const accepted = await postCheck(base, 'governance-machine-token');
     expect(accepted.status).toBe(200);
     expect(await accepted.json()).toMatchObject({ ok: true, allowed: true });
+  });
+
+  it('applies the session guard to GET /status, so an anonymous caller is refused', async () => {
+    const base = await startGovernanceApp();
+    const status = await fetch(`${base}/api/llm-governance/status`);
+    expect(status.status).toBe(401);
+    expect(sessionGuardCalls).toBe(1);
+  });
+
+  it('keeps /check on its internal token alone, never behind the session guard', async () => {
+    process.env.OSHAL_INTERNAL_TOKEN = 'governance-machine-token';
+    const base = await startGovernanceApp();
+    expect((await postCheck(base, 'governance-machine-token')).status).toBe(200);
+    expect(sessionGuardCalls).toBe(0);
   });
 });

@@ -29,16 +29,23 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Reclassify Profile Studio's public mount around its short-lived one-use dispatch capability after removing the reusable fleet service secret.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user middleware as an explicit authenticated mount guard for Graph and Jarvis route scans.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Allow-list the three application-authorization mounts (/api/authorization, /api/authorization/tenant-memberships, /api/user-directory). All 14 routes beneath them ARE guarded - requiresAuth is passed INTO the factory (the CLAUDE.md-blessed `registerFooRoutes(app, requiresAuth, deps)` shape) rather than wrapped around the mount, and each factory applies it as its first router.use. This scanner classifies posture on the literal substring requiresAuth in the mount TEXT, which these mounts do not contain, so the Security Center has been carrying three standing HIGH route_auth findings that describe nothing insecure. Deliberately NOT fixed by teaching the parser to resolve the deps variable: requiresAuth being PRESENT in an object does not prove it is APPLIED, and deriving a guard from a substring is precisely the failure this file's SEQ 5 already had to undo.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | CLOSED THE REGISTRAR BLIND SPOT. auditRoutes read src/app/server.ts alone; the 2026-09-24 server decomposition (708768f5) moved about two thirds of the controller's /api mount calls into server-auxiliary-routes.ts and registrar modules, so the Security Center inspected 56 of 154 and reported clean, and route-surface contracts whose registration moved were silently treated as inactive (fail-open). The scan now covers every controller registrar discovered from the entry's import graph (controller-route-registrars.ts), contracts activate on a marker in ANY registrar, and a finding's source is the real file:line. Fingerprints are unchanged so existing acknowledgements still match.
  *
  * @module features/security/route-audit
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import { createChildLogger } from '@/shared/logger';
 import { resolveRouteAuthMode } from '@/shared/route-auth';
 import type { RawFinding, ScannerReport } from './types';
 import { auditRouteSurfaceContracts, ROUTE_SURFACE_CONTRACTS } from './route-surface-contracts';
+import {
+  balancedCallArgs,
+  CONTROLLER_ENTRY,
+  discoverControllerRegistrars,
+  stripRouteSourceComments,
+  type RegistrarSource,
+} from './controller-route-registrars';
 
 const logger = createChildLogger({ module: 'security:route-audit' });
 
@@ -95,6 +102,21 @@ export const PUBLIC_BY_DESIGN: readonly string[] = [
   '/api/branding',            // pre-login branding lookup — the inline handler returns only the
                               // SERVICE_NAME / DISPLAY_NAME / TITLE env values. No user data, and
                               // the login surfaces need it before a session exists.
+  // REGISTRAR-MODULE mounts (reviewed 2026-10-04). Invisible until this scanner covered every
+  // controller registrar instead of server.ts alone; reasons are copied from the CI-side
+  // UNGUARDED_ALLOWLIST (tests/helpers/unguarded-route-allowlist.ts) so the two stay reconcilable.
+  '/api/version',             // build identity only ({name, version, commit, release}); the ADR-167
+                              // release transaction reads it over loopback with no session
+  '/api/hooks',               // connector webhook ingress — verifySignature fails closed with no
+                              // secret, constant-time compare, replayed delivery ids dropped
+  '/api/llm-governance/check', // machine-only pre-flight — x-oshal-internal token, timing-safe,
+                               // 403 when unset (GET /status beside it is behind requiresAuth)
+  '/api/a2a',                 // external-agent JSON-RPC — gateway-enabled 404, failure limiter, per-
+                              // agent bearer 401. Slash-boundary matching also covers /api/a2a/agents,
+                              // which mounts behind requiresAuth; the CI inventory matches exact paths,
+                              // so a guard dropped from that child still goes red there.
+  '/api/readiness',           // read-only readiness report — anonymous by design for oshal-verify.sh
+                              // and the pre-sign-in cockpit status; posture strings, no secrets
 ];
 
 /** @description Is this mount path covered by the public-by-design list (exact or `/`-boundary)? */
@@ -118,76 +140,10 @@ export interface ManifestRouteAuditEntry {
   requiresAuth?: boolean;
 }
 
-/**
- * @description Replace comments with spaces (newlines preserved so indices keep their line
- * numbers) while leaving string/template literals intact — a `//` inside a URL string must not
- * eat the rest of the line, and a mount example inside a comment must not become a mount.
- * (Same idiom as tests/unit/server-route-auth-inventory.spec.ts, the CI-side sibling.)
- * @param src - Raw TypeScript source.
- * @returns Source of identical length/line structure with comments blanked.
- */
-function stripComments(src: string): string {
-  const out: string[] = [];
-  type State = 'code' | 'line' | 'block' | 'single' | 'double' | 'template';
-  let state: State = 'code';
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    const pair = c + (src[i + 1] ?? '');
-    if (state === 'code') {
-      if (pair === '//') { state = 'line'; out.push(' '); continue; }
-      if (pair === '/*') { state = 'block'; out.push(' '); continue; }
-      if (c === "'") state = 'single';
-      else if (c === '"') state = 'double';
-      else if (c === '`') state = 'template';
-      out.push(c);
-    } else if (state === 'line') {
-      if (c === '\n') { state = 'code'; out.push(c); } else out.push(' ');
-    } else if (state === 'block') {
-      if (pair === '*/') { state = 'code'; out.push('  '); i++; } else out.push(c === '\n' ? c : ' ');
-    } else {
-      // Inside a string/template literal: copy verbatim, honour escapes, exit on the close quote.
-      if (c === '\\') { out.push(c, src[i + 1] ?? ''); i++; continue; }
-      if ((state === 'single' && c === "'") || (state === 'double' && c === '"') || (state === 'template' && c === '`')) {
-        state = 'code';
-      }
-      out.push(c);
-    }
-  }
-  return out.join('');
-}
-
-/**
- * @description Given comment-stripped source and the index of a mount's opening paren, return
- * the full argument text up to the MATCHING close paren — string-aware, so parens inside path
- * strings, `express.json({ limit: '12mb' })`, or `serviceSecretOr(requiresAuth)` cannot
- * truncate the walk (the old `[^)]*` regex stopped at the first `)`, hiding guards declared
- * after a parenthesised middleware).
- * @param text - Comment-stripped source.
- * @param openIdx - Index of the `(` that opens the call.
- * @returns The argument text (exclusive of the outer parens), or null when unterminated.
- */
-function balancedArgs(text: string, openIdx: number): string | null {
-  let depth = 0;
-  let quote: string | null = null;
-  for (let i = openIdx; i < text.length; i++) {
-    const c = text[i];
-    if (quote) {
-      if (c === '\\') { i++; continue; }
-      if (c === quote) quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
-    if (c === '(') depth++;
-    else if (c === ')') {
-      depth--;
-      if (depth === 0) return text.slice(openIdx + 1, i);
-    }
-  }
-  return null;
-}
-
 /** @description One extracted `app.<method>('/api/…', …)` mount. */
 interface ServerMount {
+  /** Repository-relative registrar file the mount is registered in. */
+  file: string;
   mountPath: string;
   /** The Express method the mount was registered with (`use`, `get`, `post`, …). */
   method: string;
@@ -236,23 +192,24 @@ function splitPathsAndMiddlewares(args: string): { paths: string[]; middlewares:
  * exists to catch, and it could not see them. A scanner that cannot see a class of mount reports
  * "clean" for the wrong reason, which is worse than reporting a finding. This is the same method
  * set the CI-side sibling (tests/unit/server-route-auth-inventory.spec.ts) has always used.
- * @param source - Raw server.ts source.
+ * @param source - Raw source of one controller registrar.
+ * @param file - That registrar's repository-relative path, recorded on every mount.
  * @returns The mount inventory (one entry per claimed `/api/*` path).
  */
-function extractServerMounts(source: string): ServerMount[] {
-  const stripped = stripComments(source);
+function extractServerMounts(source: string, file: string): ServerMount[] {
+  const stripped = stripRouteSourceComments(source);
   const mounts: ServerMount[] = [];
   const starts = new RegExp(MOUNT_METHOD_RE.source, 'g');
   let m: RegExpExecArray | null;
   while ((m = starts.exec(stripped)) !== null) {
     const openIdx = m.index + m[0].length - 1;
-    const args = balancedArgs(stripped, openIdx);
+    const args = balancedCallArgs(stripped, openIdx);
     if (args === null) continue;
     const { paths, middlewares } = splitPathsAndMiddlewares(args);
     if (!paths.length) continue;
     const line = stripped.slice(0, m.index).split('\n').length;
     for (const mountPath of paths) {
-      mounts.push({ mountPath, method: m[1], middlewares, line });
+      mounts.push({ file, mountPath, method: m[1], middlewares, line });
     }
   }
   return mounts;
@@ -291,13 +248,14 @@ function serverMountFinding(mount: ServerMount): RawFinding {
     category: 'route_auth',
     severity: 'high',
     title: `Route ${mount.mountPath} mounted without requiresAuth`,
-    detail: `${mount.mountPath} is mounted in server.ts (app.${mount.method} at line ${mount.line}) without the requiresAuth middleware. `
+    detail: `${mount.mountPath} is mounted in ${mount.file} (app.${mount.method} at line ${mount.line}) without the requiresAuth middleware. `
       + `Auth is opt-in per route in this codebase, so unless this endpoint is meant to be public, its data/actions are reachable unauthenticated. `
       + `Add requiresAuth to the mount, or add the path to the public-by-design allow-list if it is intentional.`,
-    source: `src/app/server.ts:${mount.line}`,
+    source: `${mount.file}:${mount.line}`,
     evidence: {
       mountPath: mount.mountPath,
       method: mount.method,
+      file: mount.file,
       line: mount.line,
       middlewares: mount.middlewares.trim().slice(0, 200),
     },
@@ -342,43 +300,51 @@ function manifestRouteFinding(
 }
 
 /**
- * @description Audit route-auth posture: the Express mount table in server.ts (any `/api/*`
+ * @description Audit route-auth posture: the Express mount table of EVERY controller registrar
+ * (the entry plus each file its src/app import graph reaches that registers on `app`; any `/api/*`
  * mount without `requiresAuth`) PLUS the active app manifests' `routes[]` (any declaration
  * resolving to `public` — the mounter mounts those with an empty guard chain).
- * @param serverFile - Path to server.ts (defaults under SECURITY_SCAN_ROOT/process.cwd()).
- * @param manifestRoutes - Active manifests' route declarations (omit ⇒ server.ts-only, the
+ * @param serverFile - Composition entry (defaults to src/app/server.ts under
+ *   SECURITY_SCAN_ROOT/process.cwd()). A file with no imports into src/app is scanned on its own.
+ * @param manifestRoutes - Active manifests' route declarations (omit ⇒ literal mounts only, the
  *   pre-2026-07-24 behavior — existing callers stay green).
  * @returns The posture report (category `route_auth`).
  */
 export function auditRoutes(serverFile?: string, manifestRoutes?: ManifestRouteAuditEntry[]): ScannerReport {
   const root = process.env.SECURITY_SCAN_ROOT || process.cwd();
-  const file = serverFile || path.join(root, 'src', 'app', 'server.ts');
-  let text: string;
+  const entry = serverFile || path.join(root, CONTROLLER_ENTRY);
+  let registrars: RegistrarSource[];
   try {
-    text = fs.readFileSync(file, 'utf8');
+    registrars = discoverControllerRegistrars(root, entry);
   } catch (err) {
-    logger.warn({ err, file }, 'route audit: server.ts not readable');
-    return { kind: 'posture', available: false, findings: [], categories: ['route_auth'], note: `server.ts not found at ${file}` };
+    logger.warn({ err, file: entry }, 'route audit: server.ts not readable');
+    return { kind: 'posture', available: false, findings: [], categories: ['route_auth'], note: `server.ts not found at ${entry}` };
   }
 
-  const mounts = extractServerMounts(text);
+  const mounts = registrars.flatMap((registrar) => extractServerMounts(registrar.text, registrar.file));
+  // Contracts activate on a registration marker in ANY registrar: a registration that moves
+  // between composition files must stay audited, never fall silently out of scope.
+  const compositionSource = registrars.map((registrar) => registrar.text).join('\n');
   const manifestCount = manifestRoutes?.length ?? 0;
   const findings = [
     ...auditServerMounts(mounts),
     // These are structurally outside the literal /api classifier. Their contracts turn
     // guard drift into HIGH findings instead of accepting a vacuous "not observed" result.
-    ...auditRouteSurfaceContracts(text, root),
-    // ADR-085 packages mount dynamically, so server.ts never contains their route literals.
+    ...auditRouteSurfaceContracts(compositionSource, root),
+    // ADR-085 packages mount dynamically, so no registrar contains their route literals.
     ...auditManifestRoutes(manifestRoutes ?? []),
   ];
+  const activeContracts = ROUTE_SURFACE_CONTRACTS
+    .filter((contract) => compositionSource.includes(contract.registrationMarker)).length;
 
   return {
     kind: 'posture',
     available: true,
     findings,
     categories: ['route_auth'],
-    note: `inspected ${mounts.length} /api mounts in ${path.relative(root, file).replace(/\\/g, '/')}`
-      + ` + ${ROUTE_SURFACE_CONTRACTS.filter((contract) => text.includes(contract.registrationMarker)).length} active non-standard route contracts`
+    note: `inspected ${mounts.length} /api mounts in ${registrars.length} controller registrar file(s) from `
+      + `${path.relative(root, entry).replace(/\\/g, '/')}`
+      + ` + ${activeContracts} active non-standard route contracts`
       + (manifestRoutes ? ` + ${manifestCount} active manifest route declarations` : ' (no manifest route inventory supplied)'),
   };
 }

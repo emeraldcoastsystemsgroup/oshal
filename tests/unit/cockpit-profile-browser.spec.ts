@@ -6,6 +6,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual Profile markup, account session states, palette geometry and modal lifecycle in isolated Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Keep fresh and stale Profile Settings doors closed without a current unlocked verdict, preserving account, theme, retry focus and editor state.
  * =============================================================================
  */
 import { type Browser, type BrowserContext, type Page, type Request } from 'playwright';
@@ -181,8 +182,63 @@ it('hands off to the same actual Global Settings view used by the OSHAL menu', a
   expect(await page.locator('#modalOverlay').isVisible()).toBe(false);
   expect(await page.locator('.settings-tab.active').innerText()).toBe('Global Settings');
   await page.locator('#workspaceNavigationMore > summary').click(); await page.locator('#portalSettingsBtn').click();
+  await page.locator('#settingsThemePicker').waitFor();
   expect(await page.locator('#settingsThemePicker').isVisible()).toBe(true);
   expect(fixture.profile.requests.filter(value => /^GET \/(login|logout)$/.test(value))).toEqual([]);
+});
+
+for (const verdict of [true, null, undefined]) {
+  it(`keeps Profile Settings closed for the ${String(verdict)} shell verdict`, async () => {
+    await open();
+    await page.evaluate(value => {
+      const app = (window as unknown as { __cockpit: { ribbon: { shellLocked?: boolean | null } } }).__cockpit;
+      app.ribbon.shellLocked = value;
+    }, verdict);
+    await profile();
+    expect(await page.locator('#profileSettingsAction').isVisible()).toBe(false);
+    expect(await page.locator('.profile-guidance').innerText()).toContain('Switch theme');
+    expect(await page.locator('.profile-guidance').innerText()).not.toContain('preferences are in Settings');
+    const before = fixture.profile.requests.length;
+    await page.locator('#profileSettingsAction').evaluate(button => (button as HTMLButtonElement).click());
+    expect(await page.locator('#modalOverlay').isVisible()).toBe(true);
+    expect(await page.locator('.settings-view').count()).toBe(0);
+    expect(fixture.profile.requests.slice(before).filter(read => /^GET \/api\/(config(?:\/|$)|providers$)/.test(read))).toEqual([]);
+    await page.keyboard.press('Escape');
+    const originalTheme = await page.locator('html').getAttribute('data-theme');
+    await page.locator('#workspaceNavigationMore > summary').click(); await page.locator('#themeToggle').click();
+    expect(await page.locator('html').getAttribute('data-theme')).not.toBe(originalTheme);
+    expect(await page.frameLocator('.tool-view-container iframe').locator('#draft').inputValue()).toBe('Unsubmitted synthetic draft');
+  });
+}
+
+it('rechecks a stale visible Settings action before disposing or handing off', async () => {
+  await open(); await profile(); expect(await page.locator('#profileSettingsAction').isVisible()).toBe(true);
+  await page.evaluate(() => {
+    const app = (window as unknown as { __cockpit: { ribbon: { shellLocked: boolean }; openCockpitSettingsPage: () => void;
+      profileHandoffs?: number } }).__cockpit;
+    app.ribbon.shellLocked = true; app.profileHandoffs = 0;
+    const original = app.openCockpitSettingsPage;
+    app.openCockpitSettingsPage = function () { this.profileHandoffs!++; original.call(this); };
+  });
+  await page.locator('#profileSettingsAction').click();
+  expect(await page.evaluate(() => (window as unknown as { __cockpit: { profileHandoffs: number } }).__cockpit.profileHandoffs)).toBe(0);
+  expect(await page.locator('#modalOverlay').isVisible()).toBe(true);
+  expect(await page.locator('#profileSettingsAction').isVisible()).toBe(false);
+  expect(await page.locator('.settings-view').count()).toBe(0);
+});
+
+it('restores Retry focus to a visible control when focused Settings stays closed', async () => {
+  await open(); await page.evaluate(() => {
+    (window as unknown as { __cockpit: { ribbon: { shellLocked: boolean } } }).__cockpit.ribbon.shellLocked = true;
+  });
+  fixture.profile.reply = { status: 503, body: { error: 'Synthetic unavailable session' } }; await profile();
+  fixture.profile.reply = signedInProfile(); await page.locator('#profileRetryAction').focus(); await page.keyboard.press('Enter');
+  await page.locator('#profileSignOutAction').waitFor();
+  expect(await page.locator('#profileSettingsAction').isVisible()).toBe(false);
+  expect(await page.locator('#profileSignOutAction').evaluate(element => element === document.activeElement)).toBe(true);
+  await page.keyboard.press('Escape');
+  expect(await page.locator('#profileBtn').evaluate(element => element === document.activeElement)).toBe(true);
+  expect(await page.frameLocator('.tool-view-container iframe').locator('#draft').inputValue()).toBe('Unsubmitted synthetic draft');
 });
 
 for (const [label, reply] of [

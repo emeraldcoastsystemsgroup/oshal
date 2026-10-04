@@ -11,10 +11,12 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Re-review Apply ingest as a hashed one-use
  *   exact-task capability; internal queue controls retain constant-time service authentication and
  *   the former interactive secret-bearing callbacks are terminally retired.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Scope widened from src/app/server.ts to every controller registrar (discoverControllerRegistrars). Five mounts that had never been reviewed because they register in route modules became visible and were read end to end: /api/version, /api/hooks, /api/llm-governance/check, /api/a2a and /api/readiness. Each is reviewed below. Three other newly visible mounts were guarded at the code instead (eval-wall and llm-governance/status: requiresAuth made required; /api/agents: serviceSecretOr applied at its own mount).
  */
 
 /**
- * @description One reviewed unguarded `/api` mount in `src/app/server.ts`.
+ * @description One reviewed unguarded `/api` mount in a controller registrar (src/app/server.ts or
+ * any file its src/app import graph reaches that registers on `app`).
  *
  * WHY a written reason is mandatory: `src/shared/middleware/oidc.ts` runs with
  * `authRequired: false`, so a mount that omits `requiresAuth` is anonymous-callable. An entry
@@ -23,7 +25,7 @@
  * lie the guards below actively reject.
  */
 export interface UnguardedRouteEntry {
-  /** The `/api/...` mount path exactly as server.ts declares it. */
+  /** The `/api/...` mount path exactly as the registrar declares it. */
   path: string;
   /** Why it is safe unguarded — cite the internal guard's file:line, or why nothing needs guarding. */
   reason: string;
@@ -135,5 +137,30 @@ export const UNGUARDED_ALLOWLIST: readonly UnguardedRouteEntry[] = [
       'Guarded, not anonymous - same passed-in requiresAuth (server.ts L1139/L1143). user-directory-routes.ts L23 applies it as the first router.use and L26 adds a blanket requireRosterAdmin, which the roster read then ' +
       'enforces a SECOND time inside application-principal-directory.ts. This mount is the one of the three that would matter most if it were open - it returns the full user roster (sub, issuer, label falling back to ' +
       'email, status, lastSeenAt) - which is why it carries two independent admin checks rather than one.',
+  },
+  {
+    path: '/api/version',
+    reason:
+      'Build identity only - registerUpdateRoutes (src/app/routes/update-check-cron.ts) answers GET with {name, version, commit, release} from getRunningBuild(); no user data, no actions, nothing writable. Anonymous by design: the ADR-167 on-box release transaction (scripts/managed-core-release.sh MCR_VERSION_URL) reads the running commit over loopback with no session. /api/updates beside it stays behind requiresAuth.',
+  },
+  {
+    path: '/api/hooks',
+    reason:
+      'Machine-to-machine connector webhook ingress (ADR-065) - mountConnectorWebhookRoutes (src/app/routes/connector-webhook-routes.ts) mounts createWebhookIngressRouter over the raw body; every delivery passes verifySignature (src/app/connectors/webhooks/webhook-ingress.ts), which returns not-ok when no secret is configured and compares HMAC/secret values in constant time, and replayed delivery ids are dropped by the seen store. The route-surface contract connector-webhook-ingress pins these guards in the Security Center.',
+  },
+  {
+    path: '/api/llm-governance/check',
+    reason:
+      'Machine-only governance pre-flight for bot nodes on the docker network - internalCallerAllowed (src/app/routes/llm-governance-routes.ts) requires x-oshal-internal to match OSHAL_INTERNAL_TOKEN (falling back to SESSION_SECRET) through a fixed-length digest timingSafeEqual and answers 403 when no secret is configured or none is presented. Pinned by tests/unit/llm-governance-internal-auth.spec.ts. GET /status beside it is behind requiresAuth.',
+  },
+  {
+    path: '/api/a2a',
+    reason:
+      'External-agent JSON-RPC (A2A) - createA2aRpcHandler (src/app/routes/a2a-routes.ts) answers 404 unless the A2A gateway is enabled, 429 once a caller trips the bearer-failure limiter, and 401 unless authenticateBearer matches a stored per-agent credential (A2aCredentialsService); the authenticated agent then runs under its own request identity. The management router /api/a2a/agents is a separate mount behind requiresAuth.',
+  },
+  {
+    path: '/api/readiness',
+    reason:
+      'Read-only per-capability readiness report - registerReadinessRoutes (src/app/routes/readiness-routes.ts) returns state plus a human-readable detail per capability and never mutates. Anonymous by design: scripts/oshal-verify.sh curls it with no session and the cockpit status check reads it before sign-in. It carries posture strings (active provider id, which harness credentials are present, non-heartbeating bot names) but no secrets and no user data; trimming the anonymous payload is an open operator decision, not a guard gap.',
   },
 ];

@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Name deterministic test credentials as placeholders so the fail-closed repository secret scanner can distinguish fixtures from deployable secret material.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove CORE-05 live verification preserves one operator PAT owner across its loopback message request and into the owner-scoped chat-task write seam.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Drive the ADR-100 Test Lab attributed-ingest fixture: a real HTTP request through its strict service-secret gate, observing the connection identity and the owner column at the consent and ask INSERTs. A valid secret makes the server's global stamp an operator over FORCE-RLS ambient tables, so the proof that matters is that the router re-entered the request as the caller's own non-operator subject first.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The local-auth driver reaches the INSERT again. 0cfe4d9b made POST /api/local-auth/bootstrap admit only the original browser origin presenting a one-use installer proof, committed in completeInstallerRootSetup's locked transaction (pool.connect, runWithSystemIdentity); the driver sent neither and its pool had no connect(), so it was refused 403 before any write. It now mints the proof with the real issueInstallerRootSetup against the same identity-capturing pool, sends that Origin, and still observes the oshal_local_users INSERT under the SYSTEM sentinel.
  */
 
 import crypto from 'node:crypto';
@@ -31,6 +32,7 @@ import { createA2aRpcHandler } from '@/app/routes/a2a-routes';
 import { createRemoteClientRoutes } from '@/app/routes/remote-client-routes';
 import { createCliTokenAuthMiddleware, generateCliToken } from '@/app/routes/cli-token-routes';
 import { createLocalAuthRoutes } from '@/app/routes/local-auth-routes';
+import { issueInstallerRootSetup } from '@/app/composition/installer-root-bootstrap';
 import { createInstallVerificationRoutes } from '@/app/routes/install-verification-routes';
 import {
   AMBIENT_FIXTURE_VOICE_LABEL,
@@ -335,25 +337,40 @@ async function driveCliTokenIdentity(): Promise<WriteObservation[]> {
   return observations;
 }
 
-/** Drives first-admin bootstrap through its real public route and SYSTEM store rail. */
+/**
+ * Drives first-admin bootstrap through its real public route and SYSTEM store rail. Since 0cfe4d9b the
+ * route admits only the original browser origin presenting a one-use installer proof, committed in
+ * completeInstallerRootSetup's locked transaction (pool.connect), so the proof is minted by the real
+ * issueInstallerRootSetup against this same pool and the request carries that origin.
+ */
 async function driveLocalAuthIdentity(): Promise<WriteObservation[]> {
   vi.stubEnv('SESSION_SECRET', 'local-auth-identity-secret-at-least-thirty-two-characters');
   const observations: WriteObservation[] = [];
-  const pool = {
-    query: async (sql: string, params: unknown[] = []) => {
-      if (!/INSERT INTO oshal_local_users/i.test(sql)) return { rows: [], rowCount: 0 };
-      observations.push({ identity: getRequestIdentity(), ownerValue: params[3] as string, label: 'local user bootstrap' });
-      return { rows: [{
-        id: params[0], email: params[1], display_name: params[2], user_sub: params[3],
-        status: 'active', token_version: 1, created_at: new Date().toISOString(),
-      }], rowCount: 1 };
-    },
+  let setup: Record<string, unknown> | undefined;
+  const query = async (sql: string, params: unknown[] = []) => {
+    if (/INSERT INTO oshal_installer_root_setup/i.test(sql)) {
+      setup = { token_hash: params[0], origin: params[1], completed_at: null, expired: false, bound_issuer: null, bound_sub: null };
+      return { rows: [{ expires_at: new Date(Date.now() + 900_000) }], rowCount: 1 };
+    }
+    if (/FROM oshal_installer_root_setup WHERE singleton=TRUE FOR UPDATE/i.test(sql)) {
+      return { rows: setup ? [setup] : [], rowCount: setup ? 1 : 0 };
+    }
+    if (!/INSERT INTO oshal_local_users/i.test(sql)) return { rows: [], rowCount: 0 };
+    observations.push({ identity: getRequestIdentity(), ownerValue: params[3] as string, label: 'local user bootstrap' });
+    return { rows: [{
+      id: params[0], email: params[1], display_name: params[2], user_sub: params[3],
+      status: 'active', token_version: 1, created_at: new Date().toISOString(),
+    }], rowCount: 1 };
   };
+  const pool = { query, connect: async () => ({ query, release: () => undefined }) };
   const { url, close } = await serve('/', createLocalAuthRoutes(pool as never));
   try {
+    const { token } = await issueInstallerRootSetup(pool as never, url);
     await requireHttpStatus(await fetch(`${url}/api/local-auth/bootstrap`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'identity-driver@example.com', name: 'Identity Driver', password: 'correct horse battery staple' }),
+      method: 'POST', headers: { 'content-type': 'application/json', origin: url },
+      body: JSON.stringify({
+        email: 'identity-driver@example.com', name: 'Identity Driver', password: 'correct horse battery staple', setupToken: token,
+      }),
     }), 201, 'local-auth bootstrap identity probe');
   } finally { await close(); }
   return observations;

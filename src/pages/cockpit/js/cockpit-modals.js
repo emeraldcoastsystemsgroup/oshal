@@ -10,7 +10,10 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Replaced duplicate header login/settings/history modals with a single profile-access modal and settings handoff
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron modal case and its generation handler (hit the dead /api/presentron/generate endpoint); presentations now open the AI Office surface
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Align Profile with portal controls and preserve verified session, explicit retry, modal focus and cancellation across late responses.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Admit the dynamic Profile Settings door only from the current unlocked shell verdict, preserving appearance guidance and visible retry focus.
  */
+
+import { closeShellDoors, openShellDoors } from './cockpit-shell-doors.js';
 
 // ═══ AUTH HELPERS ═══
 
@@ -92,9 +95,9 @@ function renderProfileModal() {
     html: `<section class="profile-access" id="profileModalBody" aria-busy="true">
       <p class="profile-status" id="profileStatusText" role="status" aria-live="polite">Checking sign-in...</p>
       <div class="profile-identity" id="profileIdentity"></div>
-      <p class="profile-guidance">Appearance and preferences are in Settings, also available from the OSHAL menu.</p>
+      <p class="profile-guidance">Use Switch theme in the OSHAL menu to change your appearance.</p>
       <div class="profile-actions">
-        <button type="button" class="profile-button profile-button-primary" id="profileSettingsAction">Settings</button>
+        <button type="button" class="profile-button profile-button-primary" id="profileSettingsAction" data-shell-door hidden>Settings</button>
         <button type="button" class="profile-button" id="profileRetryAction" hidden>Retry</button>
       </div>
     </section>`,
@@ -142,7 +145,17 @@ function openProfile(app) {
   observer.observe(overlay, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true });
   body.addEventListener('click', event => profileAction(state, event), { signal: events.signal });
   overlay.addEventListener('keydown', event => profileKey(state, event), { signal: events.signal });
-  close.focus(); void hydrateProfile(state);
+  syncProfileDoors(state); close.focus(); void hydrateProfile(state);
+}
+
+/** @description Bind fresh Profile doors to the current shell verdict, including stale actions. @param {object} state Current modal lifecycle. @returns {boolean} Whether Settings is admitted now. */
+function syncProfileDoors(state) {
+  const admitted = state.app.ribbon?.shellLocked === false;
+  if (admitted) openShellDoors(state.body); else closeShellDoors(null, undefined, state.body);
+  state.body.querySelector('.profile-guidance').textContent = admitted
+    ? 'Appearance and preferences are in Settings, also available from the OSHAL menu.'
+    : 'Use Switch theme in the OSHAL menu to change your appearance.';
+  return admitted;
 }
 
 /** @description Keep keyboard navigation inside the current Profile dialog and return Escape to its opener. */
@@ -165,6 +178,7 @@ function profileAction(state, event) {
   if (!state.current()) return;
   const id = event.target.closest('button')?.id;
   if (id === 'profileSettingsAction') {
+    if (!syncProfileDoors(state)) { document.getElementById('modalCloseBtn')?.focus(); return; }
     state.dispose(false); state.app.openCockpitSettingsPage(); state.app.closeModal();
   } else if (id === 'profileRetryAction') {
     void hydrateProfile(state);
@@ -210,6 +224,8 @@ async function hydrateProfile(state) {
 
 /** @description Clear previously verified identity/actions while a new session check is pending. */
 function profilePending(state) {
+  syncProfileDoors(state);
+  state.restoreRetryFocus = document.activeElement === state.body.querySelector('#profileRetryAction');
   state.accountAction = null; state.body.setAttribute('aria-busy', 'true');
   state.body.querySelector('#profileStatusText').textContent = 'Checking sign-in...';
   state.body.querySelector('#profileIdentity').replaceChildren();
@@ -220,7 +236,9 @@ function profilePending(state) {
 /** @description Render escaped current-session identity and the corresponding existing account destination. */
 function profileReady(state, auth) {
   const { body } = state, retry = body.querySelector('#profileRetryAction');
-  if (document.activeElement === retry) body.querySelector('#profileSettingsAction').focus();
+  const restoreRetryFocus = state.restoreRetryFocus || document.activeElement === retry;
+  state.restoreRetryFocus = false;
+  const settingsAdmitted = syncProfileDoors(state);
   retry.hidden = true;
   body.querySelector('#profileStatusText').textContent = auth.authenticated ? 'Signed in' : 'You are not signed in.';
   if (auth.authenticated) {
@@ -232,6 +250,7 @@ function profileReady(state, auth) {
   const action = document.createElement('button'); action.type = 'button'; action.className = 'profile-button';
   action.dataset.profileAccount = ''; action.id = auth.authenticated ? 'profileSignOutAction' : 'profileSignInAction';
   action.textContent = auth.authenticated ? 'Sign Out' : 'Sign In'; body.querySelector('.profile-actions').append(action);
+  if (restoreRetryFocus) (settingsAdmitted ? body.querySelector('#profileSettingsAction') : action).focus();
 }
 
 /**
