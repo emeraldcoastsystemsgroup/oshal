@@ -15,7 +15,7 @@ application-hosting baseline.
 | E3 composite roles | Deployed; installed lifecycle checks pass | Atomic assignment and reviewed optional-member upgrade, durable retry receipts, deny precedence, overlap-safe revoke, actual expiry, restart persistence and PostgreSQL RLS refusal checks pass |
 | E4 Home pilot | Released and installed | Selected required and optional member screens open; a temporary unpriced list note persists across reload and is removed; existing Smart Home and Education IDs and records are preserved |
 | E5 remaining six | All six released and installed | All seven entries pass desktop, phone and keyboard checks; named member views, the package chooser and preserved Central assistant/Simple chat are exercised through the real signed-in browser |
-| E6 installed acceptance | Installed checks pass; second-account privacy acceptance remains open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. Cross-user privacy still requires a second real authenticated non-admin account |
+| E6 installed acceptance | Installed checks pass; final cross-user privacy acceptance remains open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. A second real authenticated non-admin identity is qualified; privacy checks await the reviewed boundary fixes and coordinated deployment |
 
 The `experience` compatibility floor now supplies package hosting and discovery:
 `GET /api/ui/experiences` lists active scope-visible packages under current authorization;
@@ -71,9 +71,11 @@ unchanged release, without redeployment, timeout changes or skipped checks. The
 brief caption-verification assignments are removed, and zero grants plus strict
 data preservation are verified again.
 
-One acceptance item remains open: exercise cross-user privacy with a second real
-authenticated non-admin account. Source fixtures, the primary operator session
-and database RLS checks do not substitute for that acceptance.
+One acceptance item remains open: exercise cross-user privacy on the corrected
+deployment. The verified directory and recent authentication logs qualify an
+existing non-admin identity; no additional account is required. Source fixtures,
+the primary operator session and database RLS checks do not substitute for the
+actual cross-user acceptance.
 
 The `experience-roles` floor requires migration 185 and the existing Access management
 authority. `GET /api/authorization/composites` lists current readable templates and
@@ -312,6 +314,8 @@ assessment confirmed unscoped cockpit ticket streams, global escalation reads an
 project discovery, plus focused-shell refusal gaps. These core repairs require
 independent source review, merge, coordinated deployment and the second real
 authenticated non-admin check before the experience work is complete.
+Additional route findings from the stopped audit await its fact-checked handover;
+the three confirmed repair areas above do not close that broader assessment.
 
 Cockpit private reads use the verified owner, recorded issuer and current protected
 result authority. Streams recheck each event and heartbeat and close on refusal.
