@@ -8,16 +8,18 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the Jarvis agenda reads Little Monsters' read-only home-summary probe first and sends zero /api/education requests when it answers 403 (or fails), reading the calendar only on 200; agenda copy names the Little Monsters calendar (classes and personal events) and an absent package as not in your catalog; Orbit's inspector shows the declared assistants; the Games chip reads 'Looks like a game'; a roster_scope_denied refusal is told apart from the admin requirement, and the roster read keeps the refusal code.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay and the agenda's class events read UTC-midnight DATE values as their own day under America/Chicago; littleMonstersRefusal and the probe's carried code; an agenda for a caller whose plan does not admit Little Monsters, or whose probe is refused by authorization, says "not available to you" and sends no education request; the no-profile copy says to open Little Monsters once to set up the school profile.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Actual renderer source-state cases: loading,503/refusal/partial/unreadable/empty and keyboard retry without invented totals or discarded successful rows.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Prove the shipped Jarvis agenda and provenance retain admitted personal fields with an omitted roster, refuse malformed global fields, and clean up the owned browser.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 import { startExperienceBrowserFixture, syntheticApp } from '../fixtures/experience-browser';
+import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
-vi.setConfig({ testTimeout: 90000, hookTimeout: 60000 });
+vi.setConfig({ testTimeout: 90000, hookTimeout: BROWSER_HOOK_TIMEOUT_MS });
 
 const require = createRequire(import.meta.url);
 const LIVE = require('../../src/experience/live-data.js') as Record<string, any>;
@@ -25,6 +27,7 @@ const LIVE = require('../../src/experience/live-data.js') as Record<string, any>
 type Fixture = Awaited<ReturnType<typeof startExperienceBrowserFixture>>;
 type GapState = Fixture['state'] & { fullSwarm: { manifests: Record<string, Record<string, unknown>>; overviewEvents: Array<{ title: string; when: string }>; directoryError: string } };
 let browser: Browser, context: BrowserContext, page: Page, fixture: Fixture;
+let ownedBrowser: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 const errors: string[] = [];
 const gaps = () => (fixture.state as GapState).fullSwarm;
 const callsTo = (entry: string) => fixture.state.calls.filter(c => c === entry).length;
@@ -123,8 +126,8 @@ describe('full-swarm gap reads in the adapter', () => {
   });
 });
 
-beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
-afterAll(async () => { await browser?.close(); });
+beforeAll(async () => { ownedBrowser = await launchIsolatedBrowser(); browser = ownedBrowser.browser; });
+afterAll(async () => { if (ownedBrowser) console.info('Full-swarm gap browser cleanup:', JSON.stringify(await ownedBrowser.close())); });
 beforeEach(async () => {
   fixture = await startExperienceBrowserFixture();
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
@@ -139,7 +142,7 @@ beforeEach(async () => {
   errors.length = 0;
   page.on('pageerror', e => errors.push(String(e && (e as Error).message || e)));
 });
-afterEach(async () => { await context?.close(); await fixture?.close(); });
+afterEach(async () => { try { await context?.close(); } finally { await fixture?.close(); } });
 
 /** @description Open one experience and wait for its live root. @param path Route. @param ready Selector. */
 async function open(path: string, ready: string) { await page.goto(fixture.origin + path); await page.waitForSelector(ready); }
@@ -453,6 +456,80 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
 });
 
 const workReadUrl = /\/api\/(?:jarvis\/(?:tasks|overview)|tickets)(?:\?.*)?$/;
+
+/** @description A synthetic ordinary overview over the real single-GET contract, never installed-session evidence. @param events Personal calendar rows. @returns Canonical personal fields without a global roster. */
+function personalOverview(events: Array<{ title: string; when?: string }>) {
+  return { comms: { digest: null, signals: [] }, activity: { tickets: [], openCount: 0 }, calendar: { events } };
+}
+/** @description Open the shipped provenance panel through its existing directory action when needed. */
+async function openProvenance() {
+  if (!await page.locator('[data-action="provenance"]').count()) await page.locator('[data-action="directory"]').first().click();
+  await page.locator('[data-action="provenance"]').click();
+}
+/** @description Assert roster omission never becomes a visible global zero. */
+async function noInventedRoster() { expect(await page.locator('body').innerText()).not.toMatch(/0\/0 assistants online|0 assistants online|0 of 0 registered assistants/); }
+
+describe('caller-bound overview in the shipped Jarvis renderer', () => {
+  it.each([1440, 390])('retains personal calendar rows and separate provenance without a global roster at %dpx', async width => {
+    const tomorrow = new Date(Date.now() + 24 * 3600_000); tomorrow.setHours(10, 0, 0, 0);
+    const title = '<img src=x onerror="window.overviewPhantom=true"> Caller calendar';
+    let overviewReads = 0;
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    fixture.state.education.events = [];
+    await page.route('**/api/jarvis/overview', route => { overviewReads++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(personalOverview([{ title, when: tomorrow.toISOString() }])) }); });
+    await open('/jarvis', '.full-jarvis'); await page.waitForLoadState('networkidle');
+    expect(await page.locator('.live-agenda').innerText()).toContain(title);
+    expect(await page.locator('.agenda-sources').innerText()).toContain('Swarm calendar feed from the overview.');
+    expect(await page.locator('.live-agenda img').count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).overviewPhantom)).toBeUndefined();
+    expect(await page.locator('body').innerText()).toContain('Assistant status unavailable'); await noInventedRoster();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await openProvenance();
+    const panel = await page.locator('#full-dialog').innerText();
+    expect(panel).toContain('global assistant status not provided to this session');
+    expect(await page.locator('#full-dialog dt', { hasText: 'Your communications' }).locator('xpath=following-sibling::dd[1]').innerText()).toContain('live');
+    expect(await page.locator('#full-dialog dt', { hasText: 'Calendar feed' }).locator('xpath=following-sibling::dd[1]').innerText()).toContain('live');
+    expect(panel).toContain('A shared calendar feed is present.'); expect(panel).not.toContain('unreadable response');
+    expect(overviewReads).toBe(1); await noInventedRoster(); expect(errors).toEqual([]);
+  });
+
+  it('shows a genuine empty personal calendar separately from omitted assistant status', async () => {
+    fixture.state.education.events = [];
+    await page.route('**/api/jarvis/overview', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(personalOverview([])) }));
+    await open('/jarvis', '.full-jarvis'); await page.waitForLoadState('networkidle');
+    const agenda = await page.locator('.live-agenda').innerText();
+    expect(agenda).toContain('Nothing on your agenda from the sources below.');
+    expect(agenda).toContain('No application contributes events to the swarm calendar feed yet.');
+    expect(agenda).not.toContain('Calendar could not be loaded.'); await noInventedRoster();
+    await openProvenance();
+    expect(await page.locator('#full-dialog dt', { hasText: 'Calendar feed' }).locator('xpath=following-sibling::dd[1]').innerText()).toContain('live');
+    expect(await page.locator('#full-dialog').innerText()).toContain('Assistant status is not provided to this session.');
+    expect(errors).toEqual([]);
+  });
+
+  it('withholds calendar facts when a successful overview explicitly supplies a malformed roster', async () => {
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString(); fixture.state.education.events = [];
+    await page.route('**/api/jarvis/overview', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...personalOverview([{ title: 'UNQUALIFIED_PERSONAL_CALENDAR', when: tomorrow }]), bots: null }) }));
+    await open('/jarvis', '.full-jarvis'); await page.waitForLoadState('networkidle');
+    const agenda = await page.locator('.live-agenda').innerText();
+    expect(agenda).toContain('Calendar could not be loaded.'); expect(agenda).not.toContain('UNQUALIFIED_PERSONAL_CALENDAR');
+    expect(agenda).not.toContain('Nothing on your agenda from the sources below.'); await noInventedRoster();
+    await openProvenance(); expect(await page.locator('#full-dialog').innerText()).toContain('HTTP 200 · unreadable response');
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps a readable calendar sibling while qualifying an undated row as partial', async () => {
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString(); fixture.state.education.events = [];
+    await page.route('**/api/jarvis/overview', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(personalOverview([{ title: 'ADMITTED_CALENDAR_SENTINEL', when: tomorrow }, { title: 'UNDATED_CALENDAR_PHANTOM' }])) }));
+    await open('/jarvis', '.full-jarvis'); await page.waitForLoadState('networkidle');
+    const agenda = await page.locator('.live-agenda').innerText();
+    expect(agenda).toContain('ADMITTED_CALENDAR_SENTINEL'); expect(agenda).not.toContain('UNDATED_CALENDAR_PHANTOM');
+    expect(agenda).toContain('Only readable calendar events are shown.'); await noInventedRoster();
+    await openProvenance(); expect(await page.locator('#full-dialog').innerText()).toContain('HTTP 200 · only readable events shown');
+    expect(errors).toEqual([]);
+  });
+});
+
 /** @description Control only existing read-only work answers in this isolated browser. @param statuses HTTP status by source. @returns Resolves after interception is installed. */
 async function controlWorkReads(statuses: Record<string, number>) {
   await page.route(workReadUrl, route => {
