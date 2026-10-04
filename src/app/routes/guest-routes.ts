@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | `?next=<relative-path>` deep links: /guest carries a sanitized next through the start form (action query string, so no body-parser dependency) and /api/guest/start redirects there instead of /cockpit/; an already-authenticated visitor (guest or real) hitting /guest with a next skips the landing entirely. Lets the marketing sites deep-link a specific app surface (e.g. ?app=jarvis) through the guest gate instead of bouncing anonymous visitors to Google login. next is same-origin only: must start with a single '/', no '\', no CR/LF, ≤300 chars — else ignored.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guest-start now honors HOST_APP_MAP on the no-`next` default. A themed subdomain (career.oshal.ai, finance.oshal.ai, …) landed the guest on the bare /cockpit/ — the generic all-apps ribbon — because the fallback ignored the per-host map that the root `/` handler already applies. So `career.oshal.ai/guest` dropped the app the visitor came for. It now resolves the same landing path root `/` does (resolveHostLandingPath), so the subdomain lands on its app; an explicit `next` still wins, and a single-host deployment (no map entry) is unchanged (/cockpit/).
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guest-seed contract: after minting a fresh guest, fan out to every installed app that declares `guestSeed:` (runGuestSeeds) so each app plants its OWN demo data for this guest — guest-mode DATA seeding moves to the app developer; core only marries the fresh identity to the seed. Fire-and-forget beside the existing core seed (which still owns the framework's own tickets demo and, until the finance/career apps carry their own hook, their data). The app registry is built after these routes mount, so the active-manifest list is a REQUEST-time getter injected as GuestRoutesDeps.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Match the root and shell's ingress Host landing decision without trusting a caller-supplied forwarded-host header.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -14,7 +15,7 @@ import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import type { SwarmAppManifest } from '@/features/swarm-apps';
 import { isGuestModeEnabled, setGuestCookie, clearGuestCookie } from '@/shared/middleware/guest-session';
-import { resolveHostLandingPath } from '../host-app-map';
+import { resolveRequestLandingPath } from '../host-app-map';
 import { seedGuestDemoData } from './guest-demo-seed';
 import { runGuestSeeds } from './guest-seed-orchestrator';
 
@@ -122,7 +123,7 @@ export function createGuestRoutes(pool?: Pool, deps?: GuestRoutesDeps): Router {
     // so a themed subdomain (career.oshal.ai, …) lands the guest on its app rather than the
     // generic ribbon. A single-host deployment with no map entry falls back to /cockpit/.
     const next = sanitizeNext((req.query as Record<string, unknown>).next)
-      ?? resolveHostLandingPath(process.env.HOST_APP_MAP, req.hostname, '/cockpit/');
+      ?? resolveRequestLandingPath(process.env.HOST_APP_MAP, req, '/cockpit/');
     logger.info({ sub, next }, 'Guest session started');
     // Plant the shared fake finance account so the read-only Finance app shows data.
     // Fire-and-forget — never block the redirect on a seed hiccup.

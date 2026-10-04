@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Enforce the named app.open operation before serving a directly focused experience profile.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Preserve focused shell context on profile refusals and extract bounded profile handlers.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | A non-operator on a focused landing is HELD to manifest profiles. A requested name that does not synthesise for them (an unknown name, a disk-only profile such as oshal-framework, a case variant, an experience whose row their RLS scope cannot read) is refused 404 experience_unavailable with the lock fields instead of the disk or built-in "Default full-operator profile" (allow ['*']), which the locked ribbon then rendered as an operator rail. With no name they get the landing application through the same synthesis and app.open path, never the deployment's env profile. Operators and deployments without a focused landing keep the disk fallback exactly as before.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -76,23 +77,37 @@ async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<
   return candidates.filter(c => !c.toolName || visible.has(c.index)).map(c => c.item);
 }
 
+/** The shell-lock fields every profile answer and refusal carries. */
+interface ProfileLock { landingApp: string | null; operator: boolean | undefined }
+
 /**
- * @description Resolves one UI profile request. The cockpit calls this at boot
- * to decide which ribbon items to render. A profile does NOT disable backend
- * routes or bots — the framework keeps running; the profile only masks/orders
- * the surfaces the operator sees.
+ * @description Read which profile a request selects, and whether the caller is HELD to the
+ * deployment's focused landing: a non-operator on a deployment whose landing names an
+ * application. A held caller with no `?name=` selects that landing application, never the
+ * deployment's env profile (the operator cockpit's rail).
+ * @param req - The profile request.
+ * @param service - Supplies the env-selected profile name.
+ * @param lock - The shell-lock fields for this request.
+ * @returns The requested name ('' when none applies), the selected name and the hold.
+ */
+function profileSelection(req: Request, service: UIProfileService, lock: ProfileLock): { requested: string; selected: string; held: boolean } {
+  const held = Boolean(lock.landingApp) && lock.operator === false;
+  const asked = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+  const requested = asked || (held ? String(lock.landingApp) : '');
+  return { requested, selected: requested || service.getEnvSelectedName(), held };
+}
+
+/**
+ * @description Resolves `GET /api/ui/profile`. The cockpit calls this at boot to decide which
+ * ribbon items to render. A profile does NOT disable backend routes or bots — the framework keeps
+ * running; the profile only masks/orders the surfaces the caller sees.
  *
  * Resolution order for a named profile:
  *   1. If a swarm-app manifest is loaded with name=X, synthesise its profile.
- *   2. Otherwise load X from config-seed/profiles/X.json.
- * This lets an operator "focus" a running application without maintaining a
- * separate profile file — the manifest is the single source of truth.
- *
- * Routes:
- *   GET  /api/ui/profile            → resolved active profile (server default
- *                                     unless `?name=<name>` is provided)
- *   GET  /api/ui/profiles           → list of available profile names
- *   POST /api/ui/profile/reload     → clear the in-memory cache (dev only)
+ *   2. Otherwise load X from config-seed/profiles/X.json (or the built-in full-operator fallback).
+ * Step 2 is never reached by a caller held to a focused landing (see {@link profileSelection}):
+ * a name that does not synthesise for them is refused 404 `experience_unavailable`, because the
+ * disk and built-in profiles are operator rails that are not filtered per caller.
  *
  * @param req Current profile request. @param res Profile or refusal response.
  * @param service - UIProfileService for file-based profile fallback
@@ -103,12 +118,11 @@ async function filterRibbonItemsForCaller<T>(items: T[], req: Request): Promise<
  * @returns Completion of the profile response.
  */
 async function serveProfile(req: Request, res: Response, service: UIProfileService, swarmApps?: SwarmAppService, discovery?: UiProfileDiscoveryPorts, shell?: UiProfileShellPorts): Promise<void> {
-  const requested = typeof req.query.name === 'string' ? req.query.name.trim() : '';
-  const selected = requested || service.getEnvSelectedName();
   // Shell lock inputs (ADR-164 amendment): the deployment's landing application and the
   // server's operator verdict, so the ribbon decides the operator doors the same way the
   // cockpit document route decides its redirect.
-  const lock = { landingApp: shell?.landingApp(req) ?? null, operator: shell ? shell.isOperator(req) : undefined };
+  const lock: ProfileLock = { landingApp: shell?.landingApp(req) ?? null, operator: shell ? shell.isOperator(req) : undefined };
+  const { requested, selected, held } = profileSelection(req, service, lock);
   try {
     // Try manifest synthesis for BOTH request-level and env-selected names.
     // Without this, UI_PROFILE=<app-name> on the server falls through to the
@@ -125,6 +139,13 @@ async function serveProfile(req: Request, res: Response, service: UIProfileServi
         res.json({ profile: synthetic, requested: selected, source: 'swarm-app', envDefault: service.getEnvSelectedName(), ...lock });
         return;
       }
+    }
+    if (held) {
+      // Unknown, disk-only, wrong-case or RLS-hidden: nothing this caller may see synthesised, and the
+      // disk/built-in fallback is an operator rail. Refuse with the lock fields; the ribbon stays closed.
+      logger.info({ selected, landingApp: lock.landingApp }, 'Focused non-operator requested a profile that does not synthesise for them; refusing instead of the disk fallback');
+      res.status(404).json({ error: 'experience_unavailable', ...lock });
+      return;
     }
     const profile = service.load(selected);
     if (requested && swarmApps) {
@@ -148,7 +169,7 @@ async function serveProfile(req: Request, res: Response, service: UIProfileServi
  * @param discovery Current authorization ports. @param lock Deployment and caller lock inputs.
  * @returns Whether manifest synthesis may proceed. */
 async function experienceProfileAllowed(selected: string, req: Request, res: Response, apps: SwarmAppService,
-  discovery: UiProfileDiscoveryPorts | undefined, lock: { landingApp: string | null; operator: boolean | undefined }): Promise<boolean> {
+  discovery: UiProfileDiscoveryPorts | undefined, lock: ProfileLock): Promise<boolean> {
   if (!discovery) return true;
   const installed = await apps.getApp(selected);
   if (!installed?.manifest.experience) return true;

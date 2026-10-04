@@ -212,7 +212,8 @@
  * 196 | maintainer@emeraldcoastsystemsgroup.com   | Register the world classify rail at boot (ensureWorldClassifyRail): classification reasons on the swarm's accounted bot rail under an accountable owner (operator decisions 2026-09-21 and 2026-10-02), and the World package's own ingest routes are on it from their first request rather than after the first scheduled pulse.
  * 198 | maintainer@emeraldcoastsystemsgroup.com   | Shell lock (ADR-164 amendment, 2026-10-02): the cockpit document and experience entry pages take the deployment landing + operator ports, and the profile response carries landingApp/operator, so a non-operator on a focused-landing deployment never reaches the operator cockpit by door or by URL.
  * 197 | maintainer@emeraldcoastsystemsgroup.com   | The storyboard CLI image wiring is handed the swarm's canonical runtime-params resolver (read per call): a render runs on the render bot's own effective harness and is stamped with that bot's own provider record, never switched onto an image harness (ADR-130 amendment 2026-10-02, the bot-level rule).
- * 199 | maintainer@emeraldcoastsystemsgroup.com | Wire update status to current scoped application discovery while preserving operator refresh and apply.
+ * 199 | maintainer@emeraldcoastsystemsgroup.com   | Root and shared shell/profile landings use ingress Host through one helper, so caller-supplied forwarded-host values cannot remove focused-host admission.
+ * 200 | maintainer@emeraldcoastsystemsgroup.com | Wire update status to current scoped application discovery while preserving operator refresh and apply.
  */
 
 require('dotenv').config();
@@ -230,7 +231,7 @@ import { registerCodeServerBridgeRoutes, buildCodeServerRedirectUrl } from './ro
 import { registerDebugRoutes } from './routes/debug-routes';
 import { createAuthStateRoutes, mountDemoAuthRoutes } from './routes/auth-state-routes';
 import { createAppContext } from './composition-root';
-import { resolveHostLandingPath } from './host-app-map';
+import { resolveRequestLandingPath } from './host-app-map';
 import { focusedLandingApp } from './experience-shell-lock';
 import { 
   createMessageRoutes, 
@@ -846,9 +847,9 @@ function createApp(): express.Application {
   // trading.oshal.ai, ...) is resolved from HOST_APP_MAP first — see host-app-map.ts;
   // LANDING_PATH stays the single-host fallback when no host entry matches.
   app.get('/', requiresAuth, async (req, res) => {
-    const landingPath = resolveHostLandingPath(
+    const landingPath = resolveRequestLandingPath(
       process.env.HOST_APP_MAP,
-      req.hostname,
+      req,
       process.env.LANDING_PATH || '/cockpit/',
       req.query.app,
     );
@@ -905,8 +906,8 @@ function createApp(): express.Application {
   app.get(['/cockpit', '/cockpit/'], requiresAuth, surfaceOnboardingGuard);
   // Shell lock (ADR-164 amendment): the landing a non-operator is held to is the same one the
   // root route resolves — the host map first, then LANDING_PATH.
-  const deploymentLandingPath = (req: import('express').Request): string => resolveHostLandingPath(
-    process.env.HOST_APP_MAP, req.hostname, process.env.LANDING_PATH || '/cockpit/',
+  const deploymentLandingPath = (req: import('express').Request): string => resolveRequestLandingPath(
+    process.env.HOST_APP_MAP, req, process.env.LANDING_PATH || '/cockpit/',
   );
   registerCockpitStaticRoutes({
     app,

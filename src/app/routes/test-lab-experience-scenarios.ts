@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Probe the seven actual package entries after legacy aliases move to checked open operations and register alias regressions.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (server): register the profile refusal for a non-operator held to a focused landing (ui-profile-focused-refusal, real route + real ribbon init), its real-store companion on PostgreSQL under the enforcing role (ui-profile-rls-hidden-experience-postgres), the previously unregistered ribbon-profile-refusal and rail-tile-discoverability guards, and the #1041 picker spec.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -101,6 +102,11 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/experience-shell-lock.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-shell-lock-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/ribbon-shell-lock.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ui-profile-focused-refusal.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ui-profile-rls-hidden-experience-postgres.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ribbon-profile-refusal.spec.ts' },
+    { level: 'integration', path: 'tests/unit/rail-tile-discoverability.spec.ts' },
+    { level: 'unit', path: 'tests/unit/experience-package-picker.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-layouts-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/app-view-kit-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-full-swarm-gaps.spec.ts' },
