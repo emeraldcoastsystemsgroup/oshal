@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pins the public guest-demo entry rails: (1) /guest?next= deep links are same-origin only — the landing form carries a sanitized next, start redirects there, off-origin/protocol-relative/oversized values fall back to /cockpit/, and an already-authenticated visitor skips the landing; (2) the demo seed runs inside ONE transaction with a transaction-local oshal.current_sub GUC (FORCE-RLS rejected every guest's seed until 2026-07-18) and only ever plants queue-INERT ticket statuses (complete/backlog) so a seeded ticket can never be dispatched to a bot and spend LLM.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard guest start against malformed SESSION_COOKIE_DOMAIN values: the route still mints a host-only guest cookie and redirects instead of surfacing Express/cookie's invalid-domain TypeError as HTTP 500.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Guard the HOST_APP_MAP wiring on guest-start: with no explicit `next`, a themed subdomain (via req.hostname) must land the guest on its mapped app instead of the bare /cockpit/ generic ribbon; an explicit `next` still wins, and a single-host request with no map entry still falls back to /cockpit/. Uses a raw http request to set the Host header, which node's fetch strips as a forbidden header.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep guest defaults on ingress Host with trusted proxy handling enabled; conflicting forwarded-host values cannot remove or borrow a focused host map.
  */
 
 import express from 'express';
@@ -52,11 +53,12 @@ describe('guest ?next= deep links', () => {
    * @param nextQs - Optional `?next=…` query string (already encoded) appended to the path.
    * @returns The response status and Location header.
    */
-  function startWithHost(base: string, host: string, nextQs = ''): Promise<{ status: number; location: string | undefined }> {
+  function startWithHost(base: string, host: string, nextQs = '', forwardedHost?: string): Promise<{ status: number; location: string | undefined }> {
     const { port } = new URL(base);
     return new Promise((resolve, reject) => {
       const req = http.request(
-        { host: '127.0.0.1', port: Number(port), method: 'POST', path: `/api/guest/start${nextQs}`, headers: { host } },
+        { host: '127.0.0.1', port: Number(port), method: 'POST', path: `/api/guest/start${nextQs}`,
+          headers: { host, ...(forwardedHost ? { 'x-forwarded-host': forwardedHost } : {}) } },
         (res) => {
           res.resume(); // drain
           resolve({ status: res.statusCode ?? 0, location: res.headers.location });
@@ -74,6 +76,7 @@ describe('guest ?next= deep links', () => {
    */
   function boot(authed = false): string {
     const app = express();
+    app.set('trust proxy', true);
     if (authed) {
       app.use((req, _res, next) => {
         (req as { oidc?: unknown }).oidc = { isAuthenticated: () => true, user: { sub: 'guest-existing' } };
@@ -152,6 +155,18 @@ describe('guest ?next= deep links', () => {
     process.env.HOST_APP_MAP = 'career.oshal.ai=career-hunter';
     const { location } = await startWithHost(boot(), 'oshal.agenticfederal.us');
     expect(location).toBe('/cockpit/');
+  });
+
+  it('uses uppercase and port-normalized ingress Host despite a conflicting forwarded host', async () => {
+    process.env.HOST_APP_MAP = 'career.oshal.ai=career-hunter';
+    const response = await startWithHost(boot(), 'CAREER.OSHAL.AI:443', '', 'unmapped.fixture.invalid');
+    expect([response.status, response.location]).toEqual([302, '/cockpit/?app=career-hunter']);
+  });
+
+  it('does not borrow a mapped forwarded host when the actual guest Host is unmapped', async () => {
+    process.env.HOST_APP_MAP = 'career.oshal.ai=career-hunter';
+    const response = await startWithHost(boot(), 'unmapped.fixture.invalid', '', 'career.oshal.ai');
+    expect([response.status, response.location]).toEqual([302, '/cockpit/']);
   });
 
   it('lets an explicit next win over the host map', async () => {
