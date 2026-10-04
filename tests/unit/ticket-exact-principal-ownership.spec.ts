@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | One exact-principal ticket verdict for /api/tickets and the cockpit (P5 step 1), over the real ticket router and HTTP. On a ticket that recorded its owner's issuer, the owner reads it; the same sub from another issuer, the owner's inactive account and a session with no verified actor are refused with the missing-id 404 on load-by-id, parent selection and the state route, and nothing is written; an operator still reads it. A legacy ticket with no recorded issuer still binds by sub alone. For every caller the /api/tickets verdict equals the cockpit verdict.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The LIST joins the one verdict: for every caller, GET /api/tickets returns exactly the tickets GET /api/tickets/:id admits. The same sub from another issuer no longer sees the issuer-stamped ticket in its list, and an inactive owner or a session with no verified actor lists nothing.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type { Server } from 'node:http';
@@ -145,5 +146,18 @@ describe('one exact-principal ticket verdict', () => {
         expect(verdicts.api, `${caller} on ${id}`).toBe(verdicts.cockpit);
       }
     }
+  });
+
+  it('lists exactly the tickets the by-id verdict admits, for every caller', async () => {
+    const all = [ids.stamped, ids.legacy, ids.child];
+    for (const caller of Object.keys(CALLERS)) {
+      const scope = caller === 'operator' ? '?scope=all' : '';
+      const listed = await (await call(`/api/tickets${scope}`, caller)).json() as { tickets: Array<{ ticketId: string }> };
+      const admitted: string[] = [];
+      for (const id of all) if ((await call(`/api/tickets/${id}`, caller)).status === 200) admitted.push(id);
+      expect(listed.tickets.map((ticket) => ticket.ticketId).filter((id) => all.includes(id)).sort(), caller).toEqual(admitted.sort());
+    }
+    const twin = await (await call('/api/tickets', 'twin')).json() as { tickets: Array<{ ticketId: string }> };
+    expect(twin.tickets.map((ticket) => ticket.ticketId)).not.toContain(ids.stamped);
   });
 });

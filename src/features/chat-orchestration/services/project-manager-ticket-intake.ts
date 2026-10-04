@@ -7,12 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Switched PM intake onto shared ticket-project metadata helpers so direct PM tickets inherit the platform-wide Default-project contract
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Changed ticket creation default status from backlog to approved so queue manager processes tickets immediately
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Carry the authenticated message owner onto both the canonical ticket and chat task so their row ownership matches the narrowed request identity under RLS.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Bind the verified owner issuer on the precreated PM chat task while retaining canonical project metadata, so orchestration cannot skip its principal provenance.
  */
 
 import { DEFAULT_PROJECT_NAME, DEFAULT_PROJECT_ID, mergeTicketProjectMetadata } from '@/entities/ticket';
 import type { ITaskStore } from '@/entities/task';
 import type { TicketService } from '@/features/ticketing';
 import { createChildLogger } from '@/shared/logger';
+import { bindOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'project-manager-ticket-intake' });
 
@@ -153,6 +155,15 @@ function buildTicketInput(title: string, description: string, agentId: string, o
   };
 }
 
+/**
+ * @description Preserve PM intake linkage and project metadata while stamping only verified owner provenance.
+ * @param title - Canonical task title.
+ * @param ticketId - Ticket created for this intake.
+ * @param agentId - Controller-selected project manager.
+ * @param requestedTaskId - Original conversational task identifier.
+ * @param ownerSub - Exact accountable owner, never an issuer supplied by message content.
+ * @returns Task creation input with canonical metadata and any verified matching issuer.
+ */
 function buildTaskInput(
   title: string,
   ticketId: string,
@@ -165,11 +176,11 @@ function buildTaskInput(
     processingMode: 'agentic' as const,
     agentId,
     ownerSub,
-    metadata: mergeTicketProjectMetadata({
+    metadata: bindOwnerPrincipalIssuer(mergeTicketProjectMetadata({
       source: 'project-manager-ticket-intake',
       ticketId,
       requestedTaskId,
-    }),
+    }), ownerSub),
   };
 }
 

@@ -19,6 +19,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com | requireTicketAccess decides through the shared canReadTicket predicate (owner or operator, AND current protected-result rights), the same verdict the filing guard now applies to a parent. Behavior-preserving here; it closes the drift where parent selection checked ownership alone.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Retired POST /:ticketId/chat (ADR-161 Tier-C register): 410 legacy_execution_route_retired, replacement POST /api/tasks/:taskId/messages. It ran a bot turn on the task orchestrator directly, past the one admission decision (entitlement, specialist and credential refusals, budget), ran unattributed, and posted into an existing task id with no ownership check. No product caller; the cockpit chats through the canonical message door.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | PUT /:ticketId/state (cockpit compatibility) decides like its sibling /status: a ticket through canReadTicket, a bare task through callerCanReadTaskResult (the canonical task verdict), refused and missing both 404. The bare-task branch had no ownership check at all, so any signed-in user could set another user's task status wherever RLS was not enforcing. Removed a stale chat section header left above pause/resume.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | LIST filters candidates with the full canonical ticket verdict (createTicketReadCheck: exact-principal ownership, or guest-own for a signed guest, AND result rights) instead of the result leg alone, with one verified-actor lookup per request. The owner-scoped query is unchanged; it now drops other-issuer and inactive-actor rows the by-id verdict already refused. A guest's LIST keeps only its own stamped, non-protected tickets.
  */
 
 import { Router } from 'express';
@@ -34,7 +35,7 @@ import {
 import { createChildLogger } from '@/shared/logger';
 import { isOperator, getCaller } from '@/shared/middleware/authz';
 import { isPrivilegedTicketType } from '@/shared/middleware/superadmin';
-import { canReadTicket, canReadTicketApplicationResult } from './ticket-application-access';
+import { canReadTicket, createTicketReadCheck } from './ticket-application-access';
 import { refuseTicketAuthorityFields } from './ticket-filing-guard';
 import { callerCanReadTaskResult } from './protected-result-access';
 import { emitAuditEvent, type AuditDecision } from '@/features/governance';
@@ -177,7 +178,8 @@ export function createTicketRoutes(ctx: AppContext): Router {
       }
 
       const candidates = await ctx.ticketService.listTickets(options as any);
-      const readable = await Promise.all(candidates.map(ticket => canReadTicketApplicationResult(ctx, req, ticket)));
+      const canRead = createTicketReadCheck(ctx, req);
+      const readable = await Promise.all(candidates.map(canRead));
       const tickets = candidates.filter((_ticket, index) => readable[index]);
       res.json({ tickets, count: tickets.length });
     } catch (error) {

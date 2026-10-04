@@ -38,6 +38,9 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Register PUT /tickets/:id/state access: another user's ticket or bare task id is refused with the missing-id 404 and nothing moves, the owner still changes their own, and a revoked owner is refused a protected ticket or task.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Register one exact-principal ticket verdict (P5 step 1): on an issuer-stamped ticket the same sub from another issuer, an inactive owner and a session with no verified actor are refused on load, parent selection and state; operators still read; /api/tickets and cockpit verdicts are equal.
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | Register dispatch-time pin authorization (Z-08): a non-operator's pin to a bot they may not call escalates terminally without a claim or a worker; operator, permitted-pin and absent-owner dispatches still reach the pinned bot; an invalid owner is refused, not treated as internal.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com   | Link new ordinary Project Manager task issuer stamps beside the canonical owner-principal regressions; the fixture runner remains isolated.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com   | Link authenticated stamped guest own-ticket read and refusal regressions through the real guest injector and guard; the runner remains isolated.
+ * 37 | maintainer@emeraldcoastsystemsgroup.com   | Link global queue-health operator refusal and summary compatibility regressions without changing the isolated runner's read-only guidance.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -185,6 +188,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/swarm-publishing-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-project-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/cockpit-queue-health-route.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-spending-authority-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
@@ -198,12 +202,14 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/bot-node-workspace-owner-binding.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-swarm-execute-auth.spec.ts' },
     { level: 'unit', path: 'tests/unit/owner-principal-issuer.spec.ts' },
+    { level: 'unit', path: 'tests/unit/project-manager-ticket-intake.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-isolation-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-filing-integrity.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-filing-protected-parent.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-chat-retired.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-state-compat-access.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-exact-principal-ownership.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-guest-own-read.spec.ts' },
     { level: 'integration', path: 'tests/unit/pinned-ticket-dispatch-gate.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },

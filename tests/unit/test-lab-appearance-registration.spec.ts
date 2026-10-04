@@ -1,6 +1,10 @@
 /**
  * CHANGE LOG
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep profile and disconnect regression discoverable and readiness read-only.
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Keep profile and disconnect regression discoverable and readiness read-only.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Supply the required empty prior-step context in readiness fixtures without changing cookies or outcome assertions.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { APPEARANCE_SCENARIOS } from '@/app/routes/test-lab-appearance-scenarios';
@@ -24,7 +28,7 @@ it('checks the shared renderer asset without requesting an application model or 
   vi.stubEnv('PORT', '5018');
   const fetcher = vi.fn(async () => new Response('/* shared viewer */', { headers: { 'content-type': 'application/javascript' } }));
   vi.stubGlobal('fetch', fetcher);
-  expect((await APPEARANCE_SCENARIOS.find(item => item.id === 'shared-stl-viewer')!.steps[0].run('')).state).toBe('pass');
+  expect((await APPEARANCE_SCENARIOS.find(item => item.id === 'shared-stl-viewer')!.steps[0].run('', {})).state).toBe('pass');
   expect(fetcher).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:5018/shared/ui/js/stl-viewer.js', {
     headers: {}, redirect: 'manual', signal: expect.any(AbortSignal),
   });
@@ -34,7 +38,7 @@ it('checks only the fixed profile asset without reading an account or changing s
   vi.stubEnv('PORT', '5018');
   const fetcher = vi.fn(async () => new Response('.profile-access { color: inherit; }', { headers: { 'content-type': 'text/css' } }));
   vi.stubGlobal('fetch', fetcher);
-  expect((await profileStep().run('synthetic-session')).state).toBe('pass');
+  expect((await profileStep().run('synthetic-session', {})).state).toBe('pass');
   expect(fetcher).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:5018/cockpit/css/profile-modal.css', {
     headers: { cookie: 'synthetic-session' }, redirect: 'manual', signal: expect.any(AbortSignal),
   });
@@ -43,7 +47,7 @@ it('checks only the fixed profile asset without reading an account or changing s
 it.each([[401, 'degraded'], [403, 'degraded'], [503, 'degraded'], [404, 'gap'], [302, 'fail']])(
   'keeps profile readiness HTTP %i distinct as %s', async (status, state) => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: Number(status) })));
-    expect((await profileStep().run('')).state).toBe(state);
+    expect((await profileStep().run('', {})).state).toBe(state);
   },
 );
 
@@ -52,7 +56,7 @@ it('rejects login HTML and empty CSS, retaining failed fetch as unavailable', as
     .mockResolvedValueOnce(new Response('  ', { headers: { 'content-type': 'text/css' } }))
     .mockRejectedValueOnce(new Error('synthetic timeout'));
   vi.stubGlobal('fetch', fetcher);
-  expect((await profileStep().run('')).state).toBe('fail');
-  expect((await profileStep().run('')).state).toBe('fail');
-  expect((await profileStep().run('')).state).toBe('degraded');
+  expect((await profileStep().run('', {})).state).toBe('fail');
+  expect((await profileStep().run('', {})).state).toBe('fail');
+  expect((await profileStep().run('', {})).state).toBe('degraded');
 });

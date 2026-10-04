@@ -26,8 +26,10 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Every finished turn now appends its usage to the oshal_cost_events ledger (deps.costLedger, per-model rows under the owner sub) beside the chat_tasks rollup. The ledger is what BudgetService's trailing-window caps sum, and nothing on the inline path wrote it — recordUsage only bumps chat_tasks lifetime totals — so the HARD cap at the bot-invocation chokepoint could never see the spend its own inline branch produced. The provider is resolved once per turn so the ledger row names the provider that actually ran (BYO vs registry), and the append is non-fatal: a ledger failure logs at ERROR and never fails the chat turn.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | options.byoLlmRetry (an EXPLICITLY chosen BYO endpoint, operator decision 2026-09-22) is handed to createGovernedByoHostedProvider so the same-endpoint replay wraps the PROVIDER CALL inside this turn: the user message is saved once, handleError broadcasts once, tools never re-run. The first build wrapped processMessage from the routes and re-did all three per attempt.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | resolveProvider honours options.turnProvider (an LLMService the entry point resolved for this turn) before the BYO connection and getProvider (OSHAL Node runs its own chat turns locally (operator, 2026-10-01)).
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | Stamp verified owner issuer on newly auto-created chat tasks so ordinary task ownership can bind the same principal as ticket ownership; existing tasks are never restamped.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
+import { bindOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 import { createChildLogger } from '@/shared/logger';
 import type {
@@ -155,6 +157,9 @@ export class TaskOrchestrator {
    * @description Ensure the task exists, creating it if needed.
    *
    * @param taskId - Task identifier
+   * @param agentId - Controller-selected bot for a new task.
+   * @param ownerSub - Exact accountable owner; issuer comes only from verified request identity.
+   * @returns Whether this call created the task; an existing task keeps its metadata.
    */
   private async ensureTaskExists(taskId: string, agentId?: string, ownerSub?: string): Promise<boolean> {
     const existing = await this.deps.taskStore.get(taskId);
@@ -167,7 +172,7 @@ export class TaskOrchestrator {
       processingMode: 'agentic',
       agentId,
       ownerSub, // per-owner budget attribution (Phase 2)
-      metadata: {},
+      metadata: bindOwnerPrincipalIssuer({}, ownerSub),
     });
     logger.info(
       { requestedTaskId: taskId, storedTaskId: created.taskId },
