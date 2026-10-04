@@ -323,6 +323,12 @@ totals cannot establish every contributor's read authority and are omitted on th
 surface. This can reduce displayed totals when task usage is absent; it does not
 change the underlying spend records.
 
+Historical work items correlated only by a unit string are withheld when no
+canonical ticket establishes their owner and current result access. A matching
+unit name alone cannot authorize output. The regression preserves direct admitted
+legacy work and protected work with valid execution lineage; it does not claim
+that every historical unit-only fallback remains visible.
+
 The isolated HTTP regression is `tests/unit/cockpit-private-reads-http.spec.ts`,
 registered in the protected remote application execution Test Lab scenario and
 `npm run test:remote-authorization`. Synthetic authentication and isolated policy
