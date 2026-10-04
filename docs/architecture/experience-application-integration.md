@@ -86,10 +86,14 @@ audience matrix. Retain the fourteen external Lab cards as pending until their a
 boundaries are exercised. Record Home request/render measurements before assigning
 performance budgets to later experiences.
 
-The resumed source review also reproduced a presentation defect: failed work APIs can
-render empty-list messages and zero counts. Loading, unavailable and partial work
-states must be distinguished before the remaining operational UX is accepted. This
-finding and the latest shared-renderer polish are not yet deployed.
+The follow-up renderer repair distinguishes loading, unavailable, unreadable and
+partial work from successful empty reads across all seven experiences. Valid companion
+feeds remain visible; unknown counts stay unknown. Read-only retry preserves unsent
+shell input and refuses to replace an open member frame. Operational notices use
+concise language, with source/HTTP details in the existing About or provenance panel.
+This shared-renderer work is tracked in [PR #1048](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1048).
+It is not deployed, and isolated browser evidence does not close the original installed
+audience, member-data or performance acceptance matrix above.
 
 The `experience-roles` floor requires migration 185 and the existing Access management
 authority. `GET /api/authorization/composites` lists current readable templates and
@@ -328,8 +332,49 @@ assessment confirmed unscoped cockpit ticket streams, global escalation reads an
 project discovery, plus focused-shell refusal gaps. These core repairs require
 independent source review, merge, coordinated deployment and the second real
 authenticated non-admin check before the experience work is complete.
-Additional route findings from the stopped audit await its fact-checked handover;
-the three confirmed repair areas above do not close that broader assessment.
+The stopped assessment has been recovered. Its 31 flagged records are grouped API
+assessments. A separate adversarial report recorded 22 confirmed and five refuted
+verdict groups; four flagged groups were never reached. Those counts describe that saved assessment,
+not unique routes or a completed current-deployment audit. The operator has selected
+operator-only global administration while preserving normal caller-owned and explicitly
+shared work. The follow-up source repairs below apply that decision without relabelling
+historical verdicts as new live results.
+
+### Follow-up changes awaiting merge and deployment
+
+The latest code is pushed to GitHub for review. None of the following PRs is merged
+or deployed; the installed release recorded above remains the deployment evidence.
+
+| Change | Review and bounded validation |
+| --- | --- |
+| [#1045 focused shell admission](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1045) | Canonical focused admission precedes document/profile delivery. Host mapping uses ingress Host; forwarded-host observations and configured Host preservation remain separately qualified. 110 unit/HTTP checks pass, including the actual-origin runner's refusal before token binding. |
+| [#1046 cockpit startup](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1046) | Deadline-bound combined authentication/profile startup stays closed on refusal or unreadable answers. Accepted Host source is normally merged into the client branch; 66 current affected guard/browser/Host checks pass. |
+| [#1047 private reads and administration](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1047) | Caller-scoped streams/activity/projects; operator-only global logs, metrics, queues, workflow design, bot activation, connector administration and swarm diagnostics. Cached update status joins current caller discovery; global refresh is operator-only. Mounted HTTP and compatibility checks cover refusals before reads or mutation and retained normal/shared work. |
+| [#1048 experience operational states](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1048) | Operational headings and truthful work states in Home, Business, Classroom, Studio, Jarvis, Orbit and Commons; keyboard recovery, successful partial rows, draft retention and phone layouts are exercised over isolated APIs. |
+
+Token Chase's intentionally shared ownerless frames retain their established read
+contract, while foreign owned frames remain refused. Paid framework credential lending
+uses the existing operator-plus-demo posture before loading vendor secrets. Owner BYO,
+free rotation, shared free OpenRouter and normal hosted defaults remain supported.
+Shared bot-config application requires an operator before promotion reads or writes.
+Caller-facing spending replay routes bind the verified caller and issuer even without global DB
+identity middleware, and its node cost event uses a nonprivileged caller context with
+caller/issuer-separated replay rollups. Token-free tail restoration remains distinct
+from optional paid re-fire. The extracted production node route keeps its machine-auth
+and protected-bot refusal. The 81 affected checks use qualified session, provider,
+database, cost and hermetic-restore seams; they do not prove live vendor or ledger behavior.
+
+The generic cockpit dashboard also distinguishes operator-only swarm activity,
+unavailable reads and successful empty lists. Its 24 browser/registration checks load
+the actual shipped class over an owned loopback server, with synthetic API responses
+and verified browser cleanup.
+
+Independent source reviews and normal committed-head publication/type gates establish
+reviewable code. Repository policy still requires a non-author GitHub approval before
+merge. Release the shell server before its client and experience descendants, deploy
+through the normal verification path, then perform actual matched-host nonoperator
+privacy checks and the still-open extended UX matrix. Existing qualified identities
+are sufficient; fixtures or operator-only checks cannot replace that final evidence.
 
 Cockpit private reads use the verified owner, recorded issuer and current protected
 result authority. Streams recheck each event and heartbeat and close on refusal.
