@@ -32,6 +32,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Register mounted global swarm telemetry and Plane diagnostic operator boundaries with normal processing compatibility.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Register actual Token Chase spending HTTP gates and caller-bound replay attribution with qualified isolated provider/cost seams.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Register ticket filing integrity over the real ticket router: pinned-agent entitlement, unreadable-parent refusal and the privileged-type filer check, on create and on PATCH.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Register global project registry administration: non-operator create/rename/archive refused, operator allowed, own-ticket project assignment unaffected.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -178,6 +179,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/workflow-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-publishing-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/cockpit-project-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/token-chase-spending-authority-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },

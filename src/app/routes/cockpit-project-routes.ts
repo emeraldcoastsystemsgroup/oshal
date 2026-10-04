@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted project CRUD routes from cockpit-routes.ts to satisfy 800-line refactoring trigger
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Scope project discovery to current readable owner records; expose the global registry only to operators.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Registry MUTATIONS are operator administration too (requiresOperator on create, rename, archive). Seq 2 made the global registry operator-only to read, but any signed-in user could still write it and have its rename/archive rewrite project metadata across tickets - a confirmed exposure in the 2026-10-04 route-auth audit. Users organize their own tickets through the owner-scoped PUT /api/tickets/:id/project, which needs no registry entry.
  */
 
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
 import { handleGetCockpitProjects } from './cockpit-private-projects';
 import {
@@ -33,7 +35,7 @@ export function createCockpitProjectRoutes(ctx: AppContext): Router {
 
   router.get('/projects', handleGetCockpitProjects(ctx));
 
-  router.post('/projects', async (req: Request, res: Response) => {
+  router.post('/projects', requiresOperator, async (req: Request, res: Response) => {
     try {
       const { name } = req.body || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
@@ -61,7 +63,7 @@ export function createCockpitProjectRoutes(ctx: AppContext): Router {
     }
   });
 
-  router.patch('/projects/:projectId', async (req: Request, res: Response) => {
+  router.patch('/projects/:projectId', requiresOperator, async (req: Request, res: Response) => {
     try {
       const { projectId } = req.params;
       const { name } = req.body || {};
@@ -109,7 +111,7 @@ export function createCockpitProjectRoutes(ctx: AppContext): Router {
     }
   });
 
-  router.delete('/projects/:projectId', async (req: Request, res: Response) => {
+  router.delete('/projects/:projectId', requiresOperator, async (req: Request, res: Response) => {
     try {
       const { projectId } = req.params;
       if (projectId === DEFAULT_PROJECT_ID) {
