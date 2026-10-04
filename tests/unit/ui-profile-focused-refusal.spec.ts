@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | A non-operator held to a focused landing never receives the disk or built-in full-operator profile: the real createUiProfileRoutes over loopback, the real UIProfileService (config-seed/profiles), and the refusal body fed into the real RibbonNav._init. Unknown, disk-only, wrong-case and caller-invisible names answer 404 experience_unavailable with exactly the lock fields; no name serves the landing application through synthesis; the 503 discovery refusal keeps the lock fields; operators and unfocused deployments keep the fallback.
  */
