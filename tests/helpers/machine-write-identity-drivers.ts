@@ -8,6 +8,8 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove CORE-05 live verification preserves one operator PAT owner across its loopback message request and into the owner-scoped chat-task write seam.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Drive the ADR-100 Test Lab attributed-ingest fixture: a real HTTP request through its strict service-secret gate, observing the connection identity and the owner column at the consent and ask INSERTs. A valid secret makes the server's global stamp an operator over FORCE-RLS ambient tables, so the proof that matters is that the router re-entered the request as the caller's own non-operator subject first.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The local-auth driver reaches the INSERT again. 0cfe4d9b made POST /api/local-auth/bootstrap admit only the original browser origin presenting a one-use installer proof, committed in completeInstallerRootSetup's locked transaction (pool.connect, runWithSystemIdentity); the driver sent neither and its pool had no connect(), so it was refused 403 before any write. It now mints the proof with the real issueInstallerRootSetup against the same identity-capturing pool, sends that Origin, and still observes the oshal_local_users INSERT under the SYSTEM sentinel.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Wire canonical empty ownership and message stores in the installer loopback fixture so genuinely new threads are proved absent without a subject-only ownership stub.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
  */
 
 import crypto from 'node:crypto';
@@ -39,6 +41,8 @@ import {
   createAmbientTestFixtureRoutes,
 } from '@/app/routes/ambient-test-fixture-routes';
 import { createMessageRoutes } from '@/app/routes/message-routes';
+import { InMemoryMessageStore } from '@/entities/message';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
 import { authorizeBotNodeExecutionCall } from '@/app/bot-node-request-auth';
 import { runBotNodeExecutionWithSystemIdentity } from '@/app/bot-node-request-identity';
 import { getCaller, isOperator, serviceSecretOr } from '@/shared/middleware/authz';
@@ -412,7 +416,8 @@ async function serveInstallVerificationTarget(observations: WriteObservation[]) 
   const pool = installVerificationPool();
   const ctx = {
     pool, taskStore: { get: async () => null }, ticketService: {},
-    workspaceService: { resolveTaskOwner: async () => null },
+    workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
+    messageStore: new InMemoryMessageStore(),
     orchestrator: { processMessage: async (_taskId: string, _text: string, options: { userSub?: string }) => {
       observations.push({ identity: getRequestIdentity(), ownerValue: options.userSub, label: 'chat_tasks write seam' });
       return { success: true, response: 'OSHAL_LIVE_OK' };
@@ -473,7 +478,7 @@ async function serveWithSession(
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    if (sub) (req as express.Request & { oidc?: unknown }).oidc = { user: { sub }, isAuthenticated: () => true };
+    if (sub) (req as express.Request & { oidc?: unknown }).oidc = { user: { sub }, isAuthenticated: () => true, fetchUserInfo: async () => ({ sub }) };
     next();
   });
   app.use(mount, router);

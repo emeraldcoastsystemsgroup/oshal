@@ -1,13 +1,18 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the guest Jarvis turn. Two failures are pinned here, in both directions. UNDER-GRANTING: `jarvis` is Tier-A but its turn posts to /api/tasks + /api/tasks/:id/messages — segment `tasks` — so the whole public demo 403'd guest_readonly and could not answer a question. OVER-GRANTING: the fix must NOT be a literal '/api/tasks' prefix, which would also hand an anonymous visitor DELETE /api/tasks/:id and POST /api/tasks/:id/workspace/bootstrap. Also pins the guard's lifetime model-turn cap, since the sliding window alone lets one guest spend rateMax() every window for the entire session TTL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Model new threads with canonical empty ownership/history stores and the authenticated guest issuer; preserve all containment assertions.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import { InMemoryMessageStore } from '@/entities/message';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
+import { GUEST_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import {
   GUEST_ALLOWED_MUTATIONS,
   guestDecision,
@@ -226,7 +231,8 @@ describe('a guest turn answers and stops — it cannot create swarm work', () =>
     const { createMessageRoutes } = await import('../../src/app/routes/message-routes');
     const ctx = {
       taskStore: { get: async () => null },
-      workspaceService: { resolveTaskOwner: async () => null },
+      workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
+      messageStore: new InMemoryMessageStore(),
       ticketService: {},
       pool: {},
       orchestrator: {
@@ -241,7 +247,9 @@ describe('a guest turn answers and stops — it cannot create swarm work', () =>
       if (sub) {
         (req as Request & { oidc?: unknown }).oidc = {
           isAuthenticated: () => true,
-          user: { sub, email: `${sub}@example.test`, is_guest: req.header('x-test-guest') === 'true' },
+          fetchUserInfo: async () => ({ sub }),
+          user: { sub, email: `${sub}@example.test`, is_guest: req.header('x-test-guest') === 'true',
+            iss: req.header('x-test-guest') === 'true' ? GUEST_PRINCIPAL_ISSUER : 'https://identity.fixture.test' },
         };
       }
       next();

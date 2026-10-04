@@ -6,15 +6,17 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial WorkspaceService with CRUD and filesystem path resolution
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added resolveTaskOwner(taskId) for per-user task storage (ADR-060): resolves a task's owning user (OIDC sub) via the task's own ticket id or its task→ticket link, so ToolExecutorService can write the bot's files into the owner's storage namespace.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Made workspace owner/path immutable at the service boundary and confined create, ensure, and delete operations to link-free directories below the shared root before persistence changes.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Expose strict actual-ticket ownership for message reads without changing filesystem owner resolution or borrowing protected lineage.
  */
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { IWorkspaceStore, InternalWorkspace, CreateInternalWorkspaceInput } from '@/entities/workspace';
-import type { ITicketStore } from '@/entities/ticket';
+import type { ITicketStore, InternalTicket } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
+import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'WorkspaceService' });
 const MANAGED_DIRECTORY = 'managed';
@@ -24,6 +26,13 @@ type WorkspaceUpdates = Partial<Pick<InternalWorkspace, 'name' | 'projectName' |
 interface ContainedDirectory {
   absolutePath: string;
   exists: boolean;
+}
+
+/** @description Minimal persisted ticket identity; execution metadata is deliberately excluded. */
+export interface TaskOwnership {
+  ticketId: string;
+  ownerSub: string | null;
+  ownerPrincipalIssuer: string | null;
 }
 
 /**
@@ -182,6 +191,30 @@ export class WorkspaceService {
     return null;
   }
 
+  /**
+   * @description Resolve authoritative ticket ownership, refusing broken or conflicting linked identities.
+   * A present direct ticket wins even when ownerless; only absent direct and absent links mean unlinked.
+   * @param taskId - Exact task or direct ticket identifier.
+   * @returns Minimal actual ticket ownership, or null for a truly unlinked identifier.
+   * @throws When persistence is unavailable or any linked record lacks a consistent exact owner binding.
+   */
+  async resolveTaskOwnership(taskId: string): Promise<TaskOwnership | null> {
+    const direct = await this.ticketStore.get(taskId);
+    if (direct) return ticketOwnership(direct);
+    const links = await this.ticketStore.getTicketLinksForTask(taskId);
+    if (!links.length) return null;
+    const rows = await Promise.all(links.map(link => this.ticketStore.get(link.ticketId)));
+    const bindings = rows.map(ticket => {
+      if (!ticket?.ownerSub) throw new Error('task_ticket_ownership_unavailable');
+      return ticketOwnership(ticket);
+    });
+    const first = bindings[0];
+    if (bindings.some(row => row.ownerSub !== first.ownerSub || row.ownerPrincipalIssuer !== first.ownerPrincipalIssuer)) {
+      throw new Error('task_ticket_ownership_conflict');
+    }
+    return bindings.sort((a, b) => a.ticketId < b.ticketId ? -1 : a.ticketId > b.ticketId ? 1 : 0)[0];
+  }
+
   private async reuseWorkspace(existing: InternalWorkspace, requestedOwner: string | null): Promise<InternalWorkspace> {
     if (existing.ownerSub !== requestedOwner) throw new Error('Workspace name is already in use');
     await ensureContainedDirectory(this.workspaceRoot, existing.path);
@@ -210,6 +243,11 @@ export class WorkspaceService {
       return null;
     }
   }
+}
+
+function ticketOwnership(ticket: InternalTicket): TaskOwnership {
+  return { ticketId: ticket.ticketId, ownerSub: ticket.ownerSub ?? null,
+    ownerPrincipalIssuer: readOwnerPrincipalIssuer(ticket.metadata) };
 }
 
 function assertOwner(ownerSub: string | null | undefined): void {

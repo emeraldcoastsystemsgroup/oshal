@@ -33,11 +33,15 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the inline half of the send-message chokepoint.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Supply canonical empty ownership and history stores for the genuinely new thread; retain every budget assertion.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
+import { InMemoryMessageStore } from '@/entities/message';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
 
 // The ticket-context resolver wants a real store/pool and is not under test here; stub it so
 // the router's OWN admission behaviour is what is asserted.
@@ -144,7 +148,8 @@ async function bootApp(pool: Pool): Promise<string> {
   const { createMessageRoutes } = await import('../../src/app/routes/message-routes');
   const ctx = {
     taskStore: { get: async () => null },
-    workspaceService: { resolveTaskOwner: async () => null },
+    workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
+    messageStore: new InMemoryMessageStore(),
     ticketService: {},
     pool,
     orchestrator: { processMessage },
@@ -157,6 +162,7 @@ async function bootApp(pool: Pool): Promise<string> {
     if (sub) {
       (req as Request & { oidc?: unknown }).oidc = {
         isAuthenticated: () => true,
+        fetchUserInfo: async () => ({ sub }),
         user: { sub, email: `${sub}@example.test` },
       };
     }
@@ -170,7 +176,7 @@ async function bootApp(pool: Pool): Promise<string> {
   return `http://127.0.0.1:${address.port}/api`;
 }
 
-async function send(base: string, agentId: string): Promise<Response> {
+async function send(base: string, agentId: string): Promise<globalThis.Response> {
   return fetch(`${base}/send-message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-test-sub': USER_SUB },

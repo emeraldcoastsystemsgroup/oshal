@@ -26,12 +26,13 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com | ONE-CHOKEPOINT admission on the INLINE half (BACKLOG "One bot-invocation chokepoint - the INLINE half of /api/send-message"). Seq 19 routed the NODE half through executeBotOrInline, so a chat turn to a bot with its own node endpoint has cleared the cost-governance gate since then; a bot the registry binds to the controller took the other branch and called ctx.orchestrator.processMessage DIRECTLY - no budget check, no specialist-context or credential-carrier refusal. A user sitting on a tripped HARD daily cap could therefore keep spending through the cockpit chat panel indefinitely, as long as the bot they were talking to was inline, which is most of the concierge fleet. That branch now calls the SAME decision executeBotOrInline applies (assertBotInvocationAdmissible, extracted for exactly this caller - this route's turn carries a ticketContext and an interactionMode BotNodeRequest cannot hold), ahead of the hosted-brain ladder and ticket creation, and BudgetBlockedError maps to 402 budget_cap_exceeded so the refusal names its reason instead of arriving as an anonymous 500. Guard: tests/unit/send-message-budget-gate.spec.ts.
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Bounded SAME-endpoint retry on the cockpit chat path (operator decision 2026-09-22), the twin of inline-bot-execution seq 14. This route had the same two outcomes for a provider wall - rotate, or surface it - and rotation is permanently refused for an explicitly chosen BYO endpoint, so exactly those turns got no retry and an intermittently tripping provider spend cap became the assistant answer. When isExplicitByoTurn says the ladder resolved the user own BYO row, the first attempt runs inside runWithSameEndpointRetry (same URL, same key, same account; attempt, backoff and wall-clock bounds) reading swallowedTurnFailure so it also sees the resolved-failure shape the agentic loop produces. The rotation legs below are unchanged and resolver-owned lanes are not wrapped.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | The inline branch now rides runInlineTurnWithRecovery, the ONE turn body it shares with executeBotOrInline (inline-bot-execution seq 15): the same-endpoint replay moved INTO the orchestrator's provider call (options.byoLlmRetry — one saved user message, one error broadcast per turn, where the seq-22 wrapper had re-done both per attempt), rotation is unchanged, and an exhausted explicit endpoint falls, for the deployment operator only, through the readiness-gated configured chain. A fallback turn answers with the brainFallback marker; a fallback that was not ready answers 503 BYO_FALLBACK_NOT_READY whose `error` names the endpoint, the attempts and every rung's reason — the field the cockpit renders.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com   | Keep task and actual ticket ownership separate from protected lineage, refuse unresolved existing threads and prioritize authenticated users over legacy service headers.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { DEFAULT_CHAT_AGENT_ID, resolveProjectManagerTicketExecutionContext } from '@/features/chat-orchestration';
-import { canAccessResource, getCaller, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
+import { getCaller, hasAuthenticatedUserIdentity, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { assertExecuteEntitlement, CallerNotEntitledError } from '@/app/bot-node-execute-entitlement';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
 import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-service-user-identity';
@@ -46,7 +47,8 @@ import type { AppContext } from '../composition-root';
 import { callerCanReadTaskResult } from './protected-result-access';
 import { persistProtectedResultTask } from './protected-result-persistence';
 import { hasProtectedTaskResults, readProtectedResultExecutions, type ProtectedResultTask } from '@/shared/protected-results';
-import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { readOwnerPrincipalIssuer, OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
+import { isAuthenticatedGuest, type OwnedRecord } from './record-ownership';
 
 const logger = createChildLogger({ module: 'message-routes' });
 
@@ -55,27 +57,38 @@ const botClient = new BotNodeClient(createRegistryEndpointResolver());
 
 /**
  * @description Object-level authorization for posting to a task thread. Existing
- * tasks must be visible to and owned by the caller. Missing/unresolved task ids
- * are allowed so the orchestrator can create a brand-new chat thread.
+ * tasks must have current canonical ownership; only successful absent lookups with
+ * no ticket, history or protected output allow a brand-new unlinked chat thread.
  */
 async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
-  const task = await ctx.taskStore.get(taskId).catch((err) => {
-    logger.debug({ err, taskId }, 'message ownership lookup could not read chat task');
-    return null;
-  });
-  if (task) {
-    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
-      logger.debug({ err, taskId }, 'message ownership lookup could not resolve ticket owner');
-      return null;
-    });
-    return await callerCanReadTaskResult(ctx, req, { ...task, ownerSub: owner }) || mayStartEmptyTask(ctx, req, task);
+  try {
+    const binding = await readMessageTaskBinding(ctx, taskId);
+    if (binding.ownership) {
+      return await callerCanReadTaskResult(ctx, req, binding.task, binding.ownership)
+        || binding.stored && await mayStartEmptyTask(ctx, req, binding.task);
+    }
+    return !binding.stored && await mayStartUnlinkedTask(ctx, req, taskId);
+  } catch (err) {
+    logger.error({ err, taskId }, 'message write ownership undetermined; failing closed');
+    return false;
   }
-  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
-    logger.debug({ err, taskId }, 'message ownership lookup could not resolve missing-task owner');
-    return null;
-  });
-  if (await hasProtectedTaskResults(taskId)) return callerCanReadTaskResult(ctx, req, { taskId, ownerSub: owner });
-  return owner ? callerOwnsResource(req, owner) : true;
+}
+
+async function readMessageTaskBinding(ctx: AppContext, taskId: string): Promise<{
+  task: ProtectedResultTask; stored: boolean; ownership: OwnedRecord | null;
+}> {
+  const task = await ctx.taskStore.get(taskId);
+  if (task?.ownerSub) return { task, stored: true, ownership: task };
+  const ticket = await ctx.workspaceService.resolveTaskOwnership(taskId);
+  const ownership = ticket ? { ownerSub: ticket.ownerSub,
+    metadata: ticket.ownerPrincipalIssuer ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: ticket.ownerPrincipalIssuer } : undefined } : task;
+  return { task: task ?? { taskId }, stored: Boolean(task), ownership };
+}
+
+async function mayStartUnlinkedTask(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
+  if (!messageCallerSub(req) || isGuestRequest(req) && !isAuthenticatedGuest(req)) return false;
+  if (await hasProtectedTaskResults(taskId)) return false;
+  return !(await ctx.messageStore.getByTask(taskId)).length;
 }
 
 async function mayStartEmptyTask(ctx: AppContext, req: Request, task: ProtectedResultTask): Promise<boolean> {
@@ -94,35 +107,22 @@ async function mayStartEmptyTask(ctx: AppContext, req: Request, task: ProtectedR
  * visible under RLS and no ticket owner can be resolved.
  */
 async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
-  const task = await ctx.taskStore.get(taskId).catch((err) => {
-    logger.debug({ err, taskId }, 'message history lookup could not read chat task');
-    return null;
-  });
-  if (task) {
-    const owner = task.ownerSub ?? await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
-      logger.debug({ err, taskId }, 'message history lookup could not resolve ticket owner');
-      return null;
-    });
-    return callerCanReadTaskResult(ctx, req, { ...task, ownerSub: owner });
+  try {
+    const binding = await readMessageTaskBinding(ctx, taskId);
+    return Boolean(binding.ownership && await callerCanReadTaskResult(ctx, req, binding.task, binding.ownership));
+  } catch (err) {
+    logger.error({ err, taskId }, 'message history ownership undetermined; failing closed');
+    return false;
   }
-  const owner = await ctx.workspaceService.resolveTaskOwner(taskId).catch((err) => {
-    logger.debug({ err, taskId }, 'message history lookup could not resolve missing-task owner');
-    return null;
-  });
-  return owner ? callerCanReadTaskResult(ctx, req, { taskId, ownerSub: owner }) : false;
 }
 
-/** Compare ownership against the validated session or the secret-gated service assertion. */
-function callerOwnsResource(req: Request, ownerSub: string | null | undefined): boolean {
-  const trustedServiceSub = getTrustedServiceUserSub(req);
-  return trustedServiceSub ? trustedServiceSub === ownerSub : canAccessResource(req, ownerSub);
+function isBareServiceMessage(req: Request): boolean {
+  return !hasAuthenticatedUserIdentity(req) && hasValidServiceSecret(req);
 }
 
 /** Resolve the owner only from authenticated transport identity, never request content. */
 function messageCallerSub(req: Request): string | undefined {
-  return getCaller(req).sub
-    ?? getTrustedServiceUserSub(req)
-    ?? undefined;
+  return (hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : getTrustedServiceUserSub(req)) ?? undefined;
 }
 
 /**
@@ -133,9 +133,9 @@ function messageCallerSub(req: Request): string | undefined {
  * copy to drift.
  *
  * `direct` is what separates the two caller classes the model already distinguishes:
- *   - a valid service-secret call is swarm/queue dispatch threading a ticket owner's sub for the
-   *     owner attribution (dispatch-manifest-worker / dispatch-incident-worker fall back to this
-   *     route over localhost) -> NOT direct, trusted, unchanged;
+ *   - a bare valid service-secret call is swarm/queue dispatch threading a ticket owner's sub for
+ *     owner attribution (dispatch-manifest-worker / dispatch-incident-worker fall back to this
+ *     route over localhost) -> NOT direct, trusted, unchanged;
  *   - an OIDC session or PAT caller is interactive per-user delegation -> direct, entitlement-checked.
  *
  * @param req - The inbound request (identity + service-secret facts).
@@ -144,8 +144,8 @@ function messageCallerSub(req: Request): string | undefined {
  * @throws CallerNotEntitledError in enforce mode (the default) on an explicit mismatch.
  */
 function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, taskId: string): void {
-  const isMachineCall = hasValidServiceSecret(req);
-  const sessionSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub ?? null;
+  const isMachineCall = isBareServiceMessage(req);
+  const sessionSub = hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : null;
   assertExecuteEntitlement({
     userSub: isMachineCall ? getTrustedServiceUserSub(req) ?? sessionSub : sessionSub,
     direct: !isMachineCall && Boolean(sessionSub),
@@ -278,8 +278,8 @@ function handleSendMessage(ctx: AppContext) {
           ticketStatus: nodeContext.ticketStatus ?? null,
           ticketTitle: nodeContext.ticketTitle ?? null,
         };
-        const isMachineCall = hasValidServiceSecret(req);
-        const sessionSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub ?? null;
+        const isMachineCall = isBareServiceMessage(req);
+        const sessionSub = hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : null;
         const result = await executeBotOrInline(ctx, botClient, resolvedAgentId, {
           text,
           taskId: nodeContext.taskId,
@@ -287,7 +287,7 @@ function handleSendMessage(ctx: AppContext) {
           agentId: resolvedAgentId,
           agenticMode: agenticMode ?? true,
           // Same interactive-vs-swarm distinction assertSendMessageEntitlement applies (seq 9):
-          // a valid service-secret call is swarm dispatch, never a direct interactive turn.
+          // only a bare service call is swarm dispatch; independently authenticated users stay direct.
           direct: !isMachineCall && Boolean(sessionSub),
           userSub: callerSub,
         });

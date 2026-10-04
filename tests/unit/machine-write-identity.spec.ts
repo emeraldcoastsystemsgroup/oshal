@@ -16,6 +16,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: readLocationTokenBinding joins the machine-auth markers (a location credential is a per-credential bearer the token-auth middleware admits on one path), so the core device ingest is discovered; its driver sends a real bearer through the real createCliTokenAuthMiddleware and the real location router over HTTP, answers the device read as the recorded owner, and observes the device subject 'device:<id>' with isOperator false on the connection at the observation INSERT, with the row's subject equal to it.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | The Jarvis driver drives the write again. c18f057a made POST /tasks/:id/delivered read the owner's row back through filterJarvisResultRows before the UPDATE; the driver's pool answered that read with no row, so the handler replied 200 {ok:false} and never wrote. The pool now serves the owner's row, and the driver fails unless the route answers {ok:true}. Inventory entry added for agent-provider-mount.ts, which discovery finds since its mount applies serviceSecretOr(requiresAuth) itself (cea82ded); it issues no query, and both routers it mounts are already inventoried.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Closed the discovery blind spot (docs/backlog/machine-auth-discovery-blind-spot.md, done-when 1): the markers now include serviceSecretOr and getTrustedServiceUserSub, the two helpers routes really use to admit the service rail. That re-finds artifact-exchange-core (stale only because a17f8d28 dropped its literal header) and surfaces six files, each inventoried after reading it end to end (machine-write-inventory-service-rail.ts). The one owner-scoped service writer among them, /api/files, now narrows a service caller to the named user in its router; the files-service-user driver proves both halves: a service call naming no user is refused 403, and the connection lookup runs as that user with isOperator false.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Back only the new-message driver with canonical empty ticket ownership and message history while retaining observed machine-write attribution.
  */
 
 /**
@@ -52,6 +53,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import crypto from 'node:crypto';
 import express from 'express';
+import { InMemoryMessageStore } from '@/entities/message';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
 
 import {
   MACHINE_WRITE_INVENTORY,
@@ -456,7 +459,8 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
     };
     const ctx = {
       pool: { query: async () => ({ rows: [], rowCount: 0 }) }, taskStore, ticketService,
-      workspaceService: { resolveTaskOwner: async () => null },
+      workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
+      messageStore: new InMemoryMessageStore(),
       orchestrator: { processMessage: async () => ({ success: true, response: 'ok' }) },
     };
     const { url, close } = await serveServiceUserRoute('/api', createMessageRoutes(ctx as never));
