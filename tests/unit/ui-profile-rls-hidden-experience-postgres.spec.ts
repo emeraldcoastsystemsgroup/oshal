@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Real-store guard for the RLS-hidden experience refusal. A person-scoped experience row is invisible to another non-operator under migrations 060/063 (FORCE RLS, public-read policy), so getApp returns null and the profile route used to wave the request through to the built-in "Default full-operator profile" with a 200. Here the REAL SwarmAppRepository and SwarmAppService run over a disposable PostgreSQL as the NOSUPERUSER NOBYPASSRLS oshal_app role, through the production GUC pool and request identity, behind the real createUiProfileRoutes: the hidden row answers 404 experience_unavailable with exactly the lock fields, a public experience row reaches the app.open gate (403), and the landing application synthesises from its row (200).
  */
