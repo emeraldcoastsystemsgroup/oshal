@@ -16,11 +16,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | buildBots online now uses resolveDisplayOnline(heartbeat, container): inline/api-hosted bots (dnd/spaces/security-analyst/…) never heartbeat, so the Command Center swarm map painted them permanently offline even while they ran real work (dnd active-but-offline was the tell). Roster is getActiveRegistry() (dynamic-inclusive) so each bot's container is available for the inline check.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | buildComms stops crying wolf on a box that has not installed the comms app. `oshal_email_digests` and `oshal_inbox_messages` are APP-owned tables (ADR-085 wave 3 carved email-summarizer to the store; verify-runtime-schema-validate-only.ts dropped them from the core schema contract for exactly this reason), so on a CRM-only install the relations genuinely do not exist and both catches fired a warn on EVERY Command Center load — a permanent false alarm in a customer's logs (gsquared INCIDENT-2026-07-30 issue 10). Now classified through logAppTableRead: Postgres 42P01 (undefined_table) = "app not installed", logged at DEBUG and degraded to an empty panel; every OTHER failure (pool exhaustion, dropped connection, permission denied) is a REAL fault and is promoted from warn to ERROR with the stack, so the real ones stop hiding inside the noise. Same classification the sibling jarvis-brief-sections.ts already used. The fix is deliberately NOT a core migration: provisioning an app-owned table from kernel migrations would re-import a carved app schema into the kernel and violate ADR-085 / CLAUDE.md rule 0c. Guard: tests/unit/jarvis-overview-app-table-degrade.spec.ts.
  *
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Filter activity through the current exact-principal ticket verdict before projecting titles or counting work; log its unchanged failure envelope at ERROR.
+ *
  * @module jarvis-overview
  */
 
 import * as crypto from 'crypto';
 import type { AppContext } from '@/app/composition/app-context';
+import { readableJarvisTickets, type JarvisTicketReadAccess } from './jarvis-ticket-read-access';
 import { SwarmBotRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { resolveDisplayOnline } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
@@ -125,10 +128,12 @@ export async function buildComms(ctx: AppContext, sub: string): Promise<Record<s
   return { digest, signals };
 }
 
-/** Key-queue activity: the caller's active tickets (owner-scoped — never global). */
-export async function buildActivity(ctx: AppContext, sub: string): Promise<Record<string, unknown>> {
+/** @description The caller's currently readable active tickets, counted only after the ticket verdict.
+ * @param ctx Ticket source. @param sub Authenticated owner. @param canRead Request-bound ticket verdict.
+ * @returns The admitted activity projection and open count. */
+export async function buildActivity(ctx: AppContext, sub: string, canRead: JarvisTicketReadAccess['canRead']): Promise<Record<string, unknown>> {
   try {
-    const all = await ctx.ticketService.listTickets({ ownerSub: sub, limit: 100 });
+    const all = await readableJarvisTickets(await ctx.ticketService.listTickets({ ownerSub: sub, limit: 100 }), canRead);
     const active = all.filter((t) => !CLOSED_TICKET_STATES.has(String(t.status)));
     const tickets = active
       .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
@@ -136,7 +141,7 @@ export async function buildActivity(ctx: AppContext, sub: string): Promise<Recor
       .map((t) => ({ id: t.ticketId, title: t.title, type: t.ticketType, status: t.status, updatedAt: t.updatedAt }));
     return { tickets, openCount: active.length };
   } catch (err) {
-    logger.warn({ err }, 'overview: ticket activity unavailable');
+    logger.error({ err }, 'overview: ticket activity unavailable');
     return { tickets: [], openCount: 0 };
   }
 }

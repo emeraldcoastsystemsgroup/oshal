@@ -19,11 +19,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Stop calling an ensureSessionTask failure non-fatal. It is fatal to the ask: the caller turns the false into 404 session_not_found, so a store that could not answer is refused in exactly the words used for a session somebody else owns. The guard still fails closed - nothing about the decision changes - but the cause is now logged at ERROR, which is the only thing that tells an undetermined check apart from a real denial.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Run fresh-session protected-result admission after proving the id is unused but before creating its task row.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | ensureSessionTask now reports owned / refused / unavailable, and gateAskSession + refuseAskSession turn the whole /ask session gate into one decision. A task store that threw (live 2026-09-27: "Connection terminated due to connection timeout" during a 36-bot cold start) used to become 404 session_not_found - the words for a session somebody else owns. It is now a retryable 503 session_unavailable that says the system is busy and nothing was sent; a real foreign-owner or read-back refusal is still 404 with the same log line, and nothing reaches the model in either case.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Recheck cached and durable carriers through the current ticket verdict before reuse or close, bind fresh creation to admitted caller identity, and log touched carrier/storage catches at ERROR while preserving nonfatal open and propagated lookup failures.
  */
 import type { Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '@/app/composition/app-context';
 import type { InternalTicket } from '@/entities/ticket';
+import { readableJarvisTickets, type JarvisTicketReadAccess } from './jarvis-ticket-read-access';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY, readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -152,20 +154,20 @@ export function refuseAskSession(res: Response, sessionId: string, gate: Exclude
  * @param sub - The authenticated owner.
  * @param sessionId - The conversation thread id.
  * @param message - The first line leads the ticket payload.
+ * @param access Current request ticket read and fresh-owner admission.
  * @returns The chat-ticket id, or null if it couldn't be opened.
  */
 export async function ensureThreadChatTicket(
-  ctx: AppContext, sub: string, sessionId: string, message: string,
+  ctx: AppContext, sub: string, sessionId: string, message: string, access: JarvisTicketReadAccess,
 ): Promise<string | null> {
   const key = threadTicketKey(sub, sessionId);
-  const existing = threadTickets.get(key);
-  if (existing) return existing;
-  const durableTicketId = await findOpenThreadChatTicket(ctx, sub, sessionId);
-  if (durableTicketId) {
-    threadTickets.set(key, durableTicketId);
-    return durableTicketId;
-  }
   try {
+    if (!await access.canOpen(sub)) return null;
+    const existing = await readableCachedThreadTicket(ctx, key, sessionId, access.canRead);
+    if (existing === false) return null;
+    if (existing) return existing;
+    const durableTicketId = await findOpenThreadChatTicket(ctx, sub, sessionId, access.canRead);
+    if (durableTicketId) { threadTickets.set(key, durableTicketId); return durableTicketId; }
     const firstLine = message.split('\n')[0]?.trim() || message;   // raw request leads the payload
     const ticket = await ctx.ticketService.openChatTicket({
       taskId: sessionId, ownerSub: sub, agentId: JARVIS_AGENT_ID, text: firstLine, targetBot: 'jarvis',
@@ -173,7 +175,7 @@ export async function ensureThreadChatTicket(
     threadTickets.set(key, ticket.ticketId);
     return ticket.ticketId;
   } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis chat-ticket open failed (non-fatal)');
+    logger.error({ err, sessionId }, 'jarvis chat-ticket open failed (non-fatal)');
     return null;
   }
 }
@@ -185,35 +187,57 @@ export async function ensureThreadChatTicket(
  * @param ctx - App context (ticket service).
  * @param sub - The authenticated owner.
  * @param sessionId - The conversation thread id.
- * @returns true when a mapped ticket was completed; false when the thread had none.
+ * @param canRead Current request-bound ticket verdict, rechecked before any status write.
+ * @returns true when an admitted mapped ticket was completed; false when none is readable.
  */
-export async function closeThreadChatTicket(ctx: AppContext, sub: string, sessionId: string): Promise<boolean> {
+export async function closeThreadChatTicket(ctx: AppContext, sub: string, sessionId: string,
+  canRead: JarvisTicketReadAccess['canRead']): Promise<boolean> {
   const key = threadTicketKey(sub, sessionId);
-  const ticketId = threadTickets.get(key);
+  const ticketId = await readableCachedThreadTicket(ctx, key, sessionId, canRead);
   if (!ticketId) return false;
   await ctx.ticketService.updateStatus(ticketId, 'complete' as never);
   threadTickets.delete(key);
   return true;
 }
 
-/** The still-open chat-ticket for this thread, found by its stored metadata after a restart. */
-async function findOpenThreadChatTicket(ctx: AppContext, sub: string, sessionId: string): Promise<string | null> {
+/** @description Re-read a cached carrier before reuse or close; a stale verdict never authorizes a write.
+ * @param ctx Ticket service. @param key Exact owner/issuer/session cache key. @param sessionId Conversation id.
+ * @param canRead Current request ticket verdict. @returns Admitted open carrier id, or null after clearing stale state. */
+async function readableCachedThreadTicket(ctx: AppContext, key: string, sessionId: string,
+  canRead: JarvisTicketReadAccess['canRead']): Promise<string | null | false> {
+  const id = threadTickets.get(key);
+  if (!id) return null;
+  const ticket = await ctx.ticketService.getTicket(id);
+  if (!ticket) { threadTickets.delete(key); return null; }
+  if (isThreadChatTicket(ticket, sessionId) && await canRead(ticket)) return id;
+  threadTickets.delete(key);
+  return false;
+}
+
+/** @description Find the currently readable durable chat carrier after a restart; an unavailable store never grants fresh creation.
+ * @param ctx Ticket service. @param sub Current subject. @param sessionId Conversation id.
+ * @param canRead Current record/result predicate. @returns Readable carrier id or null for none. @throws When storage cannot answer. */
+async function findOpenThreadChatTicket(ctx: AppContext, sub: string, sessionId: string,
+  canRead: JarvisTicketReadAccess['canRead']): Promise<string | null> {
   try {
     const tickets = await ctx.ticketService.listTickets({ ownerSub: sub, ticketType: 'chat', limit: 500 });
-    const matches = tickets
-      .filter((ticket) => isOpenThreadChatTicket(ticket, sessionId))
+    const matches = (await readableJarvisTickets(tickets.filter(ticket => isOpenThreadChatTicket(ticket, sessionId)), canRead))
       .sort((left, right) => ticketUpdatedAtMs(right) - ticketUpdatedAtMs(left));
     return matches[0]?.ticketId ?? null;
   } catch (err) {
-    logger.warn({ err, sessionId }, 'jarvis durable chat-ticket lookup failed (non-fatal)');
-    return null;
+    logger.error({ err, sessionId }, 'jarvis durable chat-ticket lookup failed (non-fatal)');
+    throw err;
   }
 }
 
 function isOpenThreadChatTicket(ticket: InternalTicket, sessionId: string): boolean {
-  if (ticket.status !== 'in_process' || ticket.ticketType !== 'chat') {
-    return false;
-  }
+  return ticket.status === 'in_process' && isThreadChatTicket(ticket, sessionId);
+}
+
+/** @description Validate cached thread binding without changing its existing admitted terminal/no-op lifecycle.
+ * @param ticket Loaded carrier. @param sessionId Conversation id. @returns Whether its durable type and metadata bind this thread. */
+function isThreadChatTicket(ticket: InternalTicket, sessionId: string): boolean {
+  if (ticket.ticketType !== 'chat') return false;
   const metadata = ticketMetadata(ticket);
   return metadata.taskId === sessionId
     && (metadata.kind === 'chat-thread' || metadata.origin === 'bot-chat' || metadata.targetBot === 'jarvis');
