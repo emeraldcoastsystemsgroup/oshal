@@ -3,7 +3,9 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove protected result persistence, exact identity, current rights and per-event SSE isolation through real HTTP routes.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove protected result persistence, exact identity, current rights and per-event SSE isolation through real HTTP routes.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise current ordinary task ownership, mixed-transport precedence, deactivation and history/SSE rechecks through the shipped routers.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedResultFixture, RESULT_AGENT } from '../fixtures/protected-results';
@@ -46,11 +48,11 @@ it('rechecks application revocation and account disabling when completed results
 
 it('rejects transplanted, malformed and missing protected lineage without weakening ordinary history', async () => {
   const executionId = await fixture.seed();
-  await fixture.tasks.create({ taskId: 'transplanted', ownerSub: 'alice', agentId: RESULT_AGENT,
+  await fixture.tasks.create({ title: '', processingMode: 'agentic', taskId: 'transplanted', ownerSub: 'alice', agentId: RESULT_AGENT,
     metadata: appendProtectedResultExecution({}, executionId) });
-  await fixture.tasks.create({ taskId: 'malformed', ownerSub: 'alice', metadata: { [PROTECTED_RESULT_EXECUTIONS]: [] } });
-  await fixture.tasks.create({ taskId: 'unqualified', ownerSub: 'alice', agentId: RESULT_AGENT });
-  await fixture.tasks.create({ taskId: 'ordinary', ownerSub: 'alice', agentId: 'ordinary-bot' });
+  await fixture.tasks.create({ title: '', processingMode: 'agentic', taskId: 'malformed', ownerSub: 'alice', metadata: { [PROTECTED_RESULT_EXECUTIONS]: [] } });
+  await fixture.tasks.create({ title: '', processingMode: 'agentic', metadata: {}, taskId: 'unqualified', ownerSub: 'alice', agentId: RESULT_AGENT });
+  await fixture.tasks.create({ title: '', processingMode: 'agentic', metadata: {}, taskId: 'ordinary', ownerSub: 'alice', agentId: 'ordinary-bot' });
   for (const id of ['transplanted', 'malformed', 'unqualified']) expect((await fixture.call('/api/tasks/' + id)).status).toBe(404);
   expect((await fixture.call('/api/tasks/ordinary')).status).toBe(200);
   configureProtectedResultAccess(undefined);
@@ -79,7 +81,7 @@ it('closes an existing task stream on the next event after rights are revoked', 
 
 it('filters global session streams per task while retaining the caller ordinary events', async () => {
   await fixture.seed(); const alice = await fixture.openStream('/api/stream'), bob = await fixture.openStream('/api/stream', 'bob');
-  await fixture.tasks.create({ taskId: 'bob-ordinary', ownerSub: 'bob', agentId: 'ordinary-bot' });
+  await fixture.tasks.create({ title: '', processingMode: 'agentic', metadata: {}, taskId: 'bob-ordinary', ownerSub: 'bob', agentId: 'ordinary-bot' });
   fixture.streams.associateTaskWithSession('protected-task'); fixture.streams.associateTaskWithSession('bob-ordinary');
   fixture.streams.broadcastMessage('protected-task', { text: 'PRIVATE ALICE EVENT' });
   fixture.streams.broadcastMessage('bob-ordinary', { text: 'BOB ORDINARY EVENT' });
@@ -124,7 +126,7 @@ it('uses durable lineage when an aggregate loses all metadata and has an ordinar
 
 it('refuses legacy subject-only conversation adoption even after a legitimate result is linked', async () => {
   const executionId = await fixture.complete('new-child');
-  await fixture.tasks.create({ taskId: 'legacy-parent', ownerSub: 'alice', agentId: 'jarvis' });
+  await fixture.tasks.create({ title: '', processingMode: 'agentic', metadata: {}, taskId: 'legacy-parent', ownerSub: 'alice', agentId: 'jarvis' });
   await fixture.authority.linkResult(executionId, 'legacy-parent', fixture.actors.alice);
   await expect(persistProtectedResultTask(fixture.ctx, 'legacy-parent', 'jarvis', executionId, fixture.actors.alice))
     .rejects.toThrow('protected_result_owner_issuer_required');
@@ -151,4 +153,91 @@ it.each(['checkpoints', 'workspace/status'])('withholds delayed %s data when rig
   try { await entered; await fixture.change('alice', 'revoke'); release();
     const response = await pending; expect(response.status).toBe(404); expect(await response.text()).not.toContain('PRIVATE');
   } finally { release(); await pending; }
+});
+
+async function ordinaryTask(taskId = 'ordinary-stamped', stamped = true): Promise<void> {
+  await fixture.tasks.create({ taskId, title: taskId, processingMode: 'agentic', ownerSub: 'alice', agentId: 'ordinary-bot',
+    metadata: stamped ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: fixture.actors.alice.issuer } : {} });
+  await fixture.messages.save({ metadata: {}, contentBlocks: [], taskId, role: 'assistant', type: 'completion', text: 'ORDINARY PRIVATE CONTENT' });
+}
+
+it('applies exact current ownership to ordinary detail, history, list and subscriptions', async () => {
+  await ordinaryTask();
+  expect((await fixture.call('/api/tasks/ordinary-stamped')).status).toBe(200);
+  expect((await fixture.call('/api/ordinary-stamped/messages')).status).toBe(200);
+  for (const user of ['bob', 'twin']) {
+    expect((await fixture.call('/api/tasks/ordinary-stamped', user)).status).toBe(404);
+    expect((await fixture.call('/api/ordinary-stamped/messages', user)).status).toBe(404);
+    expect((await fixture.call('/api/stream/ordinary-stamped', user)).status).toBe(404);
+    expect((await (await fixture.call('/api/tasks', user)).json()).tasks).toEqual([]);
+  }
+  expect((await fixture.call('/api/tasks/ordinary-stamped', 'admin')).status).toBe(200);
+  fixture.actors.alice.isActive = false;
+  expect((await fixture.call('/api/tasks/ordinary-stamped')).status).toBe(404);
+  expect((await fixture.call('/api/ordinary-stamped/messages')).status).toBe(404);
+  fixture.actors.admin.isActive = false;
+  expect((await fixture.call('/api/tasks/ordinary-stamped', 'admin')).status).toBe(404);
+});
+
+it('retains legacy active-owner access but refuses disabled and unresolved actors', async () => {
+  await ordinaryTask('ordinary-legacy', false);
+  expect((await fixture.call('/api/ordinary-legacy/messages')).status).toBe(200);
+  fixture.actors.alice.isActive = false;
+  expect((await fixture.call('/api/ordinary-legacy/messages')).status).toBe(404);
+  fixture.actors.alice.isActive = true;
+  vi.spyOn(fixture.ctx.applicationAuthorization!, 'resolveActor').mockRejectedValue(new Error('directory unavailable'));
+  expect((await fixture.call('/api/tasks/ordinary-legacy')).status).toBe(404);
+  expect((await fixture.call('/api/ordinary-legacy/messages')).status).toBe(404);
+});
+
+it('never lets conflicting valid service headers displace an authenticated ordinary principal', async () => {
+  vi.stubEnv('SWARM_SERVICE_SECRET', 'ordinary-mixed-transport-fixture-sentinel');
+  await ordinaryTask();
+  const headers = { 'x-service-secret': 'ordinary-mixed-transport-fixture-sentinel', 'x-oshal-user-sub': 'bob' };
+  expect((await fixture.call('/api/ordinary-stamped/messages', 'alice', undefined, headers)).status).toBe(200);
+  headers['x-oshal-user-sub'] = 'alice';
+  for (const user of ['bob', 'twin']) {
+    expect((await fixture.call('/api/ordinary-stamped/messages', user, undefined, headers)).status).toBe(404);
+    expect((await fixture.call('/api/tasks/ordinary-stamped', user, undefined, headers)).status).toBe(404);
+  }
+});
+
+it('rechecks ordinary history after loading and drops a newly disabled caller', async () => {
+  await ordinaryTask();
+  const original = fixture.messages.getByTask.bind(fixture.messages);
+  let release!: () => void, entered!: () => void;
+  const started = new Promise<void>(done => { entered = done; }), waiting = new Promise<void>(done => { release = done; });
+  vi.spyOn(fixture.messages, 'getByTask').mockImplementation(async id => { const rows = await original(id); entered(); await waiting; return rows; });
+  const pending = fixture.call('/api/ordinary-stamped/messages');
+  try { await started; fixture.actors.alice.isActive = false; release();
+    const response = await pending; expect(response.status).toBe(404); expect(await response.text()).not.toContain('ORDINARY PRIVATE');
+  } finally { release(); await pending; }
+});
+
+it('drops queued ordinary task and session events after current actor deactivation', async () => {
+  await ordinaryTask();
+  const task = await fixture.openStream('/api/stream/ordinary-stamped'), session = await fixture.openStream('/api/stream');
+  expect(task.status).toBe(200); expect(session.status).toBe(200);
+  fixture.streams.associateTaskWithSession('ordinary-stamped');
+  fixture.streams.broadcastMessage('ordinary-stamped', { text: 'VISIBLE ORDINARY EVENT' });
+  await vi.waitFor(() => { expect(task.text()).toContain('VISIBLE ORDINARY EVENT'); expect(session.text()).toContain('VISIBLE ORDINARY EVENT'); });
+  let release!: () => void;
+  const waiting = new Promise<void>(done => { release = done; });
+  const resolve = fixture.ctx.applicationAuthorization!.resolveActor.bind(fixture.ctx.applicationAuthorization);
+  const currentChecks = vi.spyOn(fixture.ctx.applicationAuthorization!, 'resolveActor').mockImplementation(async req => {
+    await waiting; return resolve(req);
+  });
+  fixture.streams.broadcastMessage('ordinary-stamped', { text: 'WITHHELD DISABLED EVENT' });
+  try {
+    await vi.waitFor(() => expect(currentChecks.mock.calls.length).toBeGreaterThanOrEqual(2));
+    fixture.actors.alice.isActive = false; release();
+    await vi.waitFor(() => expect(fixture.streams.getStats().clientCount).toBe(1));
+  } finally { release(); }
+  currentChecks.mockRestore();
+  // A subsequent admitted event proves the global stream consumed its queue without disclosing the disabled row.
+  fixture.actors.alice.isActive = true;
+  await ordinaryTask('later-ordinary'); fixture.streams.associateTaskWithSession('later-ordinary');
+  fixture.streams.broadcastMessage('later-ordinary', { text: 'LATER ADMITTED EVENT' });
+  await vi.waitFor(() => expect(session.text()).toContain('LATER ADMITTED EVENT'));
+  expect(task.text()).not.toContain('WITHHELD DISABLED EVENT'); expect(session.text()).not.toContain('WITHHELD DISABLED EVENT');
 });

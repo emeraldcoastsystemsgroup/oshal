@@ -26,10 +26,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — guard-per-fix for the send-message entitlement gap. Drives the REAL createMessageRoutes router against the REAL swarm registry over HTTP, asserting both the denial and that the orchestrator was never reached.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Back genuinely unlinked thread admission with canonical empty ownership and history stores; preserve bot entitlement assertions.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InMemoryMessageStore } from '@/entities/message';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
 
 // The ticket-context resolver and the token broker are not under test here and both want a
 // real store/pool; stub them so the router's OWN behaviour is what is asserted.
@@ -113,7 +117,8 @@ async function bootApp(): Promise<string> {
     // from thread ownership, and makes the point the fix rests on: passing the IDOR guard
     // (owning the THREAD) says nothing about being entitled to the BOT.
     taskStore: { get: async () => null },
-    workspaceService: { resolveTaskOwner: async () => null },
+    workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
+    messageStore: new InMemoryMessageStore(),
     ticketService: {},
     pool: {},
     orchestrator: { processMessage },
@@ -126,6 +131,7 @@ async function bootApp(): Promise<string> {
     if (sub) {
       (req as Request & { oidc?: unknown }).oidc = {
         isAuthenticated: () => true,
+        fetchUserInfo: async () => ({ sub }),
         user: { sub, email: `${sub}@example.test` },
       };
     }
@@ -139,7 +145,7 @@ async function bootApp(): Promise<string> {
   return `http://127.0.0.1:${address.port}/api`;
 }
 
-async function send(base: string, headers: Record<string, string>, body: Record<string, unknown>): Promise<Response> {
+async function send(base: string, headers: Record<string, string>, body: Record<string, unknown>): Promise<globalThis.Response> {
   return fetch(`${base}/send-message`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },

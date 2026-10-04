@@ -3,10 +3,12 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise protected result routes with real policy, signed execution lifecycle, canonical stores and loopback SSE.
- * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose the authority's linkResult through the fixture's protected-result port so derived-lineage recording is proved against the real service, not a double.
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Exercise protected result routes with real policy, signed execution lifecycle, canonical stores and loopback SSE.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expose the authority's linkResult through the fixture's protected-result port so derived-lineage recording is proved against the real service, not a double.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Supply canonical empty ticket ownership and explicit mixed-transport headers while retaining the real current actor and result authority.
  */
 import express, { type Request } from 'express';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { get as httpGet, type ClientRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -114,11 +116,11 @@ export async function createProtectedResultFixture() {
   const resolveActor = async (req: Request) => { const actor = actors[String(req.get('x-fixture-user'))];
     if (!actor) throw new Error('No fixture identity'); return structuredClone(actor); };
   const ctx = { taskStore: tasks, messageStore: messages, streamManager: streams, applicationAuthorization: { resolveActor },
-    workspaceService: { resolveTaskOwner: async () => null } } as unknown as AppContext;
+    workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()) } as unknown as AppContext;
   const server = mount(ctx, actors).listen(0, '127.0.0.1'); await new Promise<void>(done => server.once('listening', done));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, connections: ClientRequest[] = [];
-  const call = (path: string, user = 'alice', body?: unknown) => fetch(base + path, { method: body === undefined ? 'GET' : 'POST',
-    headers: { 'x-fixture-user': user, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const call = (path: string, user = 'alice', body?: unknown, headers: Record<string, string> = {}) => fetch(base + path, { method: body === undefined ? 'GET' : 'POST',
+    headers: { ...headers, 'x-fixture-user': user, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const seed = async (taskId = 'protected-task', user = 'alice') => {
     const executionId = await completeExecution(authority, keys, actors[user], taskId);
     await persistProtectedResultTask(ctx, taskId, RESULT_AGENT, executionId, actors[user]);

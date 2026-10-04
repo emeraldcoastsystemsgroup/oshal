@@ -4,6 +4,8 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guest own-ticket reads through the REAL guest chain in production order: cookie parsing, the signed guest-session injector with real minted cookies, the server's request-identity middleware, the guest guard, the production actor resolver (its DB lookups injected), and the ticket router. A guest reads its own guest-stamped ticket by id and in its LIST. Refused with the missing-id 404: its own unstamped row, another guest's ticket, operator-owned, ownerless and protected-app tickets. A marker without the guest issuer and a guest issuer without the marker are both refused, and a forged cookie gets no session. Guest mutations stay blocked by the guard before any route.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Extend the same real signed guest chain to actual task and message reads, canonical ticket fallback and protected-result refusals without an application actor.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
@@ -11,8 +13,11 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { InMemoryTaskStore } from '@/entities/task';
-import { InMemoryTicketStore, TicketService } from '@/features/ticketing';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, TicketService, WorkspaceService } from '@/features/ticketing';
+import { InMemoryMessageStore } from '@/entities/message';
 import { createTicketRoutes } from '@/app/routes/ticket-routes';
+import { createTaskRoutes } from '@/app/routes/task-routes';
+import { createMessageRoutes } from '@/app/routes/message-routes';
 import { createApplicationAuthorizationActorResolver } from '@/app/middleware/application-authorization-identity';
 import { createGuestSessionInjector, GUEST_COOKIE, mintGuestCookie } from '@/shared/middleware/guest-session';
 import { createGuestGuard } from '@/shared/middleware/guest-guard';
@@ -31,6 +36,8 @@ let savedEnv: Record<string, string | undefined>;
 let server: Server;
 let base: string;
 let ticketService: TicketService;
+let tasks: InMemoryTaskStore;
+let messages: InMemoryMessageStore;
 let guestA: { value: string; sub: string };
 let guestB: { value: string; sub: string };
 let ids: Record<'ownStamped' | 'ownUnstamped' | 'foreign' | 'operatorOwned' | 'ownerless' | 'ownProtected', string>;
@@ -65,7 +72,9 @@ beforeEach(async () => {
   configureProtectedResultAccess({ isProtectedAgent: async (agent: string) => agent === PROTECTED_AGENT,
     hasTaskResults: async () => false, assertResultAccess: async () => { throw new Error('denied'); },
     assertTaskResultAccess: async () => { throw new Error('denied'); }, linkResult: async () => undefined } as never);
-  ticketService = new TicketService(new InMemoryTicketStore());
+  const tickets = new InMemoryTicketStore();
+  ticketService = new TicketService(tickets);
+  tasks = new InMemoryTaskStore(); messages = new InMemoryMessageStore();
   const asGuestA = { sub: guestA.sub, issuer: GUEST_PRINCIPAL_ISSUER };
   ids = {
     ownStamped: await createAs(asGuestA, { ownerSub: guestA.sub }),
@@ -77,6 +86,13 @@ beforeEach(async () => {
   };
   const resolveActor = createApplicationAuthorizationActorResolver({} as never, { env: {}, localSnapshot: async () => null,
     tenantIds: async () => [], nativePrincipal: async () => ({ isActive: true, isSwarmAdmin: false }), management: async () => false });
+  const app = guestRoutes(resolveActor, tickets);
+  server = app.listen(0, '127.0.0.1');
+  await new Promise<void>((done) => server.once('listening', done));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/tickets`;
+});
+
+function guestRoutes(resolveActor: ReturnType<typeof createApplicationAuthorizationActorResolver>, tickets: InMemoryTicketStore) {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
@@ -86,14 +102,18 @@ beforeEach(async () => {
   app.use((req, _res, next) => runWithRequestIdentity({ sub: getCaller(req).sub, principalIssuer: getAuthenticatedPrincipalIssuer(req),
     isOperator: isOperator(req) }, () => next()));
   app.use(createGuestGuard());
+  const ctx = { ticketService, taskStore: tasks, messageStore: messages, orchestrator: {}, pool: {},
+    workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), tickets), applicationAuthorization: { resolveActor } };
+  const requiresFixtureAuth = (req: Request, res: Response, next: NextFunction) =>
+    (req.oidc?.isAuthenticated() ? next() : res.status(401).json({ error: 'not_authenticated' }));
+  app.use('/api/tasks', requiresFixtureAuth, createTaskRoutes(ctx as never));
+  app.use('/api', requiresFixtureAuth, createMessageRoutes(ctx as never));
   app.use('/api/tickets', (req, res, next) => ((req as { oidc?: { isAuthenticated?: () => boolean } }).oidc?.isAuthenticated?.()
     ? next() : res.status(401).json({ error: 'not_authenticated' })),
   createTicketRoutes({ ticketService, taskStore: new InMemoryTaskStore(), messageStore: {}, orchestrator: {}, pool: {},
     applicationAuthorization: { resolveActor } } as never));
-  server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((done) => server.once('listening', done));
-  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/tickets`;
-});
+  return app;
+}
 
 afterEach(async () => {
   server.closeAllConnections();
@@ -140,4 +160,52 @@ describe('guest own-ticket reads', () => {
     expect((await call(`/${ids.ownStamped}`, guestA.value, 'DELETE')).status).toBe(403);
     expect((await ticketService.getTicket(ids.ownStamped))?.status).toBe(before);
   });
+
+  it('reads only ordinary tasks with exact signed guest provenance through the real task and message routers', async () => {
+    await guestTask('guest-own', guestA.sub, GUEST_PRINCIPAL_ISSUER);
+    await guestTask('guest-legacy', guestA.sub, null);
+    await guestTask('guest-foreign', guestB.sub, GUEST_PRINCIPAL_ISSUER);
+    await guestTask('guest-other-issuer', guestA.sub, IDP);
+    await guestTask('guest-protected', guestA.sub, GUEST_PRINCIPAL_ISSUER, PROTECTED_AGENT);
+    expect((await guestTaskCall('/tasks/guest-own', guestA.value)).status).toBe(200);
+    const own = await guestTaskCall('/guest-own/messages', guestA.value);
+    expect(own.status).toBe(200); expect(await own.text()).toContain('GUEST PRIVATE guest-own');
+    for (const id of ['guest-legacy', 'guest-foreign', 'guest-other-issuer', 'guest-protected']) {
+      expect((await guestTaskCall(`/tasks/${id}`, guestA.value)).status, id).toBe(404);
+      expect((await guestTaskCall(`/${id}/messages`, guestA.value)).status, id).toBe(404);
+    }
+  });
+
+  it('refuses forged or incomplete guest sessions on existing task and message reads', async () => {
+    await guestTask('guest-own', guestA.sub, GUEST_PRINCIPAL_ISSUER);
+    for (const path of ['/tasks/guest-own', '/guest-own/messages']) {
+      expect((await guestTaskCall(path, guestA.value, 'marker-without-issuer')).status).toBe(404);
+      expect((await guestTaskCall(path, guestA.value, 'issuer-without-marker')).status).toBe(404);
+      expect((await guestTaskCall(path, `${guestA.value}x`)).status).toBe(401);
+    }
+  });
+
+  it('admits guest-stamped canonical ticket fallback while withholding unstamped and protected task lineage', async () => {
+    await ticketService.linkTask(ids.ownStamped, 'guest-linked');
+    await ticketService.linkTask(ids.ownUnstamped, 'guest-unqualified');
+    await messages.save({ metadata: {}, contentBlocks: [], taskId: 'guest-linked', role: 'assistant', type: 'completion', text: 'GUEST LINKED HISTORY' });
+    expect((await guestTaskCall('/guest-linked/messages', guestA.value)).status).toBe(200);
+    expect((await guestTaskCall('/guest-unqualified/messages', guestA.value)).status).toBe(404);
+    expect((await guestTaskCall('/guest-linked/messages', guestB.value)).status).toBe(404);
+    await tasks.create({ taskId: 'guest-linked', title: '', processingMode: 'agentic',
+      agentId: PROTECTED_AGENT, metadata: { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: GUEST_PRINCIPAL_ISSUER } });
+    expect((await guestTaskCall('/guest-linked/messages', guestA.value)).status).toBe(404);
+    expect((await tasks.get('guest-linked'))?.metadata).toEqual({ [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: GUEST_PRINCIPAL_ISSUER });
+  });
 });
+
+async function guestTask(taskId: string, ownerSub: string, issuer: string | null, agentId = 'ordinary-bot'): Promise<void> {
+  await tasks.create({ taskId, title: '', processingMode: 'agentic', ownerSub, agentId,
+    metadata: issuer ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: issuer } : {} });
+  await messages.save({ metadata: {}, contentBlocks: [], taskId, role: 'assistant', type: 'completion', text: `GUEST PRIVATE ${taskId}` });
+}
+
+function guestTaskCall(path: string, cookie: string, spoofHeader?: string): Promise<globalThis.Response> {
+  return fetch(base.replace(/\/tickets$/, '') + path, { headers: { cookie: `${GUEST_COOKIE}=${cookie}`,
+    ...(spoofHeader ? { 'x-spoof': spoofHeader } : {}) } });
+}
