@@ -1,12 +1,13 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The deployment's install owner (OSHAL_INSTALL_OWNER_SUB) adopts every application staged before anyone could sign in, and becomes its administrator. Owning a row was not enough: 58 of a full install's 68 applications are ADR-149 protected, and the rail discovers a protected application only for an identity holding an explicit tier — the operator who installed the swarm held none, so a fresh cockpit showed none of its own applications. Adoption and the admin grant happen together, once, at first load; neither ever overrides an owner or tier someone set afterwards. Lives here rather than in swarm-app-service.ts, which is past its 800-line budget.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Use the shared mock authentication predicate for the default install-owner issuer; configured issuer precedence and existing owner/grant behavior remain unchanged.
  */
 import { createChildLogger } from '@/shared/logger';
-import { LOCAL_AUTH_PRINCIPAL_ISSUER, MOCK_OIDC_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { LOCAL_AUTH_PRINCIPAL_ISSUER, MOCK_OIDC_PRINCIPAL_ISSUER, isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 import type { SwarmAppScopeMeta } from './swarm-app-repository';
 import type { AppAccessService } from './app-access-service';
 
@@ -49,7 +50,7 @@ export function adoptedInstallOwner(callerScope: SwarmAppScopeMeta | undefined,
 export function installOwnerIssuer(): string {
   const configured = (process.env.OSHAL_INSTALL_OWNER_ISSUER ?? '').trim();
   if (configured) return configured;
-  return process.env.MOCK_OIDC === 'true' ? MOCK_OIDC_PRINCIPAL_ISSUER : LOCAL_AUTH_PRINCIPAL_ISSUER;
+  return isMockOidcEnabled() ? MOCK_OIDC_PRINCIPAL_ISSUER : LOCAL_AUTH_PRINCIPAL_ISSUER;
 }
 
 /**

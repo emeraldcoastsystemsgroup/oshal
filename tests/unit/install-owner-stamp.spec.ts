@@ -1,11 +1,12 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove an unowned app load adopts the deployment's install owner while any existing owner is left alone — the rule that keeps person-scoped packages staged before first login from being invisible to everyone.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The adopting owner becomes the application's administrator exactly once, never over an existing tier, and a failed grant never fails the load: an operator who held no tier saw none of the 58 protected applications on a fresh install.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | The grant is issuer-keyed after migration 145: it conflicts on (user_sub, app_name, principal_issuer) and names the issuer the owner signs in under, because a row written against the wrong issuer resolves for nobody.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise accepted and refused mock sign-in spellings through real default issuer selection and grant persistence; an explicit install issuer continues to win.
  */
 import type { Pool } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
@@ -65,15 +66,29 @@ describe('install owner administrator grant', () => {
     expect(params[5]).toBe('urn:oshal:local-auth');
   });
 
-  it('names the issuer the owner actually signs in under', () => {
+  it('names the issuer the owner actually signs in under for every supported mock spelling', async () => {
     const saved = { issuer: process.env.OSHAL_INSTALL_OWNER_ISSUER, mock: process.env.MOCK_OIDC };
     try {
       delete process.env.OSHAL_INSTALL_OWNER_ISSUER; delete process.env.MOCK_OIDC;
-      expect(installOwnerIssuer()).toBe('urn:oshal:local-auth');
-      process.env.MOCK_OIDC = 'true';
-      expect(installOwnerIssuer()).toBe('urn:oshal:mock-oidc');
-      process.env.OSHAL_INSTALL_OWNER_ISSUER = 'https://accounts.example.test';
+      for (const value of [undefined, '', 'false', '0', 'no', 'on', 'banana', 'TRUE-ish']) {
+        if (value === undefined) delete process.env.MOCK_OIDC; else process.env.MOCK_OIDC = value;
+        expect(installOwnerIssuer()).toBe('urn:oshal:local-auth');
+        const { access, query } = poolReturning(1);
+        await grantInstallOwnerAdmin(access, 'cad-studio', OWNER);
+        expect(query.mock.calls[0][1][5]).toBe('urn:oshal:local-auth');
+      }
+      for (const value of ['true', '1', 'yes', 'TRUE', 'Yes', ' 1 ', ' YES ']) {
+        process.env.MOCK_OIDC = value;
+        expect(installOwnerIssuer()).toBe('urn:oshal:mock-oidc');
+        const { access, query } = poolReturning(1);
+        await grantInstallOwnerAdmin(access, 'cad-studio', OWNER);
+        expect(query.mock.calls[0][1][5]).toBe('urn:oshal:mock-oidc');
+      }
+      process.env.OSHAL_INSTALL_OWNER_ISSUER = ' https://accounts.example.test ';
       expect(installOwnerIssuer()).toBe('https://accounts.example.test');
+      const { access, query } = poolReturning(1);
+      await grantInstallOwnerAdmin(access, 'cad-studio', OWNER);
+      expect(query.mock.calls[0][1][5]).toBe('https://accounts.example.test');
     } finally {
       if (saved.issuer === undefined) delete process.env.OSHAL_INSTALL_OWNER_ISSUER; else process.env.OSHAL_INSTALL_OWNER_ISSUER = saved.issuer;
       if (saved.mock === undefined) delete process.env.MOCK_OIDC; else process.env.MOCK_OIDC = saved.mock;
