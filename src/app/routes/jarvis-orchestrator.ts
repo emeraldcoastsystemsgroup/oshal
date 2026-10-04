@@ -15,6 +15,7 @@
  * -----------------------------------------------------------------------------
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Share owner-bound atomic summary claims and refuse stale shelf snapshots once a durable result has landed.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Withhold protected completed work from automatic summarization pending a derived-result lineage contract.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The lineage contract exists now, so the protected half of the return leg runs: returnProtectedComplexSummaries binds the source ticket's executions to the conversation and work task, then claims and summarizes exactly like the automatic half. Without it a protected ticket that SUCCEEDED was never claimed, summarizeComplexTask never ran, finishTask never ran, and the operator's thread stayed silent forever - twice on 2026-09-15. The summarizer now re-checks the captured actor's rights before it reads and again before it writes, so a revocation mid-summary withholds the answer rather than racing it.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from jarvis-routes.ts: JARVIS_AGENT_ID, APP_ROUTES/loadEffectiveRoutes, runJarvisBot + the classify/delegate/synthesize helpers, summarizeComplexTask, maskPendingComplexSummaries, repairCompletedTaskTableVisuals (route decomposition, no behaviour change).
@@ -66,7 +67,7 @@ import { executeBotOrInline } from './inline-bot-execution';
 import { hostedWire, runBrainStep, type TurnBrain } from './jarvis-brain-steps';
 import { createOptionalJarvisVisual } from './jarvis-visual-response';
 import { extractJsonObject, extractJarvisDirectives } from './jarvis-directives';
-import { finishTask, findJarvisTaskSessionId, saveTaskPending } from './jarvis-task-store';
+import { claimJarvisSummary, finishTask, findJarvisTaskSessionId, saveTaskPending } from './jarvis-task-store';
 import { publishJarvisTaskCompletion } from './jarvis-task-complete-notify';
 import { renderCatalogBlock } from './jarvis-catalog-block';
 import { captureDeliverableFiles } from './jarvis-deliverable-files';
@@ -999,12 +1000,8 @@ export async function maskPendingComplexSummaries(
 ): Promise<void> {
   for (const t of tasks) {
     if (t.kind !== 'complex' || t.status !== 'done' || t.result || !t.ticketId) continue;
-    const claimed = await ctx.pool.query(
-      `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
-        WHERE id = $1 AND (status <> 'summarizing' OR summarize_started_at IS NULL
-              OR summarize_started_at < NOW() - INTERVAL '3 minutes')
-        RETURNING id`, [t.id]).catch(() => null);
-    if (claimed && claimed.rowCount) {
+    const claimed = await claimJarvisSummary(ctx.pool, t.id, sub);
+    if (claimed) {
       void fire(ctx, sub, t.id, t.ticketId, t.title);   // background — don't block the poll
     }
     t.status = 'summarizing';
@@ -1044,12 +1041,8 @@ export async function returnProtectedComplexSummaries(
     const lineage = await recordDerivedJarvisResultLineage(ctx, sub, t.ticketId, destinations, JARVIS_AGENT_ID, resolveActor);
 
     if (lineage.outcome === 'authorized') {
-      const claimed = await ctx.pool.query(
-        `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
-          WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
-                OR summarize_started_at < NOW() - INTERVAL '3 minutes')
-          RETURNING id`, [t.id, sub]).catch(() => null);
-      if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title, lineage.actor);
+      const claimed = await claimJarvisSummary(ctx.pool, t.id, sub);
+      if (claimed) void fire(ctx, sub, t.id, t.ticketId, t.title, lineage.actor);
       t.status = 'summarizing';
       t.result = 'Reading the results…';
       continue;
@@ -1076,12 +1069,8 @@ export async function returnProtectedComplexSummaries(
 
       if (!isProtectedWorkProduct) {
         // The work product is not protected at all: hand off to the automatic summarizer
-        const claimed = await ctx.pool.query(
-          `UPDATE jarvis_tasks SET status = 'summarizing', summarize_started_at = NOW()
-            WHERE id = $1 AND user_sub = $2 AND (status <> 'summarizing' OR summarize_started_at IS NULL
-                  OR summarize_started_at < NOW() - INTERVAL '3 minutes')
-            RETURNING id`, [t.id, sub]).catch(() => null);
-        if (claimed && claimed.rowCount) void fire(ctx, sub, t.id, t.ticketId, t.title);
+        const claimed = await claimJarvisSummary(ctx.pool, t.id, sub);
+        if (claimed) void fire(ctx, sub, t.id, t.ticketId, t.title);
         t.status = 'summarizing';
         t.result = 'Reading the results…';
       } else {

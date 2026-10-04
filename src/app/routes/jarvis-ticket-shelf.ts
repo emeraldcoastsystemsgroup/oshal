@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Extract the existing Jarvis ticket-linked shelf read/projection/return pipeline, admitting linked tickets before any projection or return effect and logging its failure envelope at ERROR.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep configured protected no-lineage completion notices outside private projection and recheck their fixed response after ordinary effects.
  */
 import type { Request, RequestHandler } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
@@ -18,6 +19,7 @@ import { maskPendingComplexSummaries, returnProtectedComplexSummaries, repairCom
 import { mapJarvisTaskStatusFromTicketStatus, jarvisFailureNoteForTicketStatus, returnFailedComplexTasks,
   type JarvisFailedTaskCandidate, storedVisual, storedFiles } from './jarvis-task-store';
 import { createJarvisTicketReadAccess, readJarvisComplexTickets } from './jarvis-ticket-read-access';
+import { returnJarvisCompletionNotices, currentJarvisCompletionNotices } from './jarvis-completion-notice';
 
 const logger = createChildLogger({ module: 'jarvis-routes' });
 
@@ -95,13 +97,16 @@ export function createJarvisTicketShelfHandler(ctx: AppContext, visual: VisualRe
     if (!sub) { res.status(401).json({ error: 'not_authenticated' }); return; }
     try {
       const source = await readShelf(ctx, sub, req, actor);
-      const linked = await readJarvisComplexTickets(ctx, sub, source, createJarvisTicketReadAccess(ctx, req).canRead);
+      const notices = await returnJarvisCompletionNotices(ctx, req, source, () => actor(req));
+      const linked = await readJarvisComplexTickets(ctx, sub, source.filter(row => !notices.withheld.has(row.id)),
+        createJarvisTicketReadAccess(ctx, req).canRead);
       const { tasks, failures } = projectShelf(linked.rows, linked.tickets);
       await returnFailedComplexTasks(ctx, sub, failures, new Map(failures.map(task => [task.ticketId ?? '',
         deriveTicketEscalationDetail(null, linked.tickets.get(task.ticketId ?? '')?.metadata)])));
       await returnShelf(ctx, sub, linked.rows, tasks, visual, () => actor(req));
       const visible = new Set((await filterJarvisResultRows(ctx, sub, linked.rows, () => actor(req))).map(row => row.id));
-      res.json({ tasks: tasks.filter(task => visible.has(task.id)) });
+      const fixed = await currentJarvisCompletionNotices(ctx, req, notices.completed, () => actor(req));
+      res.json({ tasks: [...tasks.filter(task => visible.has(task.id)), ...fixed] });
     } catch (err) { logger.error({ err }, 'jarvis tasks failed'); res.json({ tasks: [] }); }
   };
 }

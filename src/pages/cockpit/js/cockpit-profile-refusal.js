@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Render a refused focused profile without opening a default framework workbench.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | One shared PROFILE_UNAVAILABLE name for the producer (RibbonNav's closed fallback) and this renderer: two separate literals let a rename on one side silently boot the default workbench for every refusal. bootInitialView is the cockpit's ribbon-ready step, moved here from app.js so it runs (and is tested) without the whole shell: a refusal renders and stops; otherwise the initial view opens, and a ?ticket= deep link is honoured only when Tickets is a registered view.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Boot only registered openable views after caller filtering; empty rails retain dynamic discovery without opening a native workbench.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Explain an empty account rail with actionable access guidance while keeping admission, retry and navigation unchanged.
  */
 
 /** The name of the closed profile every refused, unreadable or timed-out profile answer becomes. */
@@ -56,7 +57,7 @@ export function bootInitialView({ ribbon, container, viewController, isBusy, swi
   const requested = deepLink ? 'tickets' : ribbon?.getActive?.();
   const initialView = openable.find(view => view.id === requested)?.id || openable[0]?.id;
   if (!initialView) {
-    renderShellMessage(container, 'No views available', 'Choose a view from the navigation when one becomes available, or reload to check again.');
+    renderShellMessage(container, 'No views available', 'No views are showing yet. If none appear, ask an administrator to review your access, then reload.');
     return 'empty';
   }
   ribbon.setActive?.(initialView, { notify: false });

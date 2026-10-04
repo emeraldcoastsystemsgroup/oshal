@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify exact principal and current rights for real Jarvis caches, history and durable shelf with signed result capture.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Type automatic projection witnesses against real functions and provide explicit empty legacy task fields without issuer qualification.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
@@ -16,7 +17,10 @@ import { buildOpenWorkBlock, finishTask, saveTaskPending } from '@/app/routes/ja
 import { VisualResponseService } from '@/features/visual-response';
 
 const bot = vi.hoisted(() => vi.fn());
-const automatic = vi.hoisted(() => ({ summaries: vi.fn(async () => {}), visuals: vi.fn(async () => {}) }));
+const automatic = vi.hoisted(() => ({
+  summaries: vi.fn<typeof import('@/app/routes/jarvis-orchestrator').maskPendingComplexSummaries>(async () => {}),
+  visuals: vi.fn<typeof import('@/app/routes/jarvis-orchestrator').repairCompletedTaskTableVisuals>(async () => {}),
+}));
 vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 vi.mock('@/app/routes/jarvis-orchestrator', async importOriginal => ({ ...await importOriginal<object>(),
@@ -83,7 +87,7 @@ it('guards durable shelf and delivery while withholding protected results from a
 });
 
 it('refuses reuse of unqualified legacy sessions and cross-issuer durable task replacement', async () => {
-  await fixture.tasks.create({ taskId: 'legacy-conversation', ownerSub: 'alice', agentId: 'jarvis' });
+  await fixture.tasks.create({ taskId: 'legacy-conversation', ownerSub: 'alice', agentId: 'jarvis', title: '', processingMode: 'agentic', metadata: {} });
   expect((await fixture.call('/ask', 'alice', { message: 'Hello fixture', sessionId: 'legacy-conversation' })).status).toBe(404);
   const save = (user: string) => runWithRequestIdentity({ sub: 'alice', principalIssuer: fixture.actors[user].issuer, isOperator: false },
     () => saveTaskPending(fixture.pool as never, 'same-row', 'alice', 'same-session', user));

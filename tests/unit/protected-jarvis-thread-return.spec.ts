@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove a SUCCESSFUL protected ticket returns its answer to the owner's Jarvis thread exactly once, with recorded lineage, and to nobody else. Crosses both boundaries the defect spans: isolated real PostgreSQL for the durable shelf and conversation, and the real ApplicationRemoteExecutionService installed through configureProtectedResultAccess for the authorization decision. Only the model rail is doubled - no boundary this file makes a claim about is mocked.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove a protected-classified task with no bindable executions returns either an answer (unprotected work product) or a stated sentence (protected work product) to the owner's thread, while an unverified reader produces nothing.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Seed actual completed canonical tickets and carry each generated ID unchanged through signed execution, task, message and shelf setup; preserve all original return and refusal assertions.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
@@ -18,7 +19,7 @@ import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-pri
 const SUMMARY = 'PRIVATE TRADING SUMMARY 42';
 const WORK_PRODUCT = 'PRIVATE WORK PRODUCT: the book closed the session ahead, carried by the core sleeve.';
 const WORK_ID = 'protected-work-row';
-const TICKET_ID = 'protected-return-ticket';
+let TICKET_ID: string;
 const SESSION_ID = 'protected-return-thread';
 
 const execute = vi.hoisted(() => vi.fn(async () => ({ response: SUMMARY })));
@@ -44,6 +45,7 @@ beforeEach(async () => {
   // comparison in specialist-context/index.ts exists to refuse.
   fixture.actors.pat = { sub: 'alice', issuer: '', isActive: true, isSwarmAdmin: false };
   const actor = fixture.actors.alice;
+  TICKET_ID = (await fixture.seedCompletedTicket()).ticketId;
   // A protected ticket that SUCCEEDED: real signed execution lineage plus the worker's work product.
   const executionId = await fixture.complete(TICKET_ID);
   await persistProtectedResultTask(fixture.ctx, TICKET_ID, RESULT_AGENT, executionId, actor);
@@ -105,7 +107,7 @@ it('never derives or returns the answer for a principal carrying no verified iss
 it('summarizes an unprotected ticket to the thread when classified protected only by its session', async () => {
   const actor = fixture.actors.alice;
   const unprotectedWorkId = 'unbound-unprotected-work';
-  const unprotectedTicketId = 'unbound-unprotected-ticket';
+  const unprotectedTicketId = (await fixture.seedCompletedTicket()).ticketId;
   const deliverable = 'Deliverable from an unprotected team ticket.';
   await fixture.messages.save({
     taskId: unprotectedTicketId, role: 'assistant', type: 'completion', text: deliverable,
@@ -132,7 +134,7 @@ it('summarizes an unprotected ticket to the thread when classified protected onl
 it('writes an honest stated sentence to the thread when a protected ticket has no executions to bind', async () => {
   const actor = fixture.actors.alice;
   const noExecWorkId = 'no-exec-work-row';
-  const noExecTicketId = 'no-exec-ticket-row';
+  const noExecTicketId = (await fixture.seedCompletedTicket()).ticketId;
   await fixture.ctx.taskStore.create({
     taskId: noExecTicketId,
     agentId: RESULT_AGENT,
