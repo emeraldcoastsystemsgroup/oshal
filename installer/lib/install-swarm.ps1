@@ -11,6 +11,8 @@
 
   6 | maintainer@emeraldcoastsystemsgroup.com | Fail before firewall replacement on query/removal errors and verify legacy absence before claiming a successful naming migration.
 
+  7 | maintainer@emeraldcoastsystemsgroup.com | SESSION_SECRET is minted for a fresh install. The installer generated four secrets but not this one, so a new box kept the published .env.example placeholder, and SESSION_SECRET signs every login session (express-openid-connect, the local-auth cookie) as well as deriving the at-rest key for connector tokens: such a box could have sessions forged. Initialize-SessionSecret replaces a placeholder only when .env was created in this run (or the value is empty). An existing install still on the placeholder is warned loudly and NOT rotated, because rotation signs everyone out and makes stored connector tokens unreadable.
+
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
   Runs standalone from a terminal, or as a subprocess of installer/install.ps1 (the GUI).
@@ -179,6 +181,45 @@ function Initialize-Secret {
 }
 
 <#
+.SYNOPSIS Whether a secret value is a published placeholder rather than real key material.
+.DESCRIPTION Matches the shapes the repo ships as stand-ins (.env.example's
+'replace-with-...', compose's 'dev-only-...-change-me'). A placeholder is public, so it
+protects nothing.
+.OUTPUTS [bool]
+#>
+function Test-PlaceholderSecret {
+    param([string]$Value)
+    return [bool]($Value -match '^(replace-with-|dev-only-)' -or $Value -match 'change-me')
+}
+
+<#
+.SYNOPSIS Gives a fresh install its own SESSION_SECRET; warns, and never rotates, on an existing one.
+.DESCRIPTION SESSION_SECRET signs every login session (express-openid-connect, the local-auth
+cookie) and derives the at-rest key for stored connector tokens. The .env.example value is a
+published placeholder, so an install that keeps it can have sessions forged. A .env created in
+this run (or one with no value) gets a random secret. An existing .env still on a placeholder
+is NOT rotated here: rotating signs everyone out and makes stored connector tokens unreadable,
+so the installer says so loudly and leaves the timing to the operator.
+#>
+function Initialize-SessionSecret {
+    param([Parameter(Mandatory)][bool]$EnvCreated)
+    $existing = Get-EnvFileValue -Path $EnvFile -Key 'SESSION_SECRET'
+    if ($existing -and -not (Test-PlaceholderSecret -Value $existing)) {
+        Write-Ok "Reusing the existing session secret"
+        return
+    }
+    if ($EnvCreated -or -not $existing) {
+        Set-EnvFileValue -Path $EnvFile -Key 'SESSION_SECRET' -Value (New-JoinSecret)
+        Write-Ok "Generated a new session secret"
+        return
+    }
+    Write-Warn "SESSION_SECRET in .env is still the published placeholder from .env.example."
+    Write-Warn "Anyone who knows it can forge a login session on this swarm."
+    Write-Warn "It was NOT rotated: rotating signs everyone out and makes stored connector tokens"
+    Write-Warn "unreadable. Set a new random SESSION_SECRET when you can reconnect connectors."
+}
+
+<#
 .SYNOPSIS Asks who administers this swarm, when nothing has answered that yet.
 .DESCRIPTION Interactive runs prompt. The GUI passes -NonInteractive and supplies -OperatorEmail
 from its own text box, so it never blocks on stdin.
@@ -243,12 +284,16 @@ function Initialize-OperatorAllowlist {
   JWT_SECRET                   -- otherwise dynamic-compose-service.ts:213 hands every launched
                                   bot the literal 'oshal-local-dev-secret-do-not-use-in-prod'.
   ENCRYPTION_KEY               -- the per-user AES-GCM connector-token store.
+SESSION_SECRET is handled separately (Initialize-SessionSecret): minted on a fresh .env,
+never rotated on an existing one, because it signs sessions and derives stored-token keys.
 .OUTPUTS [string] The remote-client shared secret.
 #>
 function Initialize-EnvFile {
     Write-Step "Preparing configuration"
+    $envCreated = $false
     if (-not (Test-Path -LiteralPath $EnvFile)) {
         Copy-Item (Join-Path $RepoRoot '.env.example') $EnvFile
+        $envCreated = $true
         Write-Ok "Created .env from .env.example"
     } else {
         Write-Ok "Using the existing .env"
@@ -258,6 +303,7 @@ function Initialize-EnvFile {
     [void](Initialize-Secret -Key 'SWARM_SERVICE_SECRET' -Label 'service-to-service secret')
     [void](Initialize-Secret -Key 'JWT_SECRET'           -Label 'bot JWT signing key')
     [void](Initialize-Secret -Key 'ENCRYPTION_KEY'       -Label 'connector-token encryption key')
+    Initialize-SessionSecret -EnvCreated $envCreated
     Initialize-OperatorAllowlist
 
     # Dynamic bot insertion resolves the compose file through the Docker VM's view of the host.
