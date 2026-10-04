@@ -15,6 +15,8 @@
 
   8 | maintainer@emeraldcoastsystemsgroup.com | Review fix (coordinator and @route_handover, 2026-10-04): SESSION_SECRET is minted ONLY into a .env this run created. Seq 7 also minted when an existing .env had it empty or missing, but the app then signs with its fallback (SESSION_SECRET || AUTH_SESSION_SECRET || KEYCLOAK_CLIENT_SECRET), so a rerun rotated a working signer: everyone signed out and stored connector tokens unreadable. An existing .env is now never written for this key; empty, missing and placeholder values are kept byte for byte and warned about.
 
+  9 | maintainer@emeraldcoastsystemsgroup.com | The empty/missing warning no longer implies a fallback key exists. The strict contract holds with or without AUTH_SESSION_SECRET / KEYCLOAK_CLIENT_SECRET: an empty value today is not permission to rotate whatever this install already signs sessions and stores tokens with.
+
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
   Runs standalone from a terminal, or as a subprocess of installer/install.ps1 (the GUI).
@@ -215,11 +217,12 @@ function Initialize-SessionSecret {
         Write-Ok "Generated a new session secret"
         return
     }
-    # An existing install keeps whatever signs its sessions today: writing here would rotate it.
+    # An existing .env is never written for this key, fallback or not: an empty value today is not
+    # permission to rotate whatever this install already signs sessions and stores tokens with.
     if (-not $existing) {
-        Write-Warn "SESSION_SECRET is empty in .env, so this install signs sessions and protects stored"
-        Write-Warn "connector tokens with what the app falls back to (AUTH_SESSION_SECRET, then KEYCLOAK_CLIENT_SECRET)."
-        Write-Warn "It was NOT set: a new value would rotate that key, sign everyone out and make stored"
+        Write-Warn "SESSION_SECRET is empty in .env. The app then signs sessions and protects stored connector"
+        Write-Warn "tokens with AUTH_SESSION_SECRET or KEYCLOAK_CLIENT_SECRET, or whatever this install already uses."
+        Write-Warn "It was NOT set: a new value could rotate that key, signing everyone out and making stored"
         Write-Warn "connector tokens unreadable. Set SESSION_SECRET deliberately, to the key already in effect."
         return
     }

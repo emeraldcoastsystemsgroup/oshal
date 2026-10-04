@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Real-boundary guard for the Windows installer's SESSION_SECRET. The installer minted four secrets but not this one, so a fresh install kept the published .env.example placeholder, and SESSION_SECRET signs every login session as well as deriving stored-token keys. The shipped Initialize-SessionSecret / Test-PlaceholderSecret run under real PowerShell against the real common.ps1 and a temp .env: a fresh .env gets a random secret, a real secret is kept, an existing install still on the placeholder is warned and NOT rotated, and an empty value is filled. Without PowerShell the same claims are asserted against the source rather than skipped.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: the contract is mint ONLY into a .env this run created. An existing .env with SESSION_SECRET empty or missing is kept byte for byte (the app is signing with its AUTH_SESSION_SECRET / KEYCLOAK_CLIENT_SECRET fallback, so writing would rotate a working signer), shown with each fallback present; the old case that expected an existing empty value to be filled encoded the bug and is replaced. A fresh .env whose example line is empty is still minted.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Witness the strict fresh-file-only contract where no fallback key exists: an existing .env with SESSION_SECRET missing or empty and neither fallback set is still byte-identical afterwards (absence today is not permission to rotate). The real-secret and placeholder cases now compare bytes, with the fallback keys present, instead of the SESSION_SECRET value alone.
  */
 
 import fs from 'node:fs';
@@ -77,14 +78,15 @@ describe('the Windows installer SESSION_SECRET', () => {
     expect(run.output).toContain('Generated a new session secret');
   });
 
-  it('keeps a real existing secret untouched', () => {
+  it('keeps a real existing secret and both fallback keys byte for byte', () => {
     if (!POWERSHELL) {
       expect(SOURCE).toMatch(/if \(\$existing -and -not \(Test-PlaceholderSecret -Value \$existing\)\) \{\s*Write-Ok "Reusing the existing session secret"\s*return/);
       return;
     }
-    const run = runSessionSecret(`SESSION_SECRET=${REAL_SECRET}\n`, false);
+    const run = runSessionSecret(`SESSION_SECRET=${REAL_SECRET}\nAUTH_SESSION_SECRET=${FALLBACK_SIGNER}\nKEYCLOAK_CLIENT_SECRET=${FALLBACK_SIGNER}-kc\n`, false);
     expect(run.status, run.output).toBe(0);
     expect(run.secret).toBe(REAL_SECRET);
+    expect(run.unchanged).toBe(true);
   });
 
   it('warns about, and never rotates, a placeholder on an existing install', () => {
@@ -94,11 +96,26 @@ describe('the Windows installer SESSION_SECRET', () => {
       expect(initialize).toContain('It was NOT rotated');
       return;
     }
-    const run = runSessionSecret(`SESSION_SECRET=${EXAMPLE_PLACEHOLDER}\n`, false);
+    const run = runSessionSecret(`SESSION_SECRET=${EXAMPLE_PLACEHOLDER}\nAUTH_SESSION_SECRET=${FALLBACK_SIGNER}\n`, false);
     expect(run.status, run.output).toBe(0);
     expect(run.secret).toBe(EXAMPLE_PLACEHOLDER);
+    expect(run.unchanged).toBe(true);
     expect(run.output).toContain('still the published placeholder');
     expect(run.output).toContain('NOT rotated');
+  });
+
+  it('keeps an existing .env byte for byte when SESSION_SECRET is missing or empty and no fallback key exists', () => {
+    if (!POWERSHELL) {
+      expectOnlyFreshEnvWrites();
+      return;
+    }
+    for (const envBody of ['FOO=bar\n', 'SESSION_SECRET=\nFOO=bar\n']) {
+      const run = runSessionSecret(envBody, false);
+      expect(run.status, run.output).toBe(0);
+      expect(run.unchanged, envBody).toBe(true);
+      expect(run.output).toContain('It was NOT set');
+      expect(run.output).not.toContain('Generated a new session secret');
+    }
   });
 
   it('keeps an empty SESSION_SECRET on an existing install byte for byte while AUTH_SESSION_SECRET signs', () => {
