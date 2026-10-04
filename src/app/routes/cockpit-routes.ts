@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Mount GET /tickets/:ticketId/workflow (handleGetCockpitTicketWorkflow) before the generic ticket-detail route so the cockpit Workflow tab reads one owner- and application-scoped projection of the registered definition, recorded run, status history, gate receipts and child tickets.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Extract ticket SSE and enforce current owner/application rights before subscription and delivery.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Restrict the global pipeline metrics collector to operator dashboards while retaining caller-scoped summaries.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com | Read and project global fleet summary metrics only for operators while preserving caller-owned work totals.
  */
 
 import { Router } from 'express';
@@ -285,26 +286,6 @@ export function createCockpitRoutes(ctx: AppContext): Router {
         logger.warn({ err: ticketError }, 'Ticket store query failed for metrics, falling back to task store');
       }
 
-      // Agent count: prefer runtime registry (live heartbeats) over ticket assignment
-      let swarmAgentCount = 0;
-      const hasRuntimeRegistry = Boolean(ctx.swarm?.runtimeRegistryService);
-      try {
-        const onlineAgentIds = ctx.swarm?.runtimeRegistryService
-          ? await ctx.swarm.runtimeRegistryService.listOnlineAgentIds()
-          : [];
-        // Inline/api-hosted bots never heartbeat; count them online too (the api is up) UNLESS the
-        // operator disabled them — so this count agrees with buildSwarmHealth in the same response.
-        const onlineSet = new Set(onlineAgentIds);
-        const swarmStatusMap = await loadAgentStatusMap(ctx);
-        for (const bot of getActiveRegistry()) {
-          if (!bot.agentId || onlineSet.has(bot.agentId)) continue;
-          const dbStatus = normalizeAgentStatus(swarmStatusMap.get(bot.agentId) || swarmStatusMap.get(bot.name) || 'active');
-          const enabled = dbStatus !== 'inactive' && dbStatus !== 'disabled' && dbStatus !== 'paused';
-          if (resolveDisplayOnline(false, bot.container, enabled)) onlineSet.add(bot.agentId);
-        }
-        swarmAgentCount = onlineSet.size;
-      } catch { /* non-blocking */ }
-
       // Cost aggregation: prefer Postgres SUM for accuracy over in-memory task store
       let totalCost = 0;
       if (ctx.pool) {
@@ -336,12 +317,10 @@ export function createCockpitRoutes(ctx: AppContext): Router {
         }
       }
 
-      // Swarm health — online/offline from runtime registry
-      const swarmHealth = await buildSwarmHealth(ctx);
+      // Admission precedes every global registry, health and work-item read.
+      const fleet = isOperator(req) ? await buildSummaryFleet(ctx, uniqueAgentIds.size) : {};
       // Cost series — hourly breakdown from chat_tasks (last 24h)
       const costSeries = await buildCostSeries(ctx, ownerSub);
-      // DA-5: Agent state breakdown derived from swarm health + active work items
-      const agentBreakdown = await buildAgentStateBreakdown(ctx, swarmHealth.healthy);
 
       res.json({
         success: true,
@@ -355,15 +334,11 @@ export function createCockpitRoutes(ctx: AppContext): Router {
           customerAction: ticketCustomerAction,
           done: ticketDone,
           escalations: ticketEscalations,
-          agents: {
-            total: hasRuntimeRegistry ? swarmAgentCount : uniqueAgentIds.size,
-            ...agentBreakdown,
-          },
+          ...fleet,
           estimatedTotalCost: totalCost,
           queue: ticketBacklog + ticketInProgress,
           failed: 0,
           timestamp: new Date().toISOString(),
-          swarmHealth,
           costSeries,
         },
       });
@@ -371,7 +346,7 @@ export function createCockpitRoutes(ctx: AppContext): Router {
       logger.error({ err: error }, 'Failed to get metrics summary');
       res.json({
         success: true,
-        data: { total: 0, active: 0, agents: { total: 1 }, estimatedTotalCost: 0, queue: 0 },
+        data: { total: 0, active: 0, estimatedTotalCost: 0, queue: 0 },
       });
     }
   });
@@ -707,6 +682,32 @@ export function createCockpitRoutes(ctx: AppContext): Router {
   });
 
   return router;
+}
+
+/** @description Build operator fleet metrics after caller admission, retaining actual zero counts. */
+async function buildSummaryFleet(ctx: AppContext, assignedCount: number) {
+  let swarmAgentCount = 0;
+  const hasRuntimeRegistry = Boolean(ctx.swarm?.runtimeRegistryService);
+  try {
+    const onlineAgentIds = ctx.swarm?.runtimeRegistryService
+      ? await ctx.swarm.runtimeRegistryService.listOnlineAgentIds()
+      : [];
+    const onlineSet = new Set(onlineAgentIds);
+    const swarmStatusMap = await loadAgentStatusMap(ctx);
+    for (const bot of getActiveRegistry()) {
+      if (!bot.agentId || onlineSet.has(bot.agentId)) continue;
+      const dbStatus = normalizeAgentStatus(swarmStatusMap.get(bot.agentId) || swarmStatusMap.get(bot.name) || 'active');
+      const enabled = dbStatus !== 'inactive' && dbStatus !== 'disabled' && dbStatus !== 'paused';
+      if (resolveDisplayOnline(false, bot.container, enabled)) onlineSet.add(bot.agentId);
+    }
+    swarmAgentCount = onlineSet.size;
+  } catch { /* non-blocking */ }
+  const swarmHealth = await buildSwarmHealth(ctx);
+  const agentBreakdown = await buildAgentStateBreakdown(ctx, swarmHealth.healthy);
+  return {
+    agents: { total: hasRuntimeRegistry ? swarmAgentCount : assignedCount, ...agentBreakdown },
+    swarmHealth,
+  };
 }
 
 /** @description Build swarm health summary from runtime registry. */

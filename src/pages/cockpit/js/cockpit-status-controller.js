@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted cockpit status-bar metrics and cost-indicator orchestration from app.js to enforce shell file-size governance without changing operator behavior
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BACKLOG "One slow boot drops the task, message and memory stores to in-memory for the life of the process": the status bar now carries the persistence indicator. The retry/registry work made the degraded state real and visible at GET /api/readiness and in oshal-verify.sh, but an operator watching the cockpit still saw a box that looked entirely healthy while a store advertised as durable was writing to a Map. The indicator is silent while persistence is ok/off and speaks only for the two states that need an operator: MEMORY, and unreadable.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Show unavailable fleet counts as unknown and clear stale operator counts when the summary omits them.
  */
 
 import { createUiLogger } from '../../shared/ui-debug.js';
@@ -53,19 +54,20 @@ export class CockpitStatusController {
     const response = await this.api.getSafe('/api/v1/metrics/summary', null);
     if (!response) {
       logger.debug('Cockpit summary metrics returned no response');
+      this.renderFleetCount(null);
       return;
     }
 
     const data = response.data || response;
     const rawAgents = (data?.agents && typeof data.agents === 'object') ? data.agents.total : data?.agents;
     this.updateStatusBar({
-      agents: this.normalizeStatusNumber(rawAgents, 0),
+      agents: rawAgents,
       tickets: this.normalizeStatusNumber(data?.total, 0),
       cost: this.normalizeStatusNumber(data?.estimatedTotalCost, 0),
       queue: this.normalizeStatusNumber(data?.queue, 0),
     });
     logger.debug('Updated cockpit summary metrics', {
-      agents: this.normalizeStatusNumber(rawAgents, 0),
+      agents: this.normalizeStatusNumber(rawAgents, Number.NaN),
       tickets: this.normalizeStatusNumber(data?.total, 0),
       cost: this.normalizeStatusNumber(data?.estimatedTotalCost, 0),
       queue: this.normalizeStatusNumber(data?.queue, 0),
@@ -249,9 +251,23 @@ export class CockpitStatusController {
     return parts.join('\n');
   }
 
+  /**
+   * @description Render an admitted fleet count or an explicit unknown state without retaining stale counts.
+   * @param {unknown} raw - Optional fleet count from the summary response.
+   * @returns {void}
+   */
+  renderFleetCount(raw) {
+    const element = document.getElementById('statusBots');
+    if (!element) return;
+    const count = this.normalizeStatusNumber(raw, Number.NaN);
+    const known = Number.isFinite(count) && count >= 0;
+    element.textContent = known ? `${count} bots` : 'Bots: unknown';
+    element.title = known ? '' : 'Fleet metrics are unavailable.';
+  }
+
   // Write normalized metric values into the cockpit status-bar DOM.
   updateStatusBar(status) {
-    const agents = this.normalizeStatusNumber(status?.agents, 0);
+    const agents = this.normalizeStatusNumber(status?.agents, Number.NaN);
     const tickets = this.normalizeStatusNumber(status?.tickets, 0);
     const cost = this.normalizeStatusNumber(status?.cost, 0);
     const queue = this.normalizeStatusNumber(status?.queue, 0);
@@ -262,7 +278,7 @@ export class CockpitStatusController {
       }
     };
 
-    updateElement('statusBots', `${agents} bots`);
+    this.renderFleetCount(status?.agents);
     updateElement('statusTickets', `${tickets} tickets`);
     updateElement('statusCost', formatCost(cost));
     updateElement('statusQueue', `Q: ${queue}`);
