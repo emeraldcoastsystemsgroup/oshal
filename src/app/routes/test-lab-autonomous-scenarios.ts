@@ -36,6 +36,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Register protected parent selection: a parent GET refuses (the owner after a result-rights revocation, the exact-principal twin, an operator without result access) is refused on POST and PATCH with the missing-parent 404, writing nothing; the owner with current rights still files under it.
  * 31 | maintainer@emeraldcoastsystemsgroup.com | Register controller ticket chat retirement: every caller (own, foreign, bare task id, unknown id, operator) naming a privileged bot gets 410 legacy_execution_route_retired, the orchestrator is never reached, and nothing is linked or created.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Register PUT /tickets/:id/state access: another user's ticket or bare task id is refused with the missing-id 404 and nothing moves, the owner still changes their own, and a revoked owner is refused a protected ticket or task.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com   | Register one exact-principal ticket verdict (P5 step 1): on an issuer-stamped ticket the same sub from another issuer, an inactive owner and a session with no verified actor are refused on load, parent selection and state; operators still read; /api/tickets and cockpit verdicts are equal.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -201,6 +202,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ticket-filing-protected-parent.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-chat-retired.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-state-compat-access.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-exact-principal-ownership.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Ticket filing integrity over the real ticket router and HTTP: a non-operator pin must pass the direct-call entitlement on create and on PATCH; a parent the caller cannot read is refused 404 with no ticket created (BACKLOG "POST /api/tickets accepts any parentTicketId": non-operator refused, owner and operator allowed); a privileged ticket type needs a super-admin filer and keeps the filer as owner; and a PATCH that echoes unchanged authority fields is not refused.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixture only: the context resolves the signed-in session as an active verified actor, as production's application-authorization runtime always does. The ticket read verdict now requires one (exact-principal ownership, P5 step 1) and fails closed without it. No assertion changed.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type { Server } from 'node:http';
@@ -48,6 +49,11 @@ function fixtureSession(req: Request, _res: Response, next: NextFunction): void 
   next();
 }
 
+/** @description The verified actor production resolves for a signed-in session: the session's own sub, active. */
+async function sessionActor(req: Request): Promise<{ sub: string; issuer: string; isActive: boolean; isSwarmAdmin: boolean }> {
+  return { sub: String(req.get('x-fixture-user') || ALICE), issuer: 'https://filing.fixture.test', isActive: true, isSwarmAdmin: false };
+}
+
 beforeEach(async () => {
   savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   for (const key of ENV_KEYS) delete process.env[key];
@@ -60,6 +66,7 @@ beforeEach(async () => {
   app.use(fixtureSession);
   app.use('/api/tickets', createTicketRoutes({
     ticketService, taskStore: new InMemoryTaskStore(), messageStore: {}, orchestrator: {}, pool: {},
+    applicationAuthorization: { resolveActor: sessionActor },
   } as never));
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((done) => server.once('listening', done));

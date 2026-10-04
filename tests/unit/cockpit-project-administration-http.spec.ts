@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Global project registry mutations are operator administration, over the real cockpit project router and HTTP: a signed-in non-operator cannot create, rename or archive a registry project (403, registry file untouched), an operator can do all three, and a non-operator still assigns their OWN ticket to any project name through the owner-scoped ticket route, which needs no registry entry.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Fixture only: the context resolves the signed-in session as an active verified actor, as production's application-authorization runtime always does. The ticket read verdict behind PUT /api/tickets/:id/project now requires one (exact-principal ownership, P5 step 1) and fails closed without it. No assertion changed.
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
@@ -33,6 +34,11 @@ function fixtureSession(req: Request, _res: Response, next: NextFunction): void 
   next();
 }
 
+/** @description The verified actor production resolves for a signed-in session: the session's own sub, active. */
+async function sessionActor(req: Request): Promise<{ sub: string; issuer: string; isActive: boolean; isSwarmAdmin: boolean }> {
+  return { sub: String(req.get('x-fixture-user') || USER), issuer: 'https://projects.fixture.test', isActive: true, isSwarmAdmin: false };
+}
+
 /** @description Calls the API as one fixture user. */
 function call(route: string, user: string, method = 'GET', body?: unknown): Promise<globalThis.Response> {
   return fetch(base + route, {
@@ -59,6 +65,7 @@ beforeEach(async () => {
   const ticketProjectAssignmentService = new TicketProjectAssignmentService(ticketService, taskStore);
   const ctx = {
     ticketService, taskStore, ticketProjectAssignmentService, messageStore: {}, orchestrator: {}, pool: {}, configOutputDir: outputDir,
+    applicationAuthorization: { resolveActor: sessionActor },
   } as never;
   const app = express();
   app.use(express.json());
