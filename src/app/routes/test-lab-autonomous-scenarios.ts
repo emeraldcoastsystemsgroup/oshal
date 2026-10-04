@@ -27,6 +27,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Register the nightly-saturation guards on the isolated nightly scenario: the worker quiesce (only named, running, non-critical workers stop, silenced; restored after pass, fail, SIGTERM, SIGINT, and from the state file after SIGKILL), the RESOURCE-EXHAUSTED outcome (decided by measured host memory, never by words in gate output) and the duration measurement the backlog's done-when is read with. Git Bash and stand-ins only; no engine.
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Register caller-private cockpit streams, activity contributors, project discovery and operator escalation reads.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP operator administration refusals and caller-summary compatibility.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | Register connector/channel administration refusals and caller override/link compatibility.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -170,6 +171,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-private-reads-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/operator-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-runtime.spec.ts' },

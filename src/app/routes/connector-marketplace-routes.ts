@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the caller-scoped connector write-action audit READ (GET /api/connectors/actions/audit, see routes/connector-action-audit.ts). It lives HERE rather than with the write tier because the write tier is gated behind CONNECTOR_SPEC_ROUTES=on, and reading what already happened must not depend on whether writes are currently switched on. Path is /actions/* — every other route in this router is under /marketplace/*, so there is no overlap.
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add per-user enablement routes (BACKLOG.md:2718) alongside the untouched deployment routes: POST /marketplace/:provider/enable-for-me, POST /marketplace/:provider/disable-for-me, and GET /marketplace/my-enablement — each scoped to callerFromRequest(req).sub (the whole router is already requiresAuth-gated in server.ts). NON-BREAKING override layer; deployment enable/disable/remove behavior is unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Require operator authority for deployment enablement, removal and audit refresh; preserve caller overrides.
  *
  * @module connector-marketplace-routes
  */
@@ -12,6 +13,7 @@
 import { Router, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 import { emitAuditEvent, callerFromRequest } from '@/features/governance';
 import type { AppContext } from '../composition-root';
 import type { ConnectorMarketplaceEntry, ConnectorMarketplaceSummary } from '../connectors/runtime/marketplace';
@@ -140,7 +142,7 @@ export function createConnectorMarketplaceRoutes(ctx: AppContext): Router {
     res.json({ success: true, data: entry });
   });
 
-  router.post('/marketplace/:provider/enable', async (req: Request, res: Response) => {
+  router.post('/marketplace/:provider/enable', requiresOperator, async (req: Request, res: Response) => {
     try {
       const provider = String(req.params.provider);
       const entry = ctx.connectorMarketplaceService.enableProvider(provider);
@@ -167,7 +169,7 @@ export function createConnectorMarketplaceRoutes(ctx: AppContext): Router {
     }
   });
 
-  router.post('/marketplace/:provider/disable', async (req: Request, res: Response) => {
+  router.post('/marketplace/:provider/disable', requiresOperator, async (req: Request, res: Response) => {
     try {
       const provider = String(req.params.provider);
       const entry = ctx.connectorMarketplaceService.disableProvider(provider);
@@ -221,10 +223,10 @@ export function createConnectorMarketplaceRoutes(ctx: AppContext): Router {
     }
   };
 
-  router.post('/marketplace/:provider/remove', removeProvider);
-  router.delete('/marketplace/:provider', removeProvider);
+  router.post('/marketplace/:provider/remove', requiresOperator, removeProvider);
+  router.delete('/marketplace/:provider', requiresOperator, removeProvider);
 
-  router.post('/marketplace/:provider/audit-refresh', async (req: Request, res: Response) => {
+  router.post('/marketplace/:provider/audit-refresh', requiresOperator, async (req: Request, res: Response) => {
     try {
       const provider = String(req.params.provider);
       const entry = ctx.connectorMarketplaceService.refreshProviderAudit(provider);

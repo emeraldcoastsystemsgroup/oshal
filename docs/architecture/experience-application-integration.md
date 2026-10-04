@@ -15,7 +15,7 @@ application-hosting baseline.
 | E3 composite roles | Deployed; installed lifecycle checks pass | Atomic assignment and reviewed optional-member upgrade, durable retry receipts, deny precedence, overlap-safe revoke, actual expiry, restart persistence and PostgreSQL RLS refusal checks pass |
 | E4 Home pilot | Released and installed | Selected required and optional member screens open; a temporary unpriced list note persists across reload and is removed; existing Smart Home and Education IDs and records are preserved |
 | E5 remaining six | All six released and installed | All seven entries pass desktop, phone and keyboard checks; named member views, the package chooser and preserved Central assistant/Simple chat are exercised through the real signed-in browser |
-| E6 installed acceptance | Installed checks pass; final cross-user privacy acceptance remains open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. A second real authenticated non-admin identity is qualified; privacy checks await the reviewed boundary fixes and coordinated deployment |
+| E6 installed acceptance | Bounded installed checks pass; full UX and cross-user acceptance remain open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. A second real authenticated non-admin identity is qualified; privacy checks await the reviewed boundary fixes and coordinated deployment. The full audience/member-view acceptance and performance receipts below remain outstanding |
 
 The `experience` compatibility floor now supplies package hosting and discovery:
 `GET /api/ui/experiences` lists active scope-visible packages under current authorization;
@@ -71,11 +71,25 @@ unchanged release, without redeployment, timeout changes or skipped checks. The
 brief caption-verification assignments are removed, and zero grants plus strict
 data preservation are verified again.
 
-One acceptance item remains open: exercise cross-user privacy on the corrected
+Final installed acceptance remains open. Exercise cross-user privacy on the corrected
 deployment. The verified directory and recent authentication logs qualify an
 existing non-admin identity; no additional account is required. Source fixtures,
 the primary operator session and database RLS checks do not substitute for the
 actual cross-user acceptance.
+
+The original [extended UX acceptance](../BACKLOG.md) also remains open: every expected
+page and audience view, including Create, needs evidence on the intended current image.
+The seven-entry sweep, selected member screens, persisted Home note and three caption
+contexts above prove their stated portions. They do not close all adult/child/guest
+journeys, selected member data parity, saved-work/deep-link/return behavior or the full
+audience matrix. Retain the fourteen external Lab cards as pending until their actual
+boundaries are exercised. Record Home request/render measurements before assigning
+performance budgets to later experiences.
+
+The resumed source review also reproduced a presentation defect: failed work APIs can
+render empty-list messages and zero counts. Loading, unavailable and partial work
+states must be distinguished before the remaining operational UX is accepted. This
+finding and the latest shared-renderer polish are not yet deployed.
 
 The `experience-roles` floor requires migration 185 and the existing Access management
 authority. `GET /api/authorization/composites` lists current readable templates and
