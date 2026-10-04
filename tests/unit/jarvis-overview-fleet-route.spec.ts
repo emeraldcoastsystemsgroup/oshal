@@ -4,15 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real Jarvis overview and canonical operator/service containment so personal panels survive without global fleet reads or projection.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Supply verified issuer and current active actor fixture claims while retaining all fleet/personal-panel assertions under canonical ticket ownership.
  */
 import express, { type RequestHandler } from 'express';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createJarvisRoutes } from '@/app/routes/jarvis-routes';
+import { createApplicationAuthorizationActorResolver } from '@/app/middleware/application-authorization-identity';
 import { SwarmBotRegistry } from '@/app/extensions/swarm/swarm-bot-registry';
 import { hasAuthenticatedUserIdentity, serviceSecretOr } from '@/shared/middleware/authz';
 
-const OWNER = 'oidc|fleet-viewer', OPERATOR = 'oidc|fleet-operator';
+const OWNER = 'oidc|fleet-viewer', OPERATOR = 'oidc|fleet-operator', ISSUER = 'https://jarvis-fleet.fixture.test';
 const SERVICE_SECRET = 'unit-jarvis-fleet-sentinel';
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -43,7 +45,7 @@ function sources() {
     return { rows: [], rowCount: 0 };
   });
   const listTickets = vi.fn(async ({ ownerSub }: { ownerSub: string }) => [{
-    ticketId: 'own-ticket', title: 'Own work for ' + ownerSub, ownerSub, status: 'approved', updatedAt: '2026-10-04',
+    ticketId: 'own-ticket', title: 'Own work for ' + ownerSub, ownerSub, metadata: {}, status: 'approved', updatedAt: '2026-10-04',
   }]);
   return { definitions, online, query, listTickets };
 }
@@ -53,7 +55,7 @@ async function serve(source: ReturnType<typeof sources>) {
   const app = express();
   app.use((req, _res, next) => {
     const sub = req.header('x-test-authenticated-sub');
-    if (sub) (req as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => true, user: { sub } };
+    if (sub) (req as unknown as { oidc: unknown }).oidc = { isAuthenticated: () => true, idTokenClaims: { sub, iss: ISSUER }, user: { sub, iss: ISSUER } };
     next();
   });
   const userAuth: RequestHandler = (req, res, next) => {
@@ -63,6 +65,10 @@ async function serve(source: ReturnType<typeof sources>) {
   const pool = { query: source.query, connect: async () => ({ query: source.query, release() {} }) };
   app.use('/api/jarvis', serviceSecretOr(userAuth), createJarvisRoutes({
     pool, ticketService: { listTickets: source.listTickets },
+    applicationAuthorization: { resolveActor: createApplicationAuthorizationActorResolver(pool as never, {
+      env: {}, localSnapshot: async () => null, tenantIds: async () => [], management: async () => false,
+      nativePrincipal: async () => ({ isActive: true, isSwarmAdmin: false }),
+    }) },
     swarm: { runtimeRegistryService: { listOnlineAgentIds: source.online } },
   } as never, process.cwd()));
   const server = app.listen(0, '127.0.0.1');

@@ -41,6 +41,7 @@
  * 35 | maintainer@emeraldcoastsystemsgroup.com   | Link new ordinary Project Manager task issuer stamps beside the canonical owner-principal regressions; the fixture runner remains isolated.
  * 36 | maintainer@emeraldcoastsystemsgroup.com   | Link authenticated stamped guest own-ticket read and refusal regressions through the real guest injector and guard; the runner remains isolated.
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Link global queue-health operator refusal and summary compatibility regressions without changing the isolated runner's read-only guidance.
+ * 38 | maintainer@emeraldcoastsystemsgroup.com | Register Jarvis direct ticket projections, exact-principal carrier reuse and current close refusal with provider-free HTTP/module fixtures.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -180,6 +181,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/bot-node-remote-authorization-client.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-result-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-jarvis-results.spec.ts' },
+    { level: 'integration', path: 'tests/unit/jarvis-ticket-principal-scope-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-jarvis-thread-return.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-private-reads-http.spec.ts' },
