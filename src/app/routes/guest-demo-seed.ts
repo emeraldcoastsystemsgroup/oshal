@@ -9,11 +9,14 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Savepoint-fence the finance seed inside the new single-transaction shape: with everything in one txn, a missing finance package (carve #5 above) would have aborted the WHOLE transaction and rolled the demo tickets back too. Finance failure now rolls back to its savepoint and the tickets still commit.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Plant a fake INDEXED RESUME for the guest so the Intelligent Career board shows an indexed candidate instead of the "upload your resume" onboarding. career-hunter's resume is a per-user JSON FILE (career_db.json) in the engine store, not a table, so this is a best-effort file write beside the DB seed — same kernel-side "guest sessions are a framework concern" rationale as the finance seed. The demo resume is a wholly fictional candidate; a non-empty roles[] satisfies the engine's has_profile() gate and lets Settings auto-derive the title terms.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Retire the kernel career-resume seed. ADR-144: guest-mode DATA seeding moved to the owning app — career-hunter now declares a `guestSeed:` hook the kernel orchestrator calls on guest-start (career-hunter 1.17.0, POST /api/career-hunter/guest-seed), so the kernel no longer hardcodes the demo resume or knows the engine store layout. Removed DEMO_CAREER_DB + writeGuestCareerResume and the now-unused fs/path imports. The finance + tickets demo stays here until those follow the same contract.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Stamp the guest issuer on the demo tickets. A guest reads a ticket only when the row recorded the guest issuer (guestOwnsRecord, 2026-10-04), and these raw inserts recorded none, so every guest's demo tickets were refused by id and missing from the list. The guest start route mints the sub it passes here, so its issuer is the guest issuer by construction. bindOwnerPrincipalIssuer cannot supply it: the start request carries no guest identity yet, because the cookie is set on its response. Rows seeded before this change stay unstamped and stay refused.
  */
 
 import crypto from 'crypto';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
+import { GUEST_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'guest-demo-seed' });
 
@@ -127,11 +130,13 @@ export async function seedGuestDemoData(pool: Pool, sub: string): Promise<void> 
     // Transaction-local identity: RLS policies key on oshal.current_sub.
     await client.query("SELECT set_config('oshal.current_sub', $1, true), set_config('oshal.is_operator', 'off', true)", [sub]);
 
+    // The guest issuer is what lets this guest read its own demo tickets (guestOwnsRecord).
+    const metadata = JSON.stringify({ demo: true, source: 'guest-demo-seed', [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: GUEST_PRINCIPAL_ISSUER });
     for (const t of demoTickets()) {
       await client.query(
         `INSERT INTO tickets (ticket_id, title, description, ticket_type, status, state_group, priority, labels, owner_sub, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
-        [crypto.randomUUID(), t.title, t.description, t.ticketType, t.status, t.stateGroup, t.priority, t.labels, sub, JSON.stringify({ demo: true, source: 'guest-demo-seed' })],
+        [crypto.randomUUID(), t.title, t.description, t.ticketType, t.status, t.stateGroup, t.priority, t.labels, sub, metadata],
       );
     }
 

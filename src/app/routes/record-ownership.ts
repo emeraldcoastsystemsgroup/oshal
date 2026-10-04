@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The one exact-principal ownership check for a stored record, moved unchanged out of cockpit-resource-access.ts (ownsRow/actorFor) so /api/tickets and the cockpit decide ownership by the same rule: the owner sub or an operator, an ACTIVE verified actor, and, where the record names its owner's issuer, that exact issuer for a non-operator. P5 step 1.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guest own-record read (coordinator option b, 2026-10-04). A signed guest session has no application actor, so the exact-principal check refused guests even their own tickets. guestOwnsRecord admits a guest only when all hold: the injector's guest marker, the canonical authenticated guest issuer, the exact owner sub, and a recorded guest issuer on the row. There is no unstamped, ownerless, operator or other-issuer access, and a spoofed marker without the guest issuer is refused. createRecordOwnership resolves the verified actor at most once per request, so a collection check does not pay a resolver lookup per row; ownsRecord keeps its single-record behavior.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Comment only: the guestOwnsRecord JSDoc no longer explains the refusal of unstamped rows by an August/12-hour provenance that did not cover every row. It states the rule (an authenticated guest, the exact owner sub, the recorded guest issuer) and that unstamped rows are refused, including demo rows seeded before the seeder recorded the issuer. No behavior change.
  */
 import type { Request } from 'express';
 import type { AuthorizationActor } from '@/shared/application-authorization';
@@ -100,9 +101,9 @@ export function isAuthenticatedGuest(req: Request): boolean {
 
 /**
  * @description Guest own-record read. A guest has no application actor, so ownership is decided from the signed
- * session itself. The caller must be an authenticated guest, the exact owner sub, and the row must have recorded
- * the guest issuer at creation. Unstamped rows are refused, by provenance: stamping and the guest issuer arrived
- * together on 2026-08-06, and guest cookies last 12 hours.
+ * session itself. The caller must be an authenticated guest and the exact owner sub, and the row must have recorded
+ * the guest issuer (`urn:oshal:guest`) as its owner issuer. Unstamped rows are refused, whoever their owner sub
+ * names, including demo rows the guest demo seeder inserted before it recorded the issuer.
  * @param req - The request.
  * @param row - The record's owner binding.
  * @returns Whether the guest owns the record.

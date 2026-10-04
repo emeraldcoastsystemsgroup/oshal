@@ -184,6 +184,17 @@ The autonomous backlog suites have matching Lab registrations and local commands
 | `npm run test:linkedin-content` | LinkedIn Content Assistant queue workflow (Lab card **LinkedIn content queue — ticket to confirmed publish**): one `linkedin-content-post` ticket through the real registry, manifest-worker dispatcher and queue binding to an owner-scoped draft, approval, the 428 confirm gate and a confirmed publish on the caller's brokered token through the declared connector action. The draft joins its `connector_action_audit` rows by params hash and the outcome is written back to the ticket. Also covers retry idempotency through the real unique index, and the cross-owner, anonymous, missing-connection, provider-rejection, forged-ticket and pipeline-less-workflow denials. Runs against a disposable PostgreSQL with a NOSUPERUSER NOBYPASSRLS role and a local LinkedIn protocol double, never LinkedIn. |
 | `npm run test:social-signals` | Social signal subscriptions (Lab card **Social signals — your watches reach only your bot**): bot binding, the cron's SYSTEM identity under deny-by-default, owner RLS on subscriptions and deliveries, the owner-only delivery audit, and one subscription producing exactly one event on its owner's Redis lane - proven against a disposable PostgreSQL with the non-superuser enforcing role and a disposable Redis. |
 
+`npm run test:remote-authorization` (Lab card **Protected remote application execution**) includes
+`tests/unit/guest-demo-seed-own-read.spec.ts`, the guard for the guest issuer stamp on demo tickets.
+- **What it does.** It runs the real guest demo seeder against a stub pool, then reads the ticket rows the
+  seeder wrote through the real signed guest chain.
+- **What it checks.** The seeding guest reads those rows by id and in its list. Another guest is refused,
+  and so is the same sub from another issuer.
+- **What it is not.** The stub captures SQL, so this is not a PostgreSQL commit or RLS check. The in-memory
+  store assigns its own ids and timestamps.
+- **The gap it does not cover.** Demo tickets seeded before the stamp stay unstamped and refused. Their
+  guests see demo tickets again only in a new guest session.
+
 Docker-backed suites create their own temporary databases. Do not substitute a deployment DSN or
 run the unrestricted historical unit collection against a live application database.
 

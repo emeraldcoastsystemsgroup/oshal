@@ -5,6 +5,16 @@ releases. The format is based on [Keep a Changelog](https://keepachangelog.com/e
 
 ## Unreleased
 
+- Door authorization for tickets:
+  - A ticket's privileged type, its bot pin and its parent are checked when it is filed or updated.
+  - `/api/tickets` and the cockpit share one exact-principal read verdict.
+  - The legacy ticket chat route is retired with 410.
+  - Ticket pins are authorized again at dispatch.
+  - Global project registry changes are operator administration.
+  - The Windows installer no longer writes `SESSION_SECRET` into an existing `.env`.
+
+  [The release record](docs/releases/door-authorization-2026-10-04.md) lists each change with its guard and
+  deployment, and the qualifications that remain open.
 - Autonomous backlog implementation: verified principal inventory, established-account setup and
   Users administration, installed package test catalogs, isolated nightly regression, manifest bot
   defaults and re-enterable provisioning. New behavior suites are registered in AI Test Lab;

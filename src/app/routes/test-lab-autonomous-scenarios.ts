@@ -44,6 +44,7 @@
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Register Jarvis direct ticket projections, exact-principal carrier reuse and current close refusal with provider-free HTTP/module fixtures.
  * 39 | maintainer@emeraldcoastsystemsgroup.com | Register fixed no-lineage completion notice refusals and ordinary work compatibility through real isolated PostgreSQL and current application policy.
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Register idle persistence cooldown recovery, SYSTEM retry isolation and truthful readiness with the existing isolated store-persistence runner.
+ * 41 | maintainer@emeraldcoastsystemsgroup.com   | Register the guest demo seed own-read regression on the protected remote application execution scenario: the rows the real seeder writes are read through the real guest chain by their guest, and refused to another guest and to the same sub from another issuer.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -228,6 +229,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ticket-state-compat-access.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-exact-principal-ownership.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-guest-own-read.spec.ts' },
+    { level: 'integration', path: 'tests/unit/guest-demo-seed-own-read.spec.ts' },
     { level: 'integration', path: 'tests/unit/pinned-ticket-dispatch-gate.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },

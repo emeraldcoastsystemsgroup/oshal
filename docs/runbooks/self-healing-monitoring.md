@@ -44,6 +44,15 @@ Everything downstream of the ticket already existed: the RCA roster,
 `selfHealingTools.restartContainer` (whitelisted to `oshal-*`/`swarm-*`), and the
 `incident-approval-remediation-loop.sh` operator loop.
 
+> **The loop's remediation step cannot reach a bot (2026-10-04, from the source; the loop was not
+> run).** It sends its prompt to
+> `POST /api/tickets/:id/chat`, which now answers `410 legacy_execution_route_retired`
+> ([ADR-161](../adr/161-one-bot-invocation-chokepoint.md) amendment). The loop also sends no
+> credentials on any call, so its approval and status steps work only where the API admits an
+> unauthenticated local caller, as under mock OIDC. The fix, moving the step to
+> `POST /api/tasks/:taskId/messages`, is tracked in [BACKLOG.md](../BACKLOG.md), "The incident
+> remediation loop still calls the retired ticket chat route".
+
 ## Registering the bot that actually applies the fix
 
 The RCA bots (`rca-specialist`, `incident-remediation-bot`) *propose* a fix; the
