@@ -43,6 +43,7 @@
  * 37 | maintainer@emeraldcoastsystemsgroup.com   | Link global queue-health operator refusal and summary compatibility regressions without changing the isolated runner's read-only guidance.
  * 38 | maintainer@emeraldcoastsystemsgroup.com | Register Jarvis direct ticket projections, exact-principal carrier reuse and current close refusal with provider-free HTTP/module fixtures.
  * 39 | maintainer@emeraldcoastsystemsgroup.com | Register fixed no-lineage completion notice refusals and ordinary work compatibility through real isolated PostgreSQL and current application policy.
+ * 40 | maintainer@emeraldcoastsystemsgroup.com   | Register idle persistence cooldown recovery, SYSTEM retry isolation and truthful readiness with the existing isolated store-persistence runner.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -76,6 +77,19 @@ async function briefingSources(cookie: string): Promise<StepResult> {
 
 /** @description Discover autonomous regression suites without granting the browser host execution authority. */
 export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
+  id: 'store-persistence-recovery', title: 'Persistence recovery and readiness', group: 'tool',
+  description: 'Kept-pool retry, idle cooldown recovery, SYSTEM scheduling and truthful degraded readiness. Clock/identity fixtures and disposable PostgreSQL exclude production data and provider calls.',
+  regressionTests: [
+    { level: 'integration', path: 'tests/unit/store-persistence-recovery.spec.ts' },
+    { level: 'unit', path: 'tests/unit/persistence-mode-readiness.spec.ts' },
+    { level: 'unit', path: 'tests/unit/readiness-report.spec.ts' },
+    { level: 'unit', path: 'tests/unit/catalog-load-readiness.spec.ts' },
+  ],
+  steps: [{ id: 'runner', app: 'test-lab', label: 'Local persistence runner', run: async () => ({
+    app: 'test-lab', label: 'Local persistence runner', state: 'degraded',
+    detail: 'Run npm run test:store-persistence with local Node and Docker. The browser does not execute host tests or attempt live store recovery. No tests ran from this step.',
+  }) }],
+}, {
   id: 'nightly-isolated-regression', title: 'Isolated nightly regressions', group: 'tool',
   description: 'Disposable PostgreSQL alert, topology, backup round-trip, tenant-isolation and trading-guard coverage with bounded local runner evidence. Deployment credentials and live notification endpoints are excluded.',
   regressionTests: [

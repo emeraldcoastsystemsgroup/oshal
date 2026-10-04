@@ -1,12 +1,13 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Include protected remote authorization in exact local-runner and Lab registration parity.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Include the fixed package tool runner in registration parity.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep autonomous suite registration aligned with runnable local commands and prevent browser claims of host test execution.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Hold the provider-embedded tool tier scenario to the same runner parity as the rest.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Hold the new persistence recovery card to the existing four-suite local runner without changing browser execution authority.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -23,6 +24,7 @@ describe('autonomous Test Lab registration', () => {
       expect(new Set(paths).size).toBe(paths.length);
       for (const path of paths) expect(existsSync(resolve(path)), path).toBe(true);
       const commands: Record<string, string> = {
+        'store-persistence-recovery': scripts['test:store-persistence'],
         'first-run-provisioning': scripts['test:provisioning'],
         'authorized-package-tools': scripts['test:package-tools'],
         'protected-remote-application-execution': scripts['test:remote-authorization'],
