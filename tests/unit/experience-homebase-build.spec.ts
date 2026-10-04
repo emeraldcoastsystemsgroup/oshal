@@ -5,6 +5,8 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The design study's Home, classroom and learner pieces built into /homebase, in headless Chromium over the real static routes and the synthetic swarm (fixture routes shaped like the real ones): the opt-in check-in panel from ADR-169 location state (the caller's own place and age, household members with nothing shown, who can see the caller, the "share from this browser" switch that stops this browser's device and opens Settings, Location to turn on, refusals by the route's own message, nothing asked outside Home), the household group (people, roles, the directory's names only, the workspace label, badge and breadcrumb, People & roles with household creation and its refusal, Devices with stop reporting), the room strip, a learner's level and XP from Little Monsters' own dashboard (not asked for a teacher, not asked outside the classroom before the probe gate), the classwork due pill, the family learner's greeting, and unread Little Monsters notices with mark read.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert the approved operational class-updates heading while preserving unread notice and mark-read behavior.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Click the refused check-in switch and assert its restored state; the expected immediate refusal can restore it before Playwright's uncheck postcondition.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -62,7 +64,7 @@ describe('opt-in check-ins (ADR-169 location state)', () => {
     home.location.visibility.memberShares.push({ shareId: 's1', groupName: 'Synthetic household', placeCount: 2, active: true });
     await open('family', '[data-module="locations"] [data-person="me"]');
     const panel = await moduleText('locations');
-    expect(panel).toContain('A little peace of mind.'); expect(panel).toContain('Opt-in check-ins');
+    expect(panel).toContain('Check-ins'); expect(panel).toContain('Opt-in check-ins');
     expect(await page.locator('[data-person="me"]').innerText()).toMatch(/At Synthetic home place[\s\S]*Updated 8 min/);
     const others = page.locator('[data-person="member"]');
     expect(await others.count()).toBe(2);
@@ -78,7 +80,7 @@ describe('opt-in check-ins (ADR-169 location state)', () => {
     await reportingHere();
     await open('family', '#share-location');
     fixture.state.status['home:opt-out'] = 500;
-    await page.locator('#share-location').uncheck();
+    await page.locator('#share-location').click();
     await toastHas('Could not stop sharing (HTTP 500');
     expect(await page.locator('#share-location').isChecked()).toBe(true);
     delete fixture.state.status['home:opt-out'];

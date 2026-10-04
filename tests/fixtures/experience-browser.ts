@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | nexusBuildRoutes keep the fixture's contract: they answer only once a case opts in (enableNexusBuild, which installTravelHost also does) and fall through to the defaults otherwise; the lane can answer POST /api/voice/synthesize with a WAV clip (`nexusBuild.voice.audioData`) for the readback watchdog case.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit synthetic legacy document routes for renderer regression fixtures after production entries move to installed packages; production aliases have separate acceptance.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Type the existing purchasing price as nullable and bound the synthetic document route parameter before sanitizing.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -88,7 +89,7 @@ export function experienceState() {
       ],
     },
     delays: { tasks: 0 },
-    purchasing: { lists: [{ list_id: 'l1', name: 'Synthetic list', status: 'active', item_count: '1' }], items: [{ item_id: 'i1', list_id: 'l1', title: 'Synthetic milk', quantity: 1, unit_price: '2.50', status: 'pending', created_at: iso(-24 * HOUR) }], added: [] as unknown[], removed: [] as string[] },
+    purchasing: { lists: [{ list_id: 'l1', name: 'Synthetic list', status: 'active', item_count: '1' }], items: [{ item_id: 'i1', list_id: 'l1', title: 'Synthetic milk', quantity: 1, unit_price: '2.50' as string | null, status: 'pending', created_at: iso(-24 * HOUR) }], added: [] as unknown[], removed: [] as string[] },
     finance: { status: 200, aggregate: { netWorth: { net: 1234.5, assets: 2000, liabilities: 765.5 }, accounts: [{ name: 'Synthetic Checking', mask: '0001', type: 'depository', subtype: 'checking', balance: 1500 }], spendByMonth: [{ month: '2026-08', spend: 100, income: 50 }, { month: '2026-09', spend: 200, income: 60 }] }, syncedAt: iso(-48 * HOUR), tiles: [{ id: 'nw', label: 'Cached net worth', value: 'USD 1,234.50' }] },
     directory: { status: 200, users: [{ sub: 'synthetic-user', issuer: 'x', label: 'Synthetic Teacher (google; active)', source: 'verified-sign-in', signIn: 'active' }, { sub: 'other', issuer: 'x', label: 'Other Person (google; active)', source: 'verified-sign-in', signIn: 'active' }] },
     voiceStatus: 404,
@@ -220,7 +221,7 @@ export async function startExperienceBrowserFixture(options: { denyAuth?: boolea
     if (!experience) { res.sendStatus(404); return; }
     res.redirect(302, experience.entry);
   });
-  app.get('/fixture/experience/:document', requiresAuth, (req, res) => res.type('html').send(`<h1>${req.params.document.replace(/[^a-z.-]/g, '')}</h1>`));
+  app.get('/fixture/experience/:document', requiresAuth, (req, res) => res.type('html').send(`<h1>${(typeof req.params.document === 'string' ? req.params.document : '').replace(/[^a-z.-]/g, '')}</h1>`));
   portalBuildRoutes(app, state);
   fullSwarmGapRoutes(app, state); nexusGapRoutes(app, state); homebaseGapRoutes(app, state);
   assemblyHostRoutes(app, state);

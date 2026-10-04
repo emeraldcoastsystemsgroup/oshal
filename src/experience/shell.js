@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | The experience list gains Simple chat (/simple, docs/architecture/simple-chat.md), the opt-in plain text screen over the caller's Jarvis thread; every other entry is unchanged.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Select the current package identity in the chooser before interpreting legacy layout names.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  */
 (() => {
   'use strict';
@@ -137,6 +138,62 @@
     return roster.error === 'roster_scope_denied' ? 'This session is not permitted to read the roster. Only your own identity is shown.' : 'Only a swarm admin can list everyone on this swarm, so only your own identity is shown.';
   }
 
+  /** @description Keep unsent own-shell fields through a recovery repaint, including edits made while reads are pending. @param {Function} repaint Current renderer callback. @returns {boolean} Whether an active edit retained focus. */
+  function repaintWithDrafts(repaint) {
+    const active = document.activeElement && document.activeElement.id;
+    const drafts = ['composer-input', 'shopping-input', 'home-search-input', 'message-input', 'ask-input'].flatMap(id => {
+      const input = document.getElementById(id);
+      return input ? [{ id, value: input.value, start: input.selectionStart, end: input.selectionEnd }] : [];
+    });
+    repaint();
+    let editing = false;
+    drafts.forEach(draft => {
+      const input = document.getElementById(draft.id); if (!input) return;
+      input.value = draft.value;
+      if (draft.id === active && !input.disabled) { input.focus(); input.setSelectionRange(draft.start, draft.end); editing = true; }
+    });
+    return editing;
+  }
+
+  /** @description Bind source-state presentation and read-only recovery. @param {object} snapshot Current live snapshot. @param {Function} repaint Current renderer callback. @param {Function} canRetry Whether repaint would preserve an open member view. @returns {object} Presentation helpers. */
+  function createWorkPresentation(snapshot, repaint, canRetry) {
+    /** @description Read current source readiness. @param {string[]} [keys] Source names. @returns {object} Presentation state. */
+    const workState = keys => LIVE.sourceState(snapshot, keys);
+    /** @description Scope counts to loaded work. @param {number} count Visible rows. @param {string} label Count label. @returns {string} Exact, partial or unknown count. */
+    function workCount(count, label = 'items') {
+      const read = workState();
+      return read.complete ? `${count} ${label}` : read.kind === 'partial' && count ? `${count} ${label} loaded` : read.kind === 'loading' ? 'Work loading' : 'Work unavailable';
+    }
+    /** @description Never infer online assistants from failed overview reads. @param {string} label Successful count text. @returns {string} Exact count or unknown state. */
+    const overviewCount = label => workState(['overview']).complete ? label : workState(['overview']).kind === 'loading' ? 'Assistant status loading' : 'Assistant status unavailable';
+    /** @description Show genuine empty only after successful reads. @param {string} empty Successful empty wording. @param {string[]} [keys] Required sources. @returns {string} Escaped status markup. */
+    const workEmpty = (empty, keys) => `<p class="note-line">${esc(workState(keys).complete ? empty : workState(keys).message)}</p>`;
+    /** @description Display incomplete sources and accessible recovery. @param {string[]} [keys] Required sources. @returns {string} Notice or nothing on success. */
+    function workNotice(keys = ['tickets', 'tasks', 'overview']) {
+      const read = workState(keys); if (read.complete) return '';
+      const blocked = !canRetry();
+      return `<div class="note-line work-source-status" data-work-source-state="${read.kind}" role="status"><p>${esc(read.message)}</p>${read.kind === 'loading' ? '' : button('Retry work sources', 'retry-work', 'action button', blocked ? 'disabled' : '')}${blocked ? '<p>Close the application view before retrying work sources.</p>' : ''}</div>`;
+    }
+    /** @description Retry current read-only paths, retaining keyboard focus after repaint. @returns {Promise<void>} Resolves after refreshed states and rows. */
+    async function retryWork() {
+      if (snapshot.workLoading || !canRetry()) return;
+      snapshot.workLoading = true;
+      repaintWithDrafts(repaint);
+      try { await LIVE.loadWork(snapshot); }
+      finally {
+        snapshot.workLoading = false;
+        const editing = repaintWithDrafts(repaint);
+        if (!editing) {
+          const focus = document.querySelector('#full-dialog [data-action="retry-work"]') || document.querySelector('#full-dialog h2') || document.querySelector('[data-action="retry-work"]') || document.querySelector('main h1');
+          if (focus) { if (!focus.matches('button')) focus.setAttribute('tabindex', '-1'); focus.focus(); }
+        }
+      }
+    }
+    /** @description Compact unknown values preserve numeric layouts. @param {number} count Loaded value. @param {string[]} [keys] Required sources. @returns {string} Exact value or unknown marker. */
+    const workValue = (count, keys) => workState(keys).complete ? String(count) : '—';
+    return { workState, workCount, overviewCount, workEmpty, workNotice, retryWork, workValue };
+  }
+
   /** @description Create the per-page shell kernel over a loaded snapshot. */
   function createShell(options) {
     const snapshot = options.snapshot, layoutId = options.layoutId, hooks = options.hooks || {};
@@ -158,6 +215,7 @@
     const openWork = () => work.filter(w => w.status.open);
     const needsYou = w => LIVE.STATUS_GROUPS.attention.includes(w.status.label);
     const attention = () => work.filter(needsYou).concat(openWork().filter(w => !needsYou(w)));
+    const { workState, workCount, overviewCount, workEmpty, workNotice, retryWork, workValue } = createWorkPresentation(snapshot, () => { if (hooks.onWorkChanged) hooks.onWorkChanged(); else if (state.modal) renderModal(); }, () => !(state.modal && state.modal.kind === 'embed') && (!hooks.canRetryWork || hooks.canRetryWork()));
     const timeAgo = item => LIVE.relativeTime(item.at);
     let toastTimer = 0;
 
@@ -187,7 +245,7 @@
     }
     function studyBar(caption = '') {
       const current = experienceFor(layoutId);
-      return `<div class="study-bar"><div class="study-links"><a href="/cockpit/">← Cockpit</a>${pickerMarkup(current ? current.id : layoutId)}<span class="full-label">LIVE SWARM / ${apps.length} APPS</span></div><div class="study-caption">${caption}<span>${esc(snapshot.me.name)} · ${openWork().length} open · ${snapshot.botsOnline}/${snapshot.bots.length} assistants online</span>${scenePicker()}${skinPicker()}<a href="/portal">All experiences</a></div></div>`;
+      return `<div class="study-bar"><div class="study-links"><a href="/cockpit/">← Cockpit</a>${pickerMarkup(current ? current.id : layoutId)}<span class="full-label">LIVE SWARM / ${apps.length} APPS</span></div><div class="study-caption">${caption}<span>${esc(snapshot.me.name)} · ${esc(workCount(openWork().length, 'open'))} · ${esc(overviewCount(`${snapshot.botsOnline}/${snapshot.bots.length} assistants online`))}</span>${scenePicker()}${skinPicker()}<a href="/portal">All experiences</a></div></div>`;
     }
 
     /** Summary section for an application panel; filled asynchronously from the app's own probes. */
@@ -474,7 +532,7 @@ ${workExtras(item)}
     function workListPanel() {
       const grouped = suites.map(s => [s, work.filter(w => w.app && byId(w.app) && byId(w.app).suite === s.id)]).filter(([, items]) => items.length);
       const rest = work.filter(w => !w.app || !byId(w.app));
-      return `<div class="directory-intro"><p>Your tickets in the swarm queue and the tasks on your Jarvis shelf, newest first.</p><span>${work.length} items · ${openWork().length} open</span></div><div class="work-by-suite">${grouped.map(([s, items]) => `<section><div class="section-head"><h3>${esc(s.name)}</h3><span class="small-label">${items.length} items</span></div>${items.slice(0, 12).map(workRow).join('')}</section>`).join('')}${rest.length ? `<section><div class="section-head"><h3>Assistant & queue</h3><span class="small-label">${rest.length} items</span></div>${rest.slice(0, 20).map(workRow).join('')}</section>` : ''}${work.length ? '' : '<p class="empty-note">No tickets or assistant tasks yet. Ask Jarvis for something and it will appear here.</p>'}</div>`;
+      return `<div class="directory-intro"><p>Your tickets in the swarm queue and the tasks on your Jarvis shelf, newest first.</p><span>${esc(workCount(work.length))} · ${esc(workCount(openWork().length, 'open'))}</span></div>${workNotice()}<div class="work-by-suite">${grouped.map(([s, items]) => `<section><div class="section-head"><h3>${esc(s.name)}</h3><span class="small-label">${items.length} items</span></div>${items.slice(0, 12).map(workRow).join('')}</section>`).join('')}${rest.length ? `<section><div class="section-head"><h3>Assistant & queue</h3><span class="small-label">${rest.length} items</span></div>${rest.slice(0, 20).map(workRow).join('')}</section>` : ''}${work.length ? '' : workEmpty('No tickets or assistant tasks yet. Ask Jarvis for something and it will appear here.')}</div>`;
     }
     function peoplePanel() {
       const bots = [...snapshot.bots].sort((a, b) => Number(b.active) - Number(a.active) || Number(b.online) - Number(a.online)).slice(0, 14);
@@ -482,7 +540,7 @@ ${workExtras(item)}
         ? `<p>People listed here come from this swarm’s user directory, read in your session. It is an account roster: it shows nobody’s presence and no room membership.</p><h3>People on this swarm</h3>${rosterSlot('panel')}`
         : `<p>People appear here when an installed application publishes membership you belong to (a classroom roster, a team workspace). This deployment does not expose a general people directory to this view.</p><h3>You</h3>${personRow(snapshot.me.initials, snapshot.me.name, snapshot.me.email || (snapshot.me.authenticated ? 'Signed in' : 'Not signed in'), 'person')}`;
       const household = panels() ? `<h3>Your household or team</h3>${membershipSlot('panel')}` : '';
-      return `${people}${household}<hr class="rule"><h3>Assistants in this swarm</h3><p class="note-line">${snapshot.botsOnline} of ${snapshot.bots.length} registered assistants are online${bots.some(b => b.active) ? '; highlighted ones worked in the last two minutes' : ''}.</p>${bots.map(b => personRow(LIVE.initials(b.name), b.name, `${b.role || 'assistant'}${b.active ? ' · working now' : b.online ? ' · online' : ' · offline'}`, b.active ? 'bot active' : 'bot')).join('') || '<p class="note-line">The assistant roster is unavailable right now.</p>'}`;
+      return `${people}${household}<hr class="rule"><h3>Assistants in this swarm</h3><p class="note-line">${esc(overviewCount(`${snapshot.botsOnline} of ${snapshot.bots.length} registered assistants are online`))}${bots.some(b => b.active) ? '; highlighted ones worked in the last two minutes' : ''}.</p>${bots.map(b => personRow(LIVE.initials(b.name), b.name, `${b.role || 'assistant'}${b.active ? ' · working now' : b.online ? ' · online' : ' · offline'}`, b.active ? 'bot active' : 'bot')).join('') || workEmpty('No assistants are listed in the overview.', ['overview'])}`;
     }
     const personRow = (mark, name, status, cls = 'bot') => `<div class="person-row">${avatar(mark, cls)}<span><strong>${esc(name)}</strong><small>${esc(status)}</small></span></div>`;
     /** @description The reads a layout with shell-panels.js makes on demand, each with its status once made (null: read when opened). */
@@ -495,8 +553,8 @@ ${workExtras(item)}
         ['A ticket’s workflow and state', '/api/v1/tickets/:id/workflow', state.workFlows.size ? 200 : null]];
     }
     function provenancePanel() {
-      const s = snapshot.sources, rows = [['Signed-in identity', '/api/auth/user', s.auth], ['Authorized home plan', '/api/swarm/apps/home-plan', s.plan], ['Installed applications', '/api/swarm/apps', s.apps], ['Admitted navigation', '/api/ui/workspaces', s.workspaces], ['Your Jarvis shelf', '/api/jarvis/tasks', s.tasks], ['Your tickets', '/api/tickets', s.tickets], ['Swarm overview', '/api/jarvis/overview', s.overview]].concat(onDemandSources());
-      return `<h3>What this screen reads</h3><dl class="provenance-facts">${rows.map(([label, path, status]) => `<dt>${esc(label)}</dt><dd><code>${esc(path)}</code> · ${status === 200 ? 'live' : status === null ? 'read when you open it' : `HTTP ${status || 'unreachable'}`}</dd>`).join('')}</dl><h3>What is live</h3><p>Application names, suites, versions, availability and summaries come from the packages installed on this swarm and their own summary routes, read in your session. Work items are your real tickets and Jarvis tasks. Conversations go to the same Jarvis thread the cockpit uses and are answered by the accountable assistant, not a script.</p><h3>What is not available on this deployment</h3><p>${snapshot.calendarEvents.length ? 'A shared calendar feed is present.' : 'No application contributes a shared calendar feed yet, so calendar modules show only what a package (such as a classroom) publishes.'} ${panels() ? 'People are your household or team (membership, not presence) and, in Commons, the account roster; only your own place is shown, never anyone else’s.' : 'People appear only where an application publishes membership.'} Pins, skin, day focus and density choices are saved on this device and never change permissions.</p><p class="note-line">Loaded ${esc(snapshot.loadedAt.toLocaleTimeString())}${snapshot.unavailable.length ? ` · unavailable: ${esc(snapshot.unavailable.join(', '))}` : ''}</p>`;
+      const s = snapshot.sources, rows = [['Signed-in identity', '/api/auth/user', s.auth], ['Authorized home plan', '/api/swarm/apps/home-plan', s.plan], ['Installed applications', '/api/swarm/apps', s.apps], ['Admitted navigation', '/api/ui/workspaces', s.workspaces], ['Your Jarvis shelf', '/api/jarvis/tasks', s.tasks, 'tasks'], ['Your tickets', '/api/tickets', s.tickets, 'tickets'], ['Swarm overview', '/api/jarvis/overview', s.overview, 'overview']].concat(onDemandSources());
+      return `<h3>What this screen reads</h3><dl class="provenance-facts">${rows.map(([label, path, status, key]) => `<dt>${esc(label)}</dt><dd><code>${esc(path)}</code> · ${status === 200 ? (key && snapshot.sourceValidity && snapshot.sourceValidity[key] === false ? 'HTTP 200 · unreadable response' : 'live') : status === null ? 'read when you open it' : `HTTP ${status || 'unreachable'}`}</dd>`).join('')}</dl>${workState(['tickets', 'tasks', 'overview']).detail ? `<p>${esc(workState(['tickets', 'tasks', 'overview']).detail)}</p>` : ''}<h3>What is live</h3><p>Application names, suites, versions, availability and summaries come from the packages installed on this swarm and their own summary routes, read in your session. Work items are your real tickets and Jarvis tasks. Conversations go to the same Jarvis thread the cockpit uses and are answered by the accountable assistant, not a script.</p><h3>What is not available on this deployment</h3><p>${!workState(['overview']).complete ? esc(workState(['overview']).message) : snapshot.calendarEvents.length ? 'A shared calendar feed is present.' : 'No application contributes a shared calendar feed yet, so calendar modules show only what a package (such as a classroom) publishes.'} ${panels() ? 'People are your household or team (membership, not presence) and, in Commons, the account roster; only your own place is shown, never anyone else’s.' : 'People appear only where an application publishes membership.'} Pins, skin, day focus and density choices are saved on this device and never change permissions.</p><p class="note-line">Loaded ${esc(snapshot.loadedAt.toLocaleTimeString())}${snapshot.unavailable.length ? ` · unavailable: ${esc(snapshot.unavailable.join(', '))}` : ''}</p>`;
     }
 
     function open(kind, id = '') {
@@ -557,6 +615,7 @@ ${workExtras(item)}
     function handle(action, target) {
       const id = target.dataset.app, suite = target.dataset.suite;
       if (action === 'close') { close(); return true; }
+      if (action === 'retry-work') { retryWork(); return true; }
       if (action === 'directory' || action === 'suite') { state.dirSuite = suite || 'all'; state.dirQuery = ''; open('directory'); return true; }
       if (action === 'filter') { state.dirSuite = suite; updateDirectory(); return true; }
       if (action === 'pin') { togglePin(id); return true; }
@@ -616,7 +675,7 @@ ${workExtras(item)}
       : `<div><div class="message-header">${avatar('J')}Jarvis ${t.pending ? badge('Working', true) : t.error ? badge('Could not answer', true) : ''}</div><div class="message-content">${t.pending ? `<p class="muted">${esc(t.text)}</p>` : t.error ? `<p class="tone-warn">${esc(t.text)}</p>` : answerHtml(t.text)}${(t.handoffs || []).map(chip).join('')}${(t.files || []).map(fileLink).join('')}</div></div>`).join('');
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
-    return { state, apps, suites, work, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
+    return { state, apps, suites, work, workState, workCount, overviewCount, workEmpty, workNotice, retryWork, workValue, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
       gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard, fillPeople, membershipSlot, membership: () => state.membership };
   }
 

@@ -21,6 +21,8 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Select the package-owned preset from its declared layout and admit only exact supported member surfaces.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Name the active home, workspace or classroom consistently in search, loading and display-choice controls.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Finish contextual sidebar and access explanation wording.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  */
 (() => {
   'use strict';
@@ -74,7 +76,7 @@
   async function boot(loaded) {
     snapshot = loaded;
     if (!snapshot.me.authenticated) { root.innerHTML = `<div class="experience"><main class="home-main"><section class="hero"><div><h1>Sign in to open your ${space}.</h1><p>${link('Sign in', '/login', 'button primary')}</p></div></section></main></div>`; return; }
-    shell = S.createShell({ snapshot, layoutId: key, hooks: {} });
+    shell = S.createShell({ snapshot, layoutId: key, hooks: { onWorkChanged: repaint } });
     config = { ...defaultConfig(), ...(LIVE.prefs.get(`homebase:${key}`, {}) || {}) };
     thread = shell.createThread(LIVE.sessionId(), preset.assistantLabel);
     M = window.HOMEBASE_MODULES.create(moduleContext());
@@ -97,7 +99,7 @@
     return {
       esc, btn, link, pill, head, avatar, LIVE, S, data, state, preset, key, dueOn,
       config: () => config, me, displayName, snapshot: () => snapshot, isTeacher, isLearner, toolById, app, canConfigure,
-      thread: () => thread, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
+      thread: () => thread, shell: () => shell, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
       bubbleSeen: () => LIVE.prefs.get(`homebase:${key}:bubble`, '')
     };
   }
@@ -329,7 +331,7 @@
   function shopping() {
     const s = data.shop;
     const body = !s ? '<p class="subtle">Reading your list…</p>' : !s.installed ? '<p class="subtle">The Purchasing application is not installed on this swarm, so there is no shared shopping list here.</p>' : !s.ok ? `<p class="subtle">Your shopping list could not be read (HTTP ${s.status}).</p>` : !s.list ? '<p class="subtle">You have no shopping list yet. Add the first item below to create one in Purchasing.</p>' : `<div class="list-items">${s.items.map(i => `<label class="list-item"><input type="checkbox" data-shopping-item="${esc(i.item_id)}"><span><span class="item-title">${esc(i.title)}</span><small>${i.quantity > 1 ? `×${i.quantity} · ` : ''}${i.unit_price ? `${money(Number(i.unit_price))} · ` : ''}added ${esc(LIVE.relativeTime(LIVE.parseDate(i.created_at)))}</small></span></label>`).join('') || (data.shopDone && data.shopDone.length ? '' : '<p class="subtle">Nothing pending on this list.</p>')}${(data.shopDone || []).map(t => `<label class="list-item got-it"><input type="checkbox" checked disabled><span><span class="item-title">${esc(t)}</span><small>Got it · removed from your list</small></span></label>`).join('')}</div>`;
-    return `<section class="panel" data-module="shopping">${head(esc(preset.shoppingHeading || 'One list. Fewer texts.'), s && s.list ? pill(`${s.items.length} to get`) : '')}${body}${s && s.installed && s.ok ? '<form id="shopping-form" class="add-form"><label class="screenreader" for="shopping-input">Add to the shopping list</label><input id="shopping-input" maxlength="100" placeholder="Anything else we need?" required><button class="button" type="submit" aria-label="Add item">+</button></form><p class="subtle">Ticking an item removes it from the list in Purchasing.</p>' : ''}${s && s.list && state.page === 'home' && preset.nav.some(n => n[0] === 'shopping') ? btn('View list', 'page', 'text-button', 'data-page="shopping"') : ''}</section>`;
+    return `<section class="panel" data-module="shopping">${head(esc(preset.shoppingHeading || 'Shopping List'), s && s.list ? pill(`${s.items.length} to get`) : '')}${body}${s && s.installed && s.ok ? '<form id="shopping-form" class="add-form"><label class="screenreader" for="shopping-input">Add to the shopping list</label><input id="shopping-input" maxlength="100" placeholder="Anything else we need?" required><button class="button" type="submit" aria-label="Add item">+</button></form><p class="subtle">Ticking an item removes it from the list in Purchasing.</p>' : ''}${s && s.list && state.page === 'home' && preset.nav.some(n => n[0] === 'shopping') ? btn('View list', 'page', 'text-button', 'data-page="shopping"') : ''}</section>`;
   }
   function homeFacts() {
     const h = data.home; if (!h || !h.installed) return '';
@@ -347,32 +349,32 @@
     if (!f) return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><p>Reading your finance snapshot…</p></section>`;
     if (!f.installed) return '';
     if (!f.available) return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>Finance is not available in your workspace.</h2><p>Only granted users see account information here; an administrator manages that access. Choosing this ${space} does not change it.</p></section>`;
-    if (f.noData) return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>${key === 'company' ? 'A clear view of the runway starts with linked accounts.' : 'A calmer view of money starts with linked accounts.'}</h2><p>No accounts are synced yet. Link them in Finance; nothing is shown here until you do.</p>${link('Open Finance ↗', f.app.href, 'button')}</section>`;
+    if (f.noData) return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>${key === 'company' ? 'Connect accounts to see operating finances.' : 'Connect accounts to see personal finance.'}</h2><p>No accounts are synced yet. Link them in Finance; nothing is shown here until you do.</p>${link('Open Finance ↗', f.app.href, 'button')}</section>`;
     if (!f.aggregate) return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><p>Finance is unavailable right now (HTTP ${f.status}).</p></section>`;
     const agg = f.aggregate, net = agg.netWorth && typeof agg.netWorth.net === 'number' ? agg.netWorth.net : null, synced = f.syncedAt ? new Date(f.syncedAt).toLocaleDateString() : 'unknown';
     if (key === 'company') {
       const accounts = Array.isArray(agg.accounts) ? agg.accounts.slice(0, 8) : [];
-      return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>A clear view of the runway.</h2><p>Your linked accounts, read from Finance. Visible to you because Finance is granted to you, not because of this ${space}.</p>${net !== null ? `<div class="money-amount">${esc(money(net))}</div><div class="private-caption"><span>Net worth across ${accounts.length} account${accounts.length === 1 ? '' : 's'}</span><span>Synced ${esc(synced)}</span></div>` : ''}<table class="finance-table"><thead><tr><th>Account</th><th>Type</th><th>Balance</th></tr></thead><tbody>${accounts.map(a => `<tr><td>${esc(a.name || a.institution || 'Account')}${a.mask ? ` ···${esc(a.mask)}` : ''}</td><td>${esc(a.subtype || a.type || '')}</td><td>${typeof a.balance === 'number' ? esc(money(a.balance)) : '—'}</td></tr>`).join('')}</tbody></table>${financeBars(agg)}${link('Open Finance ↗', f.app.href, 'button')}</section>`;
+      return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>Operating finances</h2><p>Your linked accounts, read from Finance. Visible to you because Finance is granted to you, not because of this ${space}.</p>${net !== null ? `<div class="money-amount">${esc(money(net))}</div><div class="private-caption"><span>Net worth across ${accounts.length} account${accounts.length === 1 ? '' : 's'}</span><span>Synced ${esc(synced)}</span></div>` : ''}<table class="finance-table"><thead><tr><th>Account</th><th>Type</th><th>Balance</th></tr></thead><tbody>${accounts.map(a => `<tr><td>${esc(a.name || a.institution || 'Account')}${a.mask ? ` ···${esc(a.mask)}` : ''}</td><td>${esc(a.subtype || a.type || '')}</td><td>${typeof a.balance === 'number' ? esc(money(a.balance)) : '—'}</td></tr>`).join('')}</tbody></table>${financeBars(agg)}${link('Open Finance ↗', f.app.href, 'button')}</section>`;
     }
-    return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>A calmer view of money.</h2><p>${esc(displayName())}’s linked accounts, read from Finance. Nobody else in this ${space} inherits this view.</p>${net !== null ? `<div class="money-amount">${esc(money(net))}</div>` : ''}<div class="private-caption"><span>Net worth (cached)</span><span>Synced ${esc(synced)}</span></div>${financeBars(agg)}${f.tiles.length ? `<p class="subtle">${f.tiles.map(t => `${esc(t.label)}: ${esc(t.value)}`).join(' · ')}</p>` : ''}${link('Open my finance view ↗', f.app.href, 'button')}<p class="subtle" style="margin-top:12px">Personal records require explicit sharing; a parent or admin label is not consent.</p></section>`;
+    return `<section class="panel feature-card" data-module="finance"><div class="panel-kicker">${kicker}</div><h2>Personal finance</h2><p>${esc(displayName())}’s linked accounts, read from Finance. Nobody else in this ${space} inherits this view.</p>${net !== null ? `<div class="money-amount">${esc(money(net))}</div>` : ''}<div class="private-caption"><span>Net worth (cached)</span><span>Synced ${esc(synced)}</span></div>${financeBars(agg)}${f.tiles.length ? `<p class="subtle">${f.tiles.map(t => `${esc(t.label)}: ${esc(t.value)}`).join(' · ')}</p>` : ''}${link('Open my finance view ↗', f.app.href, 'button')}<p class="subtle" style="margin-top:12px">Personal records require explicit sharing; a parent or admin label is not consent.</p></section>`;
   }
   function assignmentsOpen() { const edu = data.edu; return edu && edu.ok ? edu.assignments.filter(a => !/complete|done|submitted|closed|archived/i.test(String(a.status || ''))) : []; }
   function learning() {
     const edu = data.edu, lm = app('little-monsters');
     if (!edu) return `<section class="panel feature-card" data-module="learning-loading"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><p>Reading your learning space…</p></section>`;
-    if (!edu.installed) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>Little Monsters is not installed on this swarm, so there is no learning space to show.</p></section>`;
+    if (!edu.installed) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>Learning progress</h2><p>Little Monsters is not installed on this swarm, so there is no learning space to show.</p></section>`;
     if (!edu.ok) return learningRefused(edu, lm);
     if (isTeacher()) return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>You teach ${edu.me.classCount || edu.classes.length} class${(edu.me.classCount || edu.classes.length) === 1 ? '' : 'es'}.</h2><p>${assignmentsOpen().length} open classwork item${assignmentsOpen().length === 1 ? '' : 's'} across them.</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
     // Open classwork only: assignment status is class-wide, and Little Monsters records no per-learner completion to count.
     const open = assignmentsOpen(), next = open[0];
-    return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>A little progress, every day.</h2><p>${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · ${open.length} open classwork item${open.length === 1 ? '' : 's'}.</p>${M.progressBlock()}<p>${next ? `Next: ${esc(next.title)}${next.class_name ? ` · ${esc(next.class_name)}` : ''}${next.due_date ? ` · due ${esc(dueOn(next.due_date))}` : ''}` : 'Nothing is due right now.'}</p>${btn('Open my checklist', 'learning', 'button')}</section>`;
+    return `<section class="panel feature-card" data-module="learning"><div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div><h2>Learning progress</h2><p>${edu.classes.length} class${edu.classes.length === 1 ? '' : 'es'} · ${open.length} open classwork item${open.length === 1 ? '' : 's'}.</p>${M.progressBlock()}<p>${next ? `Next: ${esc(next.title)}${next.class_name ? ` · ${esc(next.class_name)}` : ''}${next.due_date ? ` · due ${esc(dueOn(next.due_date))}` : ''}` : 'Nothing is due right now.'}</p>${btn('Open my checklist', 'learning', 'button')}</section>`;
   }
   /** @description The learning card when Little Monsters did not answer: not admitted (no way in offered), no school profile yet (open it once), or the refusal as read. */
   function learningRefused(edu, lm) {
     const kicker = `<div class="panel-kicker">JUST FOR ${esc(displayName().toUpperCase())}</div>`;
     if (edu.refusal === 'not-granted') return `<section class="panel feature-card" data-module="learning">${kicker}<h2>${esc(eduRefusal(edu, ''))}</h2><p>An administrator manages that access; choosing this ${space} does not change it.</p></section>`;
     const text = eduRefusal(edu, `Your learning space could not be read (HTTP ${edu.status}${edu.error ? `: ${edu.error}` : ''}).`);
-    return `<section class="panel feature-card" data-module="learning">${kicker}<h2>Your learning space is waiting.</h2><p>${esc(text)}${edu.refusal === 'no-profile' ? ' Your classes and classwork then appear here.' : ''}</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
+    return `<section class="panel feature-card" data-module="learning">${kicker}<h2>Learning unavailable</h2><p>${esc(text)}${edu.refusal === 'no-profile' ? ' Your classes and classwork then appear here.' : ''}</p>${lm ? link('Open Little Monsters ↗', lm.href, 'button') : ''}</section>`;
   }
   function requirements() {
     const edu = data.edu, lm = app('little-monsters'), open = assignmentsOpen(), next = open[0];
@@ -407,7 +409,7 @@
   }
   function roster() {
     const edu = data.edu; if (!edu || !edu.ok || !isTeacher()) return '';
-    return `<section class="panel" data-module="teacher-roster">${head('A moment for each learner.', pill('Teacher view'))}${edu.classes.map(rosterClass).join('') || '<p class="subtle">You are not attached to a class yet.</p>'}<p class="subtle" style="margin-top:16px">Rosters and activity come from Little Monsters and are visible only to each class’s teacher. Students never see this panel. Activity (level, streak, quizzes, flashcards) is not classwork completion; Little Monsters records no per-learner completion.</p></section>`;
+    return `<section class="panel" data-module="teacher-roster">${head('Class activity', pill('Teacher view'))}${edu.classes.map(rosterClass).join('') || '<p class="subtle">You are not attached to a class yet.</p>'}<p class="subtle" style="margin-top:16px">Rosters and activity come from Little Monsters and are visible only to each class’s teacher. Students never see this panel. Activity (level, streak, quizzes, flashcards) is not classwork completion; Little Monsters records no per-learner completion.</p></section>`;
   }
   /** A ticket parked at approval_required: it waits on a person, so it must not fall below the newest rows. */
   const awaitsApproval = w => w.kind === 'ticket' && String(w.status.raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_') === 'approval_required';
@@ -415,7 +417,7 @@
     const open = shell.openWork(), apps = new Set(open.map(w => w.appName));
     // Tickets awaiting approval lead; everything else keeps the work list's newest-first order.
     const shown = open.filter(awaitsApproval).concat(open.filter(w => !awaitsApproval(w))).slice(0, 6);
-    return `<section class="panel" data-module="projects">${head('The work we share.', pill(`${open.length} open`))}${shown.map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || '<p class="subtle">No open tickets or tasks. Ask the assistant for something and it lands here.</p>'}<div class="summary-line"><div><strong>${open.length}</strong><small>Open items</small></div><div><strong>${apps.size}</strong><small>Applications involved</small></div><div><strong>${snapshot.botsOnline}</strong><small>Assistants online</small></div></div></section>`;
+    return `<section class="panel" data-module="projects">${head('Recent work', pill(shell.workCount(open.length, 'open')))}${shown.map((w, i) => `<div class="project-row">${avatar(LIVE.initials(w.appName), i)}<div><strong>${esc(w.title)}</strong><small>${esc(w.appName)} · ${esc(w.typeLabel)} · ${esc(LIVE.relativeTime(w.at))}</small></div>${btn(`${esc(w.status.label)} ↗`, 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('') || shell.workEmpty('No open tickets or tasks. Ask the assistant for something and it lands here.')}<div class="summary-line"><div><strong>${esc(shell.workValue(open.length))}</strong><small>Open items</small></div><div><strong>${esc(shell.workValue(apps.size))}</strong><small>Applications involved</small></div><div><strong>${esc(shell.workValue(snapshot.botsOnline, ['overview']))}</strong><small>Assistants online</small></div></div></section>`;
   }
   /**
    * @description The person's own module. A learner gets their learning space; money shows only when Finance admits the
@@ -430,12 +432,12 @@
     return key === 'family' && isTeacher() ? learning() : personalWorkspace();
   }
   function personalWorkspace() {
-    return `<section class="panel feature-card" data-module="personal"><div class="panel-kicker">${esc(displayName().toUpperCase())} / PERSONAL WORKSPACE</div><h2>Room for your best work.</h2><p>Your drafts and assistant conversations stay personal until you share them${key === 'company' ? ' with the team' : ''}.</p><div class="dialog-actions">${btn('My drafts', 'drafts', 'button primary')}${link('Open Jarvis ↗', '/api/jarvis/', 'button')}</div></section>`;
+    return `<section class="panel feature-card" data-module="personal"><div class="panel-kicker">${esc(displayName().toUpperCase())} / PERSONAL WORKSPACE</div><h2>Personal workspace</h2><p>Your drafts and assistant conversations stay personal until you share them${key === 'company' ? ' with the team' : ''}.</p><div class="dialog-actions">${btn('My drafts', 'drafts', 'button primary')}${link('Open Jarvis ↗', '/api/jarvis/', 'button')}</div></section>`;
   }
   function updates() {
     if (!config.updates) return '';
     const rows = (data.updates || []).slice(0, 4), work = snapshot.work.slice(0, 3);
-    return `<section class="panel" data-module="updates">${head(preset.updatesHeading)}${M.notices()}${rows.map(u => `<div class="update"><strong>${esc(u.who)}</strong><p>${esc(u.what)}</p><small>${esc(u.when)}${u.detail ? ` · ${esc(u.detail.slice(0, 90))}` : ''}</small></div>`).join('')}${work.map(w => `<div class="update"><strong>${esc(w.appName)}</strong><p>${esc(w.title)}</p><small>${esc(w.status.label)} · ${esc(LIVE.relativeTime(w.at))}</small></div>`).join('')}${rows.length || work.length ? '' : '<p class="subtle">Nothing new from your applications yet.</p>'}</section>`;
+    return `<section class="panel" data-module="updates">${head(preset.updatesHeading)}${M.notices()}${rows.map(u => `<div class="update"><strong>${esc(u.who)}</strong><p>${esc(u.what)}</p><small>${esc(u.when)}${u.detail ? ` · ${esc(u.detail.slice(0, 90))}` : ''}</small></div>`).join('')}${work.map(w => `<div class="update"><strong>${esc(w.appName)}</strong><p>${esc(w.title)}</p><small>${esc(w.status.label)} · ${esc(LIVE.relativeTime(w.at))}</small></div>`).join('')}${rows.length || work.length ? '' : shell.workEmpty('Nothing new from your applications yet.')}</section>`;
   }
   function peopleList() {
     const edu = data.edu, rows = [];
@@ -461,7 +463,7 @@
   function people() {
     const rows = peopleList(), note = peopleNote();
     const count = groupMembers().length;
-    return `<section class="panel" data-module="people">${head(key === 'family' ? (count > 1 ? `${count} people. One home.` : 'Our people') : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online.</p></section>`;
+    return `<section class="panel" data-module="people">${head(key === 'family' ? (count > 1 ? `${count} people. One home.` : 'Our people') : key === 'classroom' ? 'Your classroom' : 'Your team')}<div class="side-section">${rows.map(memberLine).join('')}</div><p class="subtle" style="margin-top:20px">${note}</p><p class="subtle">${esc(shell.overviewCount(`${snapshot.botsOnline} of ${snapshot.bots.length} swarm assistants are online`))}.</p></section>`;
   }
   function apps() {
     const groups = hostGroups();
@@ -482,7 +484,7 @@
     const learner = isLearner();
     const heading = learner ? (key === 'family' ? `Your day, ${displayName().split(' ')[0]}.` : `Ready to explore, ${displayName().split(' ')[0]}?`) : preset.title;
     const admins = groupMembers().filter(m => m.role === 'admin').length;
-    const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.openWork().length} open items` : `${snapshot.apps.length} apps · ${shell.openWork().length} open items`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.openWork().length} open items · ${snapshot.botsOnline} assistants online`;
+    const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.workCount(shell.openWork().length, 'open items')}` : `${snapshot.apps.length} apps · ${shell.workCount(shell.openWork().length, 'open items')}`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.workCount(shell.openWork().length, 'open items')} · ${shell.overviewCount(`${snapshot.botsOnline} assistants online`)}`;
     const art = key === 'family' ? '<div class="family-scene" role="img" aria-label="A little house among green trees"><span class="plant"></span><span class="little-house"></span><span class="plant"></span></div>' : key === 'classroom' ? (data.edu && data.edu.installed ? '<img class="hero-monster" src="/api/education/logo-256.png" alt="Little Monsters study companion">' : '') : '<div class="company-emblem" aria-hidden="true"><span></span><span></span><span></span></div>';
     return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
   }
@@ -561,7 +563,7 @@
   function render() {
     // A notice shown just before a repaint (an add, then the list re-read) stays: the new toast element takes its text.
     const shown = document.getElementById('toast') ? document.getElementById('toast').textContent : '';
-    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn(`Configure ${space}`, 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
+    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn(`Configure ${space}`, 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${state.page === 'tool' ? '' : shell.workNotice()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
     if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'); const def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
     if (shown) document.getElementById('toast').textContent = shown;
     if (dialogKind) openDialog(dialogKind, dialogId);
@@ -604,6 +606,8 @@
   function aboutExtras() {
     const status = r => (!r ? '(reading)' : r.ok ? `(HTTP ${r.status})` : `(HTTP ${r.status || 'network'}${r.code ? `: ${esc(r.code)}` : ''})`);
     const lines = [];
+    const work = shell.workState(['tickets', 'tasks', 'overview']);
+    if (work.detail) lines.push(`<li>Work source details: ${esc(work.detail)}</li>`);
     if (key !== 'classroom') lines.push(`<li>People: your ${key === 'family' ? 'household' : 'team'} group ${status(data.group)}; names only where the swarm directory shares them.</li>`);
     if (key === 'family') lines.push(`<li>Check-ins: your own place from Location ${status(data.loc)}, as a place name and never coordinates. No one else’s place is read: this swarm has no group presence read.</li>`);
     if (data.progress) lines.push(`<li>Your progress: Little Monsters’ dashboard for you ${status(data.progress)}.</li>`);
@@ -726,6 +730,7 @@
   function onClick(e) {
     const b = e.target.closest('[data-action]'); if (!b) return; const a = b.dataset.action;
     if (a === 'close') return close();
+    if (a === 'retry-work') return shell.retryWork();
     if (a === 'page') { goPage(b.dataset.page); return; }
     if (ACTIONS[a]) { ACTIONS[a](b); return; }
     if (a === 'tool') { if (dialogKind) close(); openTool(b.dataset.tool); return; }

@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive the homebase gap closure in headless Chromium through the real static route registration over the isolated synthetic swarm: learner activity pills and the class summary from the teacher analytics read (and its 403/404 notes), teacher classwork posted to assignments-with-events with the class picker limited to taught classes and refusals rendered as text, the learner checklist opening My Day in place, the ticket project dialog's approval transition with its refusal and no-approval states, the caller's saved drafts and newest finished Jarvis task with empty and failure states, and "Configure home" hidden for guests.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the ticket dialog's Reason and Next action rows appear only when metadata.lastStatusTransition describes the current status (after an approval, and for a mirror of an older state, only State shows); the drafts dialog names Content Studio drafts in its heading, empty and failure copy.
@@ -9,8 +9,11 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | A hosted tool opens in view: on the Business preset with every assembly host installed, scrolled to the bottom of the sidebar (the page is scrolled, the precondition), opening the last host's tool puts the frame's top inside the viewport and focuses the frame, both for a reader who prefers reduced motion and for one who does not. openContext also takes reducedMotion.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The reduced-motion pass reads the frame position once, right after the frame appears, so only an instant scroll passes it; the other pass still polls for the smooth scroll
  * 6 | maintainer@emeraldcoastsystemsgroup.com | The learner card now carries the learner's own level and XP progress from Little Monsters' dashboard (built by the home build lane); the case still proves no classwork completion is claimed, and that the only progress bar is the XP bar.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Actual renderer source-state cases: loading,503/refusal/partial/unreadable/empty and keyboard retry without invented totals or discarded successful rows.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { installAssemblyHosts, startExperienceBrowserFixture } from '../fixtures/experience-browser';
 
@@ -454,3 +457,160 @@ async function openFromSidebarBottom(reducedMotion: 'reduce' | 'no-preference') 
   else await expect.poll(frameTop).toBe('in view');
   expect(await page.evaluate(() => document.activeElement && document.activeElement.id)).toBe('tool-frame');
 }
+
+const workReadUrl = /\/api\/(?:jarvis\/(?:tasks|overview)|tickets)(?:\?.*)?$/;
+/** @description Control only existing read-only work answers in this isolated browser. @param statuses HTTP status by source. @returns Resolves after interception is installed. */
+async function controlWorkReads(statuses: Record<string, number>) {
+  await page.route(workReadUrl, route => {
+    const key = new URL(route.request().url()).pathname.split('/').pop()!;
+    const status = statuses[key] || 200;
+    return status === 200 ? route.continue() : route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error: 'source_fixture_refusal' }) });
+  });
+}
+/** @description Assert unavailable work never claims an empty queue or a zero overview. @returns Resolves after visible text is checked. */
+async function noInventedWork() {
+  const text = await page.locator('body').innerText();
+  expect(text).not.toMatch(/0 open items|0 open ·|0\/0 assistants online|0 assistants online|No open tickets or (?:assistant )?tasks|No tickets or tasks yet\.|Nothing recorded yet\.|Nothing is waiting on you|Nothing is in your queue yet/);
+}
+
+const sourceStateViews = ["/homebase?preset=family","/homebase?preset=company","/homebase?preset=classroom"];
+/** @description Optional isolated synthetic renderer captures, never deployed acceptance. @param path View route. @returns Resolves after desktop/phone capture if explicitly requested. */
+async function captureSourceState(path: string): Promise<void> {
+  const directory = process.env.OSHAL_SOURCE_STATE_CAPTURE_DIR; if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  const name = path.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+  for (const [size, width, height] of [['desktop', 1440, 1000], ['phone', 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: join(directory, name + '-' + size + '.png'), fullPage: true });
+  }
+}
+
+describe('visible work source states', () => {
+  it.each(sourceStateViews)('%s keeps503 visible and retries by keyboard through the real current reads', async path => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const statuses = { tasks: 503, tickets: 503, overview: 503 };
+    await controlWorkReads(statuses);
+    let requests = 0;
+    page.on('request', request => { if (workReadUrl.test(request.url())) requests++; });
+    await open(path, ".home-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    expect(await page.locator('.work-source-status').innerText()).not.toMatch(/HTTP|Tickets|Assistant tasks/);
+    await noInventedWork();
+    expect(requests).toBe(3);
+    await captureSourceState(path);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    Object.assign(statuses, { tasks: 200, tickets: 200, overview: 200 });
+    const retry = page.getByRole('button', { name: 'Retry work sources', exact: true });
+    expect(await retry.evaluate(element => parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThan(0);
+    await retry.focus(); await page.keyboard.press('Enter');
+    await expect.poll(() => page.locator('.work-source-status').count()).toBe(0);
+    expect(requests).toBe(6);
+    expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('H1');
+    expect(errors).toEqual([]);
+  });
+  it.each(sourceStateViews)('%s distinguishes current refusal from an empty queue', async path => {
+    await controlWorkReads({ tasks: 403, tickets: 403, overview: 403 });
+    await open(path, ".home-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('not available to you');
+    await noInventedWork();
+    expect(await page.locator('body').innerText()).not.toContain('Synthetic ledger review');
+  });
+  it.each(sourceStateViews)('%s keeps admitted tasks while tickets and overview are unavailable', async path => {
+    fixture.state.tasks = [{ ...fixture.state.tasks[1], title: 'Synthetic ledger: AVAILABLE_TASK_SENTINEL', status: 'running' }];
+    await controlWorkReads({ tasks: 200, tickets: 503, overview: 503 });
+    await open(path, ".home-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Only loaded work is shown.');
+    if (path.endsWith('family')) await page.locator('.room-tab', { hasText: /^Tasks$/ }).click();
+    expect(await page.locator('body').innerText()).toContain('AVAILABLE_TASK_SENTINEL');
+    const text = await page.locator('body').innerText();
+    if (!path.endsWith('classroom')) expect(text).toContain('loaded');
+    expect(text).not.toMatch(/\b\d+ of \d+ assistants online|\b\d+ assistants online|\b\d+\/\d+ assistants online/);
+    expect(text).not.toContain('Synthetic ledger review');
+    await noInventedWork();
+  });
+  it.each(sourceStateViews)('%s displays successful empty separately from unavailable', async path => {
+    fixture.state.tickets = []; fixture.state.tasks = []; fixture.state.bots = [];
+    await open(path, ".home-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').count()).toBe(0);
+    if (path.endsWith('family')) {
+      await page.locator('.room-tab', { hasText: /^Tasks$/ }).click();
+      expect(await page.locator('[data-module="tasks"]').innerText()).toContain('No open tickets or assistant tasks.');
+    } else if (path.endsWith('company')) expect(await page.locator('[data-module="projects"]').innerText()).toContain('No open tickets or tasks.');
+    else expect(await page.locator('body').innerText()).not.toMatch(/Work unavailable|Assistant status unavailable/);
+    expect(errors).toEqual([]);
+  });
+  it.each(sourceStateViews)('%s does not fabricate zero while work is pending', async path => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/jarvis/tasks', async route => { await held; await route.continue(); });
+    try {
+      await page.goto(fixture.origin + path, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.work-source-status[data-work-source-state="loading"]');
+      expect(await page.locator('.work-source-status').innerText()).toContain('Loading work');
+      await noInventedWork();
+    } finally { release(); }
+    await page.waitForSelector(".home-shell");
+    await expect.poll(() => page.locator('.work-source-status').count()).toBe(0);
+  });
+  it.each(sourceStateViews)('%s refuses unreadable200 work instead of inventing an empty queue', async path => {
+    await page.route(workReadUrl, route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+    await open(path, ".home-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    await noInventedWork();
+    expect(await page.locator('body').innerText()).not.toContain('HTTP 200');
+    await page.locator('[data-action="about"]').click();
+    expect(await page.locator('#dialog-host').innerText()).toContain('returned an unreadable response');
+    expect(await page.locator('#dialog-host').innerText()).toContain('HTTP 200');
+
+  });
+  it.each(sourceStateViews)('%s rejects identities from another response family without inventing rows', async path => {
+    await context.route(workReadUrl, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [{ ticketId: 'wrong-task-family', title: 'Unqualified phantom task' }], tickets: [{ id: 'wrong-ticket-family', title: 'Unqualified phantom ticket' }], bots: [{ id: 'wrong-bot-family', online: true }] }) }));
+    await open(path, '.home-shell');
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    expect(await page.locator('.work-source-status').getAttribute('data-work-source-state')).toBe('unavailable');
+    expect(await page.locator('body').innerText()).not.toMatch(/Unqualified phantom (task|ticket)/);
+    await noInventedWork();
+    expect(errors).toEqual([]);
+  });
+
+  it.each(sourceStateViews)('%s rejects malformed list rows without stalling or inventing data', async path => {
+    await page.route(workReadUrl, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [null], tickets: [{}], bots: [{}] }) }));
+    await open(path, '.home-shell');
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    expect(await page.locator('.work-source-status').getAttribute('data-work-source-state')).toBe('unavailable');
+    await noInventedWork();
+    expect(errors).toEqual([]);
+  });
+
+  it.each(sourceStateViews)('%s preserves an unsent question and edits made during retry', async path => {
+    const statuses = { tasks: 503, tickets: 503, overview: 503 };
+    await controlWorkReads(statuses);
+    await open(path, '.home-shell');
+    await page.waitForLoadState('networkidle');
+    await page.locator('#composer-input').fill('Unsent question before retry');
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/jarvis/tasks', async route => { await held; await route.continue(); });
+    Object.assign(statuses, { tasks: 200, tickets: 200, overview: 200 });
+    await page.getByRole('button', { name: 'Retry work sources', exact: true }).click();
+    try {
+      await page.waitForSelector('.work-source-status[data-work-source-state="loading"]');
+      expect(await page.locator('#composer-input').inputValue()).toBe('Unsent question before retry');
+      await page.locator('#composer-input').fill('Edited while work is loading');
+    } finally { release(); }
+    await expect.poll(() => page.locator('.work-source-status').count()).toBe(0);
+    expect(await page.locator('#composer-input').inputValue()).toBe('Edited while work is loading');
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe('composer-input');
+    expect(fixture.state.asks).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+});

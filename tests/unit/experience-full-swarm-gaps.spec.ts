@@ -1,15 +1,18 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Full-swarm gap closure: audience-aware hosting in Studio, Jarvis, Orbit and Commons (one shared helper, the Summary view / Full application switch remembered per layout), declared assistants and member / Required / Optional relationships read lazily from the package record (group members read one by one, 404 and failure states), the shared games predicate behind the directory chip and the Game room, the Commons swarm roster with the non-admin fallback, and the Jarvis agenda from the overview feed plus the Little Monsters calendar with empty, refused and not-installed states. Adapter reads are proven headlessly; the shells run in Chromium over the real static routes and the synthetic fixture.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | A dependency absent from the viewer catalog reads 'not in your catalog'
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Integration review: the Jarvis agenda reads Little Monsters' read-only home-summary probe first and sends zero /api/education requests when it answers 403 (or fails), reading the calendar only on 200; agenda copy names the Little Monsters calendar (classes and personal events) and an absent package as not in your catalog; Orbit's inspector shows the declared assistants; the Games chip reads 'Looks like a game'; a roster_scope_denied refusal is told apart from the admin requirement, and the roster read keeps the refusal code.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay and the agenda's class events read UTC-midnight DATE values as their own day under America/Chicago; littleMonstersRefusal and the probe's carried code; an agenda for a caller whose plan does not admit Little Monsters, or whose probe is refused by authorization, says "not available to you" and sends no education request; the no-profile copy says to open Little Monsters once to set up the school profile.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Actual renderer source-state cases: loading,503/refusal/partial/unreadable/empty and keyboard retry without invented totals or discarded successful rows.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { startExperienceBrowserFixture, syntheticApp } from '../fixtures/experience-browser';
 
@@ -447,4 +450,167 @@ describe('games chip, Commons people and the Jarvis agenda', () => {
     expect(educationCalls()).toEqual([]);
     expect(errors).toEqual([]);
   });
+});
+
+const workReadUrl = /\/api\/(?:jarvis\/(?:tasks|overview)|tickets)(?:\?.*)?$/;
+/** @description Control only existing read-only work answers in this isolated browser. @param statuses HTTP status by source. @returns Resolves after interception is installed. */
+async function controlWorkReads(statuses: Record<string, number>) {
+  await page.route(workReadUrl, route => {
+    const key = new URL(route.request().url()).pathname.split('/').pop()!;
+    const status = statuses[key] || 200;
+    return status === 200 ? route.continue() : route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error: 'source_fixture_refusal' }) });
+  });
+}
+/** @description Assert unavailable work never claims an empty queue or a zero overview. @returns Resolves after visible text is checked. */
+async function noInventedWork() {
+  const text = await page.locator('body').innerText();
+  expect(text).not.toMatch(/0 open items|0 open ·|0\/0 assistants online|0 assistants online|No open tickets or (?:assistant )?tasks|No tickets or tasks yet\.|Nothing recorded yet\.|Nothing is waiting on you|Nothing is in your queue yet/);
+}
+
+const sourceStateViews = ["/studio","/jarvis","/orbit","/commons"];
+/** @description Optional isolated synthetic renderer captures, never deployed acceptance. @param path View route. @returns Resolves after desktop/phone capture if explicitly requested. */
+async function captureSourceState(path: string): Promise<void> {
+  const directory = process.env.OSHAL_SOURCE_STATE_CAPTURE_DIR; if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  const name = path.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+  for (const [size, width, height] of [['desktop', 1440, 1000], ['phone', 390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const bounds = await page.locator('.work-source-status').boundingBox();
+    expect(bounds!.x).toBeGreaterThan(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: join(directory, name + '-' + size + '.png'), fullPage: true });
+  }
+}
+
+describe('visible work source states', () => {
+  it.each(sourceStateViews)('%s keeps503 visible and retries by keyboard through the real current reads', async path => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const statuses = { tasks: 503, tickets: 503, overview: 503 };
+    await controlWorkReads(statuses);
+    let requests = 0;
+    page.on('request', request => { if (workReadUrl.test(request.url())) requests++; });
+    await open(path, ".full-swarm .app-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    expect(await page.locator('.work-source-status').innerText()).not.toMatch(/HTTP|Tickets|Assistant tasks/);
+    await noInventedWork();
+    expect(requests).toBe(3);
+    await captureSourceState(path);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    Object.assign(statuses, { tasks: 200, tickets: 200, overview: 200 });
+    const retry = page.getByRole('button', { name: 'Retry work sources', exact: true });
+    expect(await retry.evaluate(element => parseFloat(getComputedStyle(element).borderRadius))).toBeGreaterThan(0);
+    await retry.focus(); await page.keyboard.press('Enter');
+    await expect.poll(() => page.locator('.work-source-status').count()).toBe(0);
+    expect(requests).toBe(6);
+    expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('H1');
+    expect(errors).toEqual([]);
+  });
+  it.each(sourceStateViews)('%s distinguishes current refusal from an empty queue', async path => {
+    await controlWorkReads({ tasks: 403, tickets: 403, overview: 403 });
+    await open(path, ".full-swarm .app-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('not available to you');
+    await noInventedWork();
+    expect(await page.locator('body').innerText()).not.toContain('Synthetic ledger review');
+  });
+  it.each(sourceStateViews)('%s keeps admitted tasks while tickets and overview are unavailable', async path => {
+    fixture.state.tasks = [{ ...fixture.state.tasks[1], title: 'Synthetic ledger: AVAILABLE_TASK_SENTINEL', status: 'running' }];
+    await controlWorkReads({ tasks: 200, tickets: 503, overview: 503 });
+    await open(path, ".full-swarm .app-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Only loaded work is shown.');
+    await page.locator('[data-action="all-work"]').first().click();
+    expect(await page.locator('#full-dialog').innerText()).toContain('AVAILABLE_TASK_SENTINEL');
+    const text = await page.locator('body').innerText();
+    expect(text).toContain('loaded');
+    expect(text).toContain('Assistant status unavailable');
+    expect(text).not.toContain('Synthetic ledger review');
+    await noInventedWork();
+  });
+  it.each(sourceStateViews)('%s displays successful empty separately from unavailable', async path => {
+    fixture.state.tickets = []; fixture.state.tasks = []; fixture.state.bots = [];
+    await open(path, ".full-swarm .app-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').count()).toBe(0);
+    expect(await page.locator('body').innerText()).toMatch(/No (?:recorded work|tickets or tasks|review items)|Nothing (?:recorded|in this stage|is in your queue)/);
+    expect(errors).toEqual([]);
+  });
+  it.each(sourceStateViews)('%s does not fabricate zero while work is pending', async path => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/jarvis/tasks', async route => { await held; await route.continue(); });
+    try {
+      await page.goto(fixture.origin + path, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.loading-shell');
+      expect(await page.locator('.loading-shell').innerText()).toContain('Reading your applications, work and assistants');
+      await noInventedWork();
+    } finally { release(); }
+    await page.waitForSelector(".full-swarm .app-shell");
+    await expect.poll(() => page.locator('.work-source-status').count()).toBe(0);
+  });
+  it.each(sourceStateViews)('%s refuses unreadable200 work instead of inventing an empty queue', async path => {
+    await page.route(workReadUrl, route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+    await open(path, ".full-swarm .app-shell");
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    await noInventedWork();
+    expect(await page.locator('body').innerText()).not.toContain('HTTP 200');
+    if (!await page.locator('[data-action="provenance"]').count()) await page.locator('[data-action="directory"]').first().click();
+    await page.locator('[data-action="provenance"]').click();
+    expect(await page.locator('#full-dialog').innerText()).toContain('returned an unreadable response');
+    expect(await page.locator('#full-dialog').innerText()).toContain('HTTP 200');
+
+  });
+  it.each(sourceStateViews)('%s rejects identities from another response family without inventing rows', async path => {
+    await context.route(workReadUrl, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [{ ticketId: 'wrong-task-family', title: 'Unqualified phantom task' }], tickets: [{ id: 'wrong-ticket-family', title: 'Unqualified phantom ticket' }], bots: [{ id: 'wrong-bot-family', online: true }] }) }));
+    await open(path, '.full-swarm .app-shell');
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    expect(await page.locator('.work-source-status').getAttribute('data-work-source-state')).toBe('unavailable');
+    expect(await page.locator('body').innerText()).not.toMatch(/Unqualified phantom (task|ticket)/);
+    await noInventedWork();
+    expect(errors).toEqual([]);
+  });
+
+  it.each(sourceStateViews)('%s rejects malformed list rows without stalling or inventing data', async path => {
+    await page.route(workReadUrl, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tasks: [null], tickets: [{}], bots: [{}] }) }));
+    await open(path, '.full-swarm .app-shell');
+    await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Work could not be loaded.');
+    expect(await page.locator('.work-source-status').getAttribute('data-work-source-state')).toBe('unavailable');
+    await noInventedWork();
+    expect(errors).toEqual([]);
+  });
+
+  it('keeps an open member frame and its unsaved draft intact until the user closes that view', async () => {
+    const statuses = { tasks: 503, tickets: 503, overview: 503 };
+    await controlWorkReads(statuses);
+    let requests = 0;
+    page.on('request', request => { if (workReadUrl.test(request.url())) requests++; });
+    await open('/studio', '.full-studio');
+    await openPanel('ledger');
+    await page.locator('#full-dialog').getByRole('button', { name: 'Use as my context' }).click();
+    await page.locator('.full-context [data-action="toggle-embed"]').click();
+    await page.waitForLoadState('networkidle');
+    const element = await page.locator('.full-context iframe.embed-frame').elementHandle();
+    const frame = await element!.contentFrame();
+    const before = await frame!.evaluate(() => { const input = document.createElement('input'); input.id = 'member-draft'; input.value = 'Unsent member draft'; document.body.append(input); return performance.timeOrigin; });
+    const retry = page.getByRole('button', { name: 'Retry work sources', exact: true });
+    expect(await retry.isDisabled()).toBe(true);
+    expect(await page.locator('.work-source-status').innerText()).toContain('Close the application view before retrying');
+    await retry.dispatchEvent('click');
+    expect(requests).toBe(3);
+    expect(await frame!.evaluate(() => performance.timeOrigin)).toBe(before);
+    expect(await frame!.locator('#member-draft').inputValue()).toBe('Unsent member draft');
+    Object.assign(statuses, { tasks: 200, tickets: 200, overview: 200 });
+    await page.locator('.full-context [data-action="toggle-embed"]').click();
+    expect(await page.getByRole('button', { name: 'Retry work sources', exact: true }).isEnabled()).toBe(true);
+    await page.getByRole('button', { name: 'Retry work sources', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.locator('.work-source-status').count()).toBe(0);
+    expect(requests).toBe(6);
+    expect(errors).toEqual([]);
+  });
+
 });

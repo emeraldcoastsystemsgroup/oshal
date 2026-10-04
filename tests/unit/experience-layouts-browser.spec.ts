@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The central assistant's readback keeps its outcome on the status line after Stop (STOPPED · READY WHEN YOU ARE, the demo's rule) instead of returning to the resting prompt; the ask-flow case asserts that outcome.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Verify authorized package cards and package chooser values instead of retired static portal entries.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The paint-timing case waits for the CONNECTING placeholder to be replaced, a marker every preset shares. Since #1042 the classroom placeholder reads "Reading your classroom", so waiting for "Reading your home" to vanish was true on first paint and timed nothing.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -158,7 +159,7 @@ describe('experience shells over the real routes', () => {
     await page.waitForSelector('.briefing-item');
     const brief = await page.locator('.briefing-card').innerText();
     expect(brief).toContain('Synthetic failed task'); expect(brief).toContain('Synthetic ledger review');
-    expect(await bodyText()).toContain('Your 6 worlds.');
+    expect(await bodyText()).toContain('6 application suites');
     expect(await page.locator('.attention-card').count()).toBe(4);
     expect(await page.locator('.jarvis-date').innerText()).toContain('synthetic');
     expect(await bodyText()).not.toMatch(FIXTURE_ERA);
@@ -216,7 +217,7 @@ describe('experience shells over the real routes', () => {
     fixture.state.education.me = { ...fixture.state.education.me, role: 'student' };
     await page.reload(); await page.waitForFunction(() => document.body.innerText.includes('open classwork item'));
     text = await bodyText();
-    expect(text).not.toContain('A moment for each learner'); expect(text).toContain('1 open classwork item'); expect(text).toContain('Open my checklist');
+    expect(text).not.toContain('Class activity'); expect(text).toContain('1 open classwork item'); expect(text).toContain('Open my checklist');
     expect(text).not.toContain('classwork done');
     fixture.state.education.meStatus = 404;
     await page.reload(); await page.waitForFunction(() => document.body.innerText.includes('Open Little Monsters to join a class'));
@@ -362,7 +363,7 @@ describe('experience shells over the real routes', () => {
     await page.reload(); await page.waitForFunction(() => document.querySelector('[data-module="learning"]')?.textContent?.includes('You teach'));
     expect(await page.locator('[data-module="finance"]').count()).toBe(0);
     fixture.state.education.me = { ...fixture.state.education.me, role: 'parent' };
-    await page.reload(); await page.waitForFunction(() => document.querySelector('[data-module="personal"]')?.textContent?.includes('Room for your best work.'));
+    await page.reload(); await page.waitForFunction(() => document.querySelector('[data-module="personal"] h2')?.textContent === 'Personal workspace');
     expect(await page.locator('[data-module="finance"]').count()).toBe(0);
   });
 

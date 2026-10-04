@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Every canonical ticket state now folds to a label a shell can place: approved (Approved, waiting for the queue), approval_required (Approval required) and customer_action (Needs you) wait on a person, dead_letter reads Blocked, and every in_process_* phase is Working (they printed as "In process build" and fell off the Commons board, and an approval gate was never counted as needing you). STATUS_GROUPS names the attention / moving / done label sets the shells share for briefings and board columns.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | speak(): a readback stopped while POST /api/voice/synthesize is still answering never starts (the answer is dropped before any Audio element or browser utterance is created), and progress is reported through an onProgress hook where it is known (the audio element's time over its duration; the utterance's boundary index over the text length).
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Adapters for the full-swarm build over existing routes: one ticket's workflow read model (GET /api/v1/tickets/:id/workflow) and its owner-checked cancel, the caller's schedules with pause/resume (GET /api/v1/agent/schedules, POST /:id/pause|resume), Workflow Studio definitions, household/team membership (GET /api/tenants, /:id/members) and the caller's own location overview (GET /api/location/state). The catalog keeps the listing's package status for the package-facts panel.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  */
 (function attach(root, factory) {
   'use strict';
@@ -430,6 +431,47 @@
       .map(function (d) { return { workJobId: d.workJobId, title: String(d.title || 'Background work').slice(0, 200) }; });
   }
 
+  /**
+   * @description Derive presentation readiness from existing work receipts without interpreting absence as zero.
+   * @param {object} snapshot Current snapshot and source statuses.
+   * @param {string[]} [keys] Required sources; defaults to tickets and tasks.
+   * @returns {{kind:string,complete:boolean,message:string,detail:string}} Concise presentation state; source details belong in provenance.
+   */
+  function sourceState(snapshot, keys) {
+    var snap = snapshot || {}, sources = snap.sources || {}, selected = keys || ['tickets', 'tasks'];
+    var names = { tickets: 'Tickets', tasks: 'Assistant tasks', overview: 'Assistant status' };
+    var pending = snap.workLoading || snap.workLoaded === false || (snap.workLoaded !== true && selected.some(function (key) { return sources[key] === undefined; }));
+    if (pending) return { kind: 'loading', complete: false, message: selected.length === 1 ? 'Loading ' + names[selected[0]].toLowerCase() + '…' : 'Loading work…', detail: '' };
+    var valid = snap.sourceValidity || {};
+    var failed = selected.filter(function (key) { return sources[key] !== 200 || valid[key] === false; });
+    if (!failed.length) return { kind: 'ready', complete: true, message: '', detail: '' };
+    var partial = failed.length < selected.length;
+    var detail = failed.map(function (key) {
+      var status = sources[key], label = names[key] || 'Work';
+      if (status === 200 && valid[key] === false) return label + ' returned an unreadable response.';
+      return label + (status === 401 || status === 403 ? ' not available to you' : ' unavailable right now') + ' (HTTP ' + (status || 'network') + ').';
+    }).join(' ');
+    var label = selected.length === 1 ? names[selected[0]] || 'Work' : 'Work';
+    var refused = failed.every(function (key) { return sources[key] === 401 || sources[key] === 403; });
+    var unavailable = selected.length === 1 && (selected[0] === 'tickets' || selected[0] === 'tasks') ? ' are not available to you.' : ' is not available to you.';
+    var message = partial ? 'Only loaded work is shown.' : label + (refused ? unavailable : ' could not be loaded.');
+    return { kind: partial ? 'partial' : 'unavailable', complete: false, message: message, detail: detail };
+  }
+
+  /**
+   * @description Validate list identity before normalization; malformed rows never become invented work or zero counts.
+   * @param {object} response Existing JSON read receipt.
+   * @param {string} key Expected list field.
+   * @returns {boolean} Whether all rows provide the owning API's minimal identity/status shape.
+   */
+  function readableRows(response, key) {
+    return Boolean(response.ok && response.body && Array.isArray(response.body[key]) && response.body[key].every(function (row) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+      var identity = key === 'bots' ? row.agentId : key === 'tickets' ? row.ticketId : row.id;
+      return typeof identity === 'string' && Boolean(identity.trim()) && (key !== 'bots' || typeof row.online === 'boolean');
+    }));
+  }
+
   /** @description Build the adapter over an injectable fetch and storage so tests can drive it headlessly. */
   function createClient(options) {
     var opts = options || {};
@@ -460,7 +502,7 @@
     }
     function list(res, key) { return res.ok && res.body && Array.isArray(res.body[key]) ? res.body[key] : []; }
 
-    function missing(sources) { return Object.keys(sources).filter(function (k) { return sources[k] !== 200; }); }
+    function missing(sources, validity) { return Object.keys(sources).filter(function (k) { return sources[k] !== 200 || validity && validity[k] === false; }); }
     /** @description Phase one: the signed-in identity and the caller's catalog, enough to paint a home; a failed source is reported, never faked. */
     async function loadCore() {
       var results = await Promise.all([getJson('/api/auth/user'), getJson('/api/swarm/apps/home-plan'), getJson('/api/swarm/apps?status=active'), getJson('/api/ui/workspaces')]);
@@ -477,9 +519,10 @@
     async function loadWork(snap) {
       var results = await Promise.all([getJson('/api/jarvis/tasks'), getJson('/api/tickets?limit=100'), getJson('/api/jarvis/overview')]);
       var tasks = results[0], tickets = results[1], overview = results[2];
-      var work = mergeWork({ tickets: list(tickets, 'tickets'), tasks: list(tasks, 'tasks') }, snap.apps);
-      var ov = overview.ok && overview.body ? overview.body : {};
-      var bots = Array.isArray(ov.bots) ? ov.bots : [];
+      var taskReadable = readableRows(tasks, 'tasks'), ticketReadable = readableRows(tickets, 'tickets'), overviewReadable = readableRows(overview, 'bots');
+      var work = mergeWork({ tickets: ticketReadable ? tickets.body.tickets : [], tasks: taskReadable ? tasks.body.tasks : [] }, snap.apps);
+      var ov = overviewReadable ? overview.body : {};
+      var bots = overviewReadable ? ov.bots : [];
       snap.work.length = 0; Array.prototype.push.apply(snap.work, work);
       snap.bots.length = 0; Array.prototype.push.apply(snap.bots, bots);
       snap.botsOnline = bots.filter(function (b) { return b.online; }).length;
@@ -487,7 +530,8 @@
       snap.openTickets = ov.activity && typeof ov.activity.openCount === 'number' ? ov.activity.openCount : openFromWork;
       snap.comms = ov.comms || null; snap.calendarEvents = ov.calendar && Array.isArray(ov.calendar.events) ? ov.calendar.events : [];
       snap.sources.tasks = tasks.status; snap.sources.tickets = tickets.status; snap.sources.overview = overview.status;
-      snap.unavailable = missing(snap.sources); snap.workLoaded = true; snap.loadedAt = new Date();
+      snap.sourceValidity = { tasks: taskReadable, tickets: ticketReadable, overview: overviewReadable };
+      snap.unavailable = missing(snap.sources, snap.sourceValidity); snap.workLoaded = true; snap.loadedAt = new Date();
       return snap;
     }
     /** @description Load everything the shells share: both phases, in order. */
@@ -783,7 +827,7 @@
     mergeApps: mergeApps, buildSuites: buildSuites, mergeWork: mergeWork, normalizeTicket: normalizeTicket, normalizeTask: normalizeTask,
     atPointer: atPointer, normalizeSummary: normalizeSummary, relativeTime: relativeTime, clockTime: clockTime, parseDate: parseDate,
     calendarDay: calendarDay, littleMonstersRefusal: littleMonstersRefusal, dependencyTiers: dependencyTiers, declaredAssistants: declaredAssistants, directoryPeople: directoryPeople, classEvents: classEvents,
-    localHref: localHref, createClient: createClient
+    localHref: localHref, createClient: createClient, sourceState: sourceState
   };
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     var client = createClient();

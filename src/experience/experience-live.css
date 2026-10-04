@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Align source recovery notices with existing themed surfaces and responsive gutters, preserving main and dialog placement.
+ */
 /* Additions the live shells need beyond the prototype stylesheets: embedded application
    frames, status tones, loading and sign-in states, and anchor variants of prototype buttons. */
 .loading-shell{max-width:720px;margin:12vh auto;padding:32px;text-align:center}
@@ -127,3 +134,9 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .homebase-card .live-mock{height:190px;border-radius:0;border:0;border-bottom:1px solid var(--line)}
 /* With the day focus and skin pickers side by side the study caption wraps on a phone instead of pushing past the edge. */
 @media (max-width:560px){.full-swarm .study-caption{flex-wrap:wrap;row-gap:6px;justify-content:flex-start}.full-swarm .study-caption select.layout-picker{min-width:0}}
+
+/* Recovery stays in the active theme; in-page and dialog notices retain their existing container gutter. */
+.work-source-status{margin:16px clamp(12px,2vw,28px);padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface,var(--paper));color:var(--ink);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.work-source-status p{margin:0 0 10px}
+.work-source-status p:last-child{margin-bottom:0}
+.home-main .work-source-status,dialog .work-source-status{margin-left:0;margin-right:0}

@@ -7,6 +7,8 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Routines (Jarvis briefing sources and the caller's schedules, added by asking Jarvis), search in this home (what the page read plus the caller-scoped global search), files (Jarvis task files and saved drafts), tasks (open work and open classwork), the day-grouped agenda with a read-only event dialog, the assistant bubble and inline composer, the room tabs and the "Make it yours" choices (how the assistant offers help, what greets you, what stays close at hand).
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Match shared search and assistant wording to the active home, workspace or classroom.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Name the active space in the people strip accessibility label.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  */
 (function (root, factory) {
   var api = factory();
@@ -61,7 +63,7 @@
         : `<div class="location-grid"><article class="location-person" data-person="me"><div class="member-line">${avatar(ctx.me().initials, 0)}<strong>${esc(ctx.displayName())} · you</strong></div><p>${esc(placeText(loc))}</p><small>${esc(stampText(loc))}</small></article>${members().filter(m => !m.self).map((m, i) => `<article class="location-person" data-person="member"><div class="member-line">${avatar(LIVE.initials(memberName(m)), i + 1)}<strong>${esc(memberName(m))}</strong></div><p>Not shown</p><small>No check-in is shared with you</small></article>`).join('')}</div>`;
       const note = loc && loc.ok ? `${visibilityText(loc)} Places come from Location as names, never coordinates. Seeing each other’s check-ins needs group sharing, which this swarm does not offer yet.` : 'Each person chooses whether to share. Nothing is shared by joining a home.';
       const toggle = loc && loc.ok ? `<label class="sharing-toggle">Share my check-in from this browser<input type="checkbox" id="share-location" ${loc.thisDevice && loc.thisDevice.reporting ? 'checked' : ''}></label>` : '';
-      return `<section class="panel" data-module="locations">${head('A little peace of mind.', pill('Opt-in check-ins'))}${body}<p class="subtle location-note">${esc(note)}</p>${toggle}</section>`;
+      return `<section class="panel" data-module="locations">${head('Check-ins', pill('Opt-in check-ins'))}${body}<p class="subtle location-note">${esc(note)}</p>${toggle}</section>`;
     }
     /** @description Turning a check-in on happens in Settings, Location: it needs a fresh sign-in (the step-up) and the browser's location permission. */
     function locationOnDialog() {
@@ -79,7 +81,7 @@
     /** @description The room strip: the home's assistant (with the swarm's online count) and the household's people and roles; people carry no online state because no presence source exists. */
     function room() {
       const snap = ctx.snapshot(), rows = members().length ? members() : [{ self: true, role: '' }];
-      const host = `<div class="room-person" data-person="assistant"><span class="room-avatar"><span class="assistant-orb" aria-hidden="true"></span>${snap.botsOnline ? '<span class="presence-dot" aria-hidden="true"></span>' : ''}</span><div><strong>${esc(ctx.preset.assistantLabel)}</strong><small>Room host · ${snap.botsOnline} of ${snap.bots.length} assistants online</small></div></div>`;
+      const host = `<div class="room-person" data-person="assistant"><span class="room-avatar"><span class="assistant-orb" aria-hidden="true"></span>${ctx.shell().workState(['overview']).complete && snap.botsOnline ? '<span class="presence-dot" aria-hidden="true"></span>' : ''}</span><div><strong>${esc(ctx.preset.assistantLabel)}</strong><small>Room host · ${esc(ctx.shell().overviewCount(`${snap.botsOnline} of ${snap.bots.length} assistants online`))}</small></div></div>`;
       const people = rows.slice(0, 5).map((m, i) => `<div class="room-person"><span class="room-avatar">${avatar(LIVE.initials(memberName(m)), i)}</span><div><strong>${esc(memberName(m))}${m.self ? ' · you' : ''}</strong><small>${m.role === 'admin' ? 'Admin' : m.role === 'member' ? 'Member' : 'Signed in'}</small></div></div>`).join('');
       return `<section class="room-strip" data-module="room" aria-label="People in this ${space}">${host}${people}</section>`;
     }
@@ -123,7 +125,7 @@
       const b = r.briefings, s = r.schedules;
       const briefings = !b.ok ? refusedLine(b, 'Your briefings') : b.sources.length ? `<div class="list-items">${b.sources.map(briefingRow).join('')}</div>` : '<p class="subtle">No briefing source is available to you.</p>';
       const schedules = !s.ok ? refusedLine(s, 'Your schedules') : s.rows.length ? `<div class="list-items">${s.rows.map(scheduleRow).join('')}</div>` : '<p class="subtle">You have no schedules yet.</p>';
-      return `<section class="panel" data-module="routines"><div class="panel-kicker">FOR THIS ${space.toUpperCase()}</div>${head('A calmer start, on a schedule.')}<h3>Briefings</h3>${briefings}<h3>Scheduled</h3>${schedules}<form id="routine-form" class="add-form"><label class="screenreader" for="routine-input">Ask Jarvis for a routine</label><input id="routine-input" maxlength="300" required placeholder="Every Saturday at 8:30, prepare a weekend brief"${ctx.thread().busy ? ' disabled' : ''}><button class="button" type="submit" aria-label="Ask Jarvis">→</button></form><p class="subtle" id="routine-feedback" role="status">Jarvis turns a sentence with a time into one of your schedules.</p></section>`;
+      return `<section class="panel" data-module="routines"><div class="panel-kicker">FOR THIS ${space.toUpperCase()}</div>${head('Routines')}<h3>Briefings</h3>${briefings}<h3>Scheduled</h3>${schedules}<form id="routine-form" class="add-form"><label class="screenreader" for="routine-input">Ask Jarvis for a routine</label><input id="routine-input" maxlength="300" required placeholder="Every Saturday at 8:30, prepare a weekend brief"${ctx.thread().busy ? ' disabled' : ''}><button class="button" type="submit" aria-label="Ask Jarvis">→</button></form><p class="subtle" id="routine-feedback" role="status">Jarvis turns a sentence with a time into one of your schedules.</p></section>`;
     }
 
     /* ── search, files, tasks ────────────────────────────────────── */
@@ -149,14 +151,14 @@
     function filesPage() {
       const rows = ctx.snapshot().work.filter(w => w.kind === 'task' && w.files && w.files.length).flatMap(w => w.files.map(f => ({ f, w })));
       const list = rows.map(({ f, w }) => `<div class="list-item"><span><span class="item-title">${ctx.S.fileLink(f) || esc(f.name || 'file')}</span><small>${esc(w.title)} · ${esc(w.at ? ago(w.at) : 'unknown time')}</small></span></div>`).join('');
-      return `<section class="panel" data-module="files"><div class="panel-kicker">JUST FOR YOU</div>${head('Everything for the plan.')}<h3>Files from your assistant</h3><div class="list-items">${list || '<p class="subtle">No finished Jarvis task has produced a file yet.</p>'}</div><div id="drafts-slot">${ctx.data.draftsHtml || '<p class="subtle">Reading your drafts…</p>'}</div></section>`;
+      return `<section class="panel" data-module="files"><div class="panel-kicker">JUST FOR YOU</div>${head('Files and drafts')}<h3>Files from your assistant</h3><div class="list-items">${list || ctx.shell().workEmpty('No finished Jarvis task has produced a file yet.', ['tasks'])}</div><div id="drafts-slot">${ctx.data.draftsHtml || '<p class="subtle">Reading your drafts…</p>'}</div></section>`;
     }
     /** @description Tasks: your open tickets and assistant tasks, and open classwork when Little Monsters answers for you. */
     function tasksPage() {
       const open = ctx.openWork(), classwork = ctx.assignments();
       const work = open.slice(0, 12).map(w => `<div class="list-item"><span><span class="item-title">${esc(w.title)}</span><small>${esc(w.appName)} · ${esc(w.status.label)} · ${esc(ago(w.at))}</small></span>${btn('Open ↗', 'project', 'button', `data-work="${esc(w.id)}"`)}</div>`).join('');
       const school = classwork.map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || 'Class')}${a.due_date ? ` · due ${esc(ctx.dueOn(a.due_date))}` : ''}</small></span></div>`).join('');
-      return `<section class="panel" data-module="tasks"><div class="panel-kicker">${esc(ctx.preset.name.toUpperCase())}</div>${head('A few things to take care of.', pill(`${open.length + classwork.length} open`))}<h3>Work</h3><div class="list-items">${work || '<p class="subtle">No open tickets or assistant tasks.</p>'}</div>${ctx.data.edu && ctx.data.edu.ok ? `<h3>Classwork</h3><div class="list-items">${school || '<p class="subtle">No open classwork.</p>'}</div>` : ''}</section>`;
+      return `<section class="panel" data-module="tasks"><div class="panel-kicker">${esc(ctx.preset.name.toUpperCase())}</div>${head('Tasks', pill(ctx.shell().workCount(open.length, 'open work items')))}<h3>Work</h3><div class="list-items">${work || ctx.shell().workEmpty('No open tickets or assistant tasks.')}</div>${ctx.data.edu && ctx.data.edu.ok ? `<h3>Classwork · ${classwork.length} open</h3><div class="list-items">${school || '<p class="subtle">No open classwork.</p>'}</div>` : ''}</section>`;
     }
 
     /* ── calendar ────────────────────────────────────────────────── */
@@ -164,7 +166,7 @@
     function dayAgenda() {
       const groups = window.HOMEBASE_DATA.dayGroups(ctx.events().slice(0, 40));
       if (!groups.length) return '';
-      return `<section class="panel" data-module="agenda"><div class="panel-kicker">COMING UP</div>${head('Day by day.')}${groups.map(g => `<div class="day-group"><h3>${esc(dayLabel(g.day))}</h3>${g.events.map(e => `<button type="button" class="agenda-row" data-action="event-detail" data-event="${esc(e.event_id)}"><time>${esc(e.event_time ? LIVE.clockTime(e.when) : 'All day')}</time><span>${esc(e.title)}<small>${esc(e.class_name || 'Personal')}</small></span></button>`).join('')}</div>`).join('')}</section>`;
+      return `<section class="panel" data-module="agenda"><div class="panel-kicker">COMING UP</div>${head('Upcoming schedule')}${groups.map(g => `<div class="day-group"><h3>${esc(dayLabel(g.day))}</h3>${g.events.map(e => `<button type="button" class="agenda-row" data-action="event-detail" data-event="${esc(e.event_id)}"><time>${esc(e.event_time ? LIVE.clockTime(e.when) : 'All day')}</time><span>${esc(e.title)}<small>${esc(e.class_name || 'Personal')}</small></span></button>`).join('')}</div>`).join('')}</section>`;
     }
     /** @description One event's details as Little Monsters recorded them; it offers no change because the package has no event update route. */
     function eventDialog(id) {
@@ -208,11 +210,11 @@
       const busy = ctx.thread().busy;
       return `<form id="composer-form" class="composer"><label class="screenreader" for="composer-input">Ask ${esc(ctx.preset.assistantLabel.toLowerCase())}</label><input id="composer-input" maxlength="600" autocomplete="off" placeholder="${esc(ctx.preset.assistantPrompt)}"${busy ? ' disabled' : ''}><button class="button primary" type="submit" aria-label="Send"${busy ? ' disabled' : ''}>↑</button></form>`;
     }
-    /** @description The room tabs a preset declares (Room, Tasks, Files …) with "Make it yours" beside them. */
+    /** @description The room tabs a preset declares (Room, Tasks, Files …) with "Display options" beside them. */
     function roomTabs() {
       const tabs = ctx.preset.tabs || [];
       if (!tabs.length) return '';
-      return `<nav class="room-tabs" aria-label="Room sections">${tabs.map(([id, label]) => btn(esc(label), 'page', 'room-tab', `data-page="${id}" ${ctx.state.page === id ? 'aria-current="page"' : ''}`)).join('')}${ctx.canConfigure() ? btn('Make it yours', 'configure', 'text-button room-customize') : ''}</nav>`;
+      return `<nav class="room-tabs" aria-label="Room sections">${tabs.map(([id, label]) => btn(esc(label), 'page', 'room-tab', `data-page="${id}" ${ctx.state.page === id ? 'aria-current="page"' : ''}`)).join('')}${ctx.canConfigure() ? btn('Display options', 'configure', 'text-button room-customize') : ''}</nav>`;
     }
     /** @description The configure dialog's layout choices, saved on this device: how the assistant offers help, what greets you first, and which modules stay on the front page. */
     function configExtras() {
