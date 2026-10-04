@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the shell-lock live-acceptance case over a fake second-caller port: passes only when an unknown name is refused 404 with exactly the lock fields, every cockpit spelling and the experience page redirect to the landing, and no name serves the landing application; the pre-fix answers (a built-in 200, a served /Cockpit/) fail; an operator caller, an unmapped host or a missing port is unavailable by name; every request is a GET carrying the focused host.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Require a matching explicitly bound actual origin before any case request, with no Host or forwarded-host overrides.
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -32,7 +33,8 @@ function box(over: Record<string, FakeHandler> = {}) {
   });
 }
 
-const run = (port: ReturnType<typeof fakeApi>, options = { focusedHost: HOST }) => shellLock.run({ second: { api: port.api, ownerSub: 'fixture-member' } }, options);
+const run = (port: ReturnType<typeof fakeApi>, options = { focusedHost: HOST }) => shellLock.run({
+  second: { api: port.api, ownerSub: 'fixture-member', origin: `https://${HOST}` } }, options);
 
 describe('shell-lock live acceptance', () => {
   it('passes on the fixed build, asking only GETs as the focused host', async () => {
@@ -42,7 +44,8 @@ describe('shell-lock live acceptance', () => {
     expect(result.detail).toContain('an unknown name is refused 404 experience_unavailable (landing intelligent-sales)');
     expect(result.detail).toContain(`4 surface spellings redirect to ${LANDING}`);
     expect(result.detail).toContain('no name serves the landing application intelligent-sales');
-    expect(port.calls.every((call) => call.method === 'GET' && call.headers['x-forwarded-host'] === HOST)).toBe(true);
+    expect(port.calls.every((call) => call.method === 'GET' && !('host' in call.headers)
+      && !('x-forwarded-host' in call.headers))).toBe(true);
     expect(port.calls.map((call) => call.path)).toEqual(['/api/cli-tokens/whoami', '/api/ui/profile', ...shellLock.SURFACES, '/api/ui/profile']);
     expect(result.cleanup).toMatchObject({ removed: [], outstanding: [], errors: [] });
   });
@@ -73,5 +76,22 @@ describe('shell-lock live acceptance', () => {
     expect([operator.state, operator.detail.includes('is an operator')]).toEqual(['unavailable', true]);
     const unmapped = await run(box({ 'GET /api/ui/profile': () => ({ status: 404, json: { error: 'experience_unavailable', landingApp: null, operator: false } }) }));
     expect([unmapped.state, unmapped.detail.includes('HOST_APP_MAP')]).toEqual(['unavailable', true]);
+  });
+
+  it.each([undefined, '', 'not-a-url', 'http://127.0.0.1:35457', 'https://unmapped.fixture.invalid',
+    `ftp://${HOST}`, `https://fixture-user@${HOST}`, `https://${HOST}/other`, `https://${HOST}/?query=1`,
+    `https://${HOST}/#fragment`])('sends nothing when the caller origin is missing, invalid or mismatched: %s', async origin => {
+    const port = box();
+    const result = await shellLock.run({ second: { api: port.api, origin } }, { focusedHost: HOST });
+    expect(result.state).toBe('unavailable');
+    expect(result.detail).toContain('OSHAL_VERIFY_BASE_URL');
+    expect(port.calls).toEqual([]);
+  });
+
+  it('accepts the canonical hostname of the actual bound origin, including uppercase and a port', async () => {
+    const port = box();
+    const result = await shellLock.run({ second: { api: port.api, origin: `https://${HOST.toUpperCase()}:8443` } }, { focusedHost: HOST });
+    expect(result.state).toBe('pass');
+    expect(port.calls.every(call => Object.keys(call.headers).length === 0)).toBe(true);
   });
 });

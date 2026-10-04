@@ -1,11 +1,15 @@
 /**
  * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register multi-store discovery and its isolated installation/browser regression suites in the existing AI Test Lab.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register explicit focused-application entry and host-default regression coverage.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Attach the ADR-147 D10 fetch-fence suite to multi-store discovery: the hostname half of the fence is a registry-read behaviour, so it belongs to the scenario that reads registries rather than to a new live step - a Lab step that proved it would have to make the running swarm resolve a name into private space.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Register the catalog connector-readiness scenario. The applications page joins two token-free feeds - the bundle's declared providers from the app listing and the caller's own state from the connector broker - and a live step is the only place their AGREEMENT can be checked: a listing that predates the projection, or a broker that answers for nobody, both leave the catalog unable to tell connected from credential-needed. Read-only: it lists apps and reads the caller's own connector states, and never starts a consent flow or changes a connection.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the dependency-tier scenario: a read-only live step checks one install preview reports required/optional tiers with closed states and never offers an install the installer would refuse; its contract, installer and App Loader browser suites are attached.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Backlog #33: register the exact-SHA package-audit gate. Its live step runs the REAL installer in enforce mode for the first catalog package that carries an audited binding, into a disposable temporary directory (never deployed-apps, nothing loaded), and reports pass only for an exact audited pin; an attestation the configured store cannot serve or that no longer describes the catalog source reports a gap. The temporary directory is removed and its removal verified. The installer's real-Git evidence, stale-source and version suites are attached.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP Host admission regressions for focused root, shell and profile decisions, with forwarded protocol/IP behavior retained.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -227,11 +231,12 @@ export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'readiness', app: 'applications', label: 'Bundle providers and their live state', run: catalogConnectorReadiness }],
 }, {
   id: 'focused-application-entry', title: 'Focused application entry', group: 'tool',
-  description: 'Explicit root application links retain the selected application through redirect. Bare-host defaults remain intact and malformed selectors cannot supply a redirect destination.',
-  regressionTests: [{ level: 'unit', path: 'tests/unit/host-app-map.spec.ts' }],
+  description: 'Explicit root application links retain the selected application through redirect. Bare-host defaults remain intact and malformed selectors cannot supply a redirect destination. Real HTTP checks keep focused-host admission tied to ingress Host despite conflicting forwarded-host values.',
+  regressionTests: [{ level: 'unit', path: 'tests/unit/host-app-map.spec.ts' },
+    { level: 'integration', path: 'tests/unit/host-app-map-http.spec.ts' }],
   steps: [{ id: 'runner', app: 'app-loader', label: 'Focused entry regressions', run: async () => ({
     app: 'app-loader', label: 'Focused entry regressions', state: 'degraded',
-    detail: 'Run npx vitest run tests/unit/host-app-map.spec.ts locally. This Lab step does not execute host commands or change application access.',
+    detail: 'Run npx vitest run tests/unit/host-app-map.spec.ts tests/unit/host-app-map-http.spec.ts locally. This Lab step does not execute host commands or change application access.',
   }) }],
 }, {
   id: 'package-audit-exact-sha', title: 'Exact-SHA package audit gate', group: 'tool',
