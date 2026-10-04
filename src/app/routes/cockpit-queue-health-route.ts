@@ -1,7 +1,14 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Gate the global queue-health collector before ticket or work-item reads; preserve operator summaries.
+ */
 import type { Pool } from 'pg';
 import type { Request, Response } from 'express';
 import type { InternalTicket, TicketStatusHistoryRecord } from '@/entities/ticket';
-import { getCaller, isOperator } from '@/shared/middleware/authz';
+import { getCaller, isOperator, requireOperator } from '@/shared/middleware/authz';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
 
@@ -283,9 +290,12 @@ export async function buildQueueHealthSummary(
 
 /**
  * @description GET /api/v1/metrics/queue-health.
+ * @param ctx Application services used after operator admission.
+ * @returns Operator-only queue-health request handler.
  */
 export function handleGetCockpitQueueHealth(ctx: AppContext) {
   return async (req: Request, res: Response) => {
+    if (!requireOperator(req, res)) return;
     try {
       const caller = getCaller(req).sub;
       const allowAll = req.query.scope === 'all' && isOperator(req);

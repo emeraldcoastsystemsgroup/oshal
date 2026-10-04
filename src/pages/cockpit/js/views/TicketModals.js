@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from TicketView.js (1000-line cap)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Session 22: Added Intake Assistant tab — conversational ticket creation with interview flow
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Read the project response envelope, distinguish unavailable from empty, and render project fields as text without changing creation authority.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -186,10 +187,93 @@ export function openCreateTicketModal(onSuccess) {
   document.addEventListener('keydown', function escHandler(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } });
 }
 
+/** @description Keep unavailable reads distinct from an authoritative empty project list.
+ * @param {HTMLElement} listEl Current modal list. @param {string} message Human-readable outcome.
+ * @param {string} className Existing presentation class. @returns {void} No value. */
+function projectListMessage(listEl, message, className) {
+  const text = document.createElement('p');
+  text.className = className;
+  text.textContent = message;
+  listEl.replaceChildren(text);
+}
+
+/** @description Accept only the successful list contract; malformed rows cannot masquerade as empty.
+ * @param {unknown} body Parsed response. @returns {boolean} Whether every project has renderable text. */
+function readableProjects(body) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return false;
+  const envelope = /** @type {{success?: unknown, projects?: unknown}} */ (body);
+  return envelope.success === true && Array.isArray(envelope.projects) && envelope.projects.every(project =>
+      project !== null && typeof project === 'object' && !Array.isArray(project)
+      && typeof project.name === 'string' && project.name.trim().length > 0
+      && (project.description == null || typeof project.description === 'string'));
+}
+
+/** @description Render server-controlled names and descriptions without interpreting markup.
+ * @param {HTMLElement} listEl Current modal list. @param {{name: string, description?: string|null}[]} projects Validated rows.
+ * @returns {void} No value. */
+function renderProjects(listEl, projects) {
+  if (projects.length === 0) {
+    projectListMessage(listEl, 'No projects yet.', 'empty-text');
+    return;
+  }
+  const cards = projects.map(project => {
+    const card = document.createElement('div');
+    card.className = 'project-card';
+    const name = document.createElement('strong');
+    name.textContent = project.name;
+    const description = document.createElement('p');
+    description.textContent = project.description || 'No description';
+    card.append(name, description);
+    return card;
+  });
+  listEl.replaceChildren(...cards);
+}
+
+/** @description Read only the current modal's list and preserve HTTP refusal and malformed-answer outcomes.
+ * @param {HTMLElement|null} listEl Current modal list. @returns {Promise<void>} Settled list read. */
+async function loadProjectList(listEl) {
+  if (!listEl) return;
+  try {
+    const response = await fetch('/api/v1/projects');
+    if (!listEl.isConnected) return;
+    if (!response.ok) {
+      projectListMessage(listEl, response.status === 403 ? 'Projects are not available to you.'
+        : 'Projects could not be loaded. Close and reopen to try again.', 'error-text');
+      return;
+    }
+    const body = await response.json();
+    if (!listEl.isConnected) return;
+    if (!readableProjects(body)) throw new Error('Invalid project response');
+    renderProjects(listEl, body.projects);
+  } catch {
+    if (listEl.isConnected) projectListMessage(listEl,
+      'Projects could not be loaded. Close and reopen to try again.', 'error-text');
+  } finally { listEl.setAttribute('aria-busy', 'false'); }
+}
+
+/** @description Preserve explicit project creation and the server's existing operator fence.
+ * @param {HTMLElement} overlay Owning modal. @param {Function} onSuccess Successful-create callback.
+ * @returns {void} No value. */
+function bindProjectCreate(overlay, onSuccess) {
+  const form = overlay.querySelector('#pmCreateForm');
+  if (!form) return;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('pmName')?.value;
+    const description = document.getElementById('pmDescription')?.value;
+    try {
+      const resp = await fetch('/api/v1/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description }) });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      overlay.remove();
+      if (onSuccess) onSuccess();
+    } catch (err) { alert('Failed to create project: ' + err.message); }
+  });
+}
+
 /**
- * @description Opens the project manager modal to view existing projects
- * and create new ones.
+ * @description Opens the project manager modal to view existing projects and create new ones.
  * @param {Function} onSuccess - Callback invoked after successful project creation
+ * @returns {void} No value.
  */
 export function openProjectManagerModal(onSuccess) {
   const overlay = document.createElement('div');
@@ -198,7 +282,7 @@ export function openProjectManagerModal(onSuccess) {
   overlay.innerHTML = `
     <div class="modal-content modal-wide">
       <h2>Project Manager</h2>
-      <div id="pmProjectList" class="project-list">
+      <div id="pmProjectList" class="project-list" role="status" aria-live="polite" aria-busy="true">
         <p class="loading-text">Loading projects...</p>
       </div>
       <hr />
@@ -212,30 +296,8 @@ export function openProjectManagerModal(onSuccess) {
   `;
   document.body.appendChild(overlay);
 
-  const listEl = document.getElementById('pmProjectList');
-  fetch('/api/v1/projects')
-    .then(r => r.json())
-    .then(projects => {
-      if (!listEl) return;
-      if (!Array.isArray(projects) || projects.length === 0) { listEl.innerHTML = '<p class="empty-text">No projects yet.</p>'; return; }
-      listEl.innerHTML = projects.map(p => `<div class="project-card"><strong>${p.name}</strong><p>${p.description || 'No description'}</p></div>`).join('');
-    })
-    .catch(err => { if (listEl) listEl.innerHTML = '<p class="error-text">Failed to load projects.</p>'; });
-
-  const form = document.getElementById('pmCreateForm');
-  if (form) {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const name = document.getElementById('pmName')?.value;
-      const description = document.getElementById('pmDescription')?.value;
-      try {
-        const resp = await fetch('/api/v1/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description }) });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        overlay.remove();
-        if (onSuccess) onSuccess();
-      } catch (err) { alert('Failed to create project: ' + err.message); }
-    });
-  }
+  void loadProjectList(/** @type {HTMLElement|null} */ (overlay.querySelector('#pmProjectList')));
+  bindProjectCreate(overlay, onSuccess);
 
   document.getElementById('pmCancel')?.addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });

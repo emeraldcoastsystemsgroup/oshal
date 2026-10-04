@@ -15,6 +15,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Link the default-rail band guard. config-seed/profiles/oshal-framework.json is hand-maintained with no linkage to install state, so a tile drifting between rail groups — or out of the rail entirely — went unnoticed until somebody opened the cockpit and looked.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Link the light/dark contrast walk. The existing appearance coverage proves a surface consumes theme tokens and inherits a live change; none of it measures what the pixels come out as, which is where a wrongly mapped role hides.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register actual dashboard swarm activity refusal, unavailable, empty and escaped-row browser coverage.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Link shipped Project Manager envelope, refusal, unavailable and safe-text browser coverage; readiness still reads only fixed stylesheets.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -82,11 +83,12 @@ async function helpSurfaceCoverage(cookie: string): Promise<StepResult> {
 
 export const APPEARANCE_SCENARIOS: Scenario[] = [{
   id: 'cockpit-appearance', title: 'Cockpit appearance', group: 'tool',
-  description: 'Read the fixed Workspace and Profile stylesheets. This does not execute the browser suite or change saved themes; linked fixtures cover the actual Profile dialog, local-asset startup, the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
+  description: 'Read the fixed Workspace and Profile stylesheets. This does not execute the browser suite or change saved themes; linked fixtures cover the actual Profile dialog, Project Manager list and explicit creation, local-asset startup, the portal chooser, application colors, open tabs, chat, administration and operations surfaces.',
   regressionTests: [
     { level: 'browser', path: 'tests/unit/cockpit-startup-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/cockpit-profile-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/dashboard-home-swarm-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/ticket-project-modal-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-appearance-registration.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' },
