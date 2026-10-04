@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Apply injected evidence/result bindings around dedicated reason-only execution; bound work never falls back to localhost.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Pass the canonical runtime resolver into protected queue shaping so explicit `bot-default` resolves and signs its record even when the legacy push-on-dispatch compatibility flag is off.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | The privileged ticket-type set now comes from @/shared/middleware/superadmin (isPrivilegedTicketType), the same definition the ticket route uses to refuse a non-super-admin filer, so the door and this queue gate cannot disagree about which types are privileged.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | The dispatch-time ticket gates moved to dispatch-ticket-gates.ts (this file is past the 800-code-line stop, so it shrinks). The ADR-081 privileged-type refusal keeps its reason, message, next action and log text. Plan Z-08 joins it: a metadata.targetAgentId pin must pass the owner's CURRENT direct entitlement before it outranks the call-out, unless a strictly parsed provider intent overrides it. Otherwise the ticket escalates terminally as pinned_agent_not_entitled and is never claimed.
  */
 
 import * as http from 'node:http';
@@ -47,7 +48,7 @@ import {
 } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
-import { isPrivilegedTicketType, isSuperAdminSub } from '@/shared/middleware/superadmin';
+import { refuseTicketAtDispatch } from './dispatch-ticket-gates';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { RefusalError } from '@/shared/refusal-events';
@@ -632,21 +633,13 @@ export async function dispatchManifestWorkerTicket(
     return;
   }
 
-  // Privileged-workflow gate (ADR-081): the oshal-developer bot can commit + push this
-  // repo, so only tickets OWNED by an allowlisted super-admin sub may reach it. Escalate
-  // (terminal) rather than defer — a denied ticket must not re-dispatch every poll.
-  if (isPrivilegedTicketType(workflow.ticketType) && !isSuperAdminSub(ticket.ownerSub)) {
-    logger.warn(
-      { ticketId, ticketType: workflow.ticketType, ownerSub: ticket.ownerSub ?? null },
-      'Privileged ticketType denied — owner is not on the super-admin allowlist',
-    );
-    await deps.ticketService.updateStatus(ticketId, 'escalated', {
-      reason: 'superadmin_required',
-      source: 'dispatch-manifest-worker',
-      message: `ticketType '${workflow.ticketType}' is privileged: the ticket owner must be on OSHAL_SUPERADMIN_SUBS`,
-      nextAction: 'file_as_superadmin_or_update_allowlist',
-    }).catch((updateErr) => {
-      logger.warn({ err: updateErr, ticketId }, 'Failed to mark privileged-denied ticket escalated');
+  // Dispatch-time ticket gates (ADR-081 privileged type, Z-08 pin authorization): escalate
+  // terminally rather than defer, so a refused ticket never re-dispatches every poll.
+  const gate = refuseTicketAtDispatch({ ticketType: workflow.ticketType, ownerSub: ticket.ownerSub, pinnedAgentId, providerAgentId });
+  if (gate) {
+    logger.warn({ ticketId, ticketType: workflow.ticketType, ownerSub: ticket.ownerSub ?? null, pinnedAgentId }, gate.logMessage);
+    await deps.ticketService.updateStatus(ticketId, 'escalated', gate.escalation).catch((updateErr) => {
+      logger.warn({ err: updateErr, ticketId, reason: gate.escalation.reason }, 'Failed to mark dispatch-gate refusal escalated');
     });
     return;
   }

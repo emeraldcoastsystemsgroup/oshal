@@ -37,6 +37,7 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com | Register controller ticket chat retirement: every caller (own, foreign, bare task id, unknown id, operator) naming a privileged bot gets 410 legacy_execution_route_retired, the orchestrator is never reached, and nothing is linked or created.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Register PUT /tickets/:id/state access: another user's ticket or bare task id is refused with the missing-id 404 and nothing moves, the owner still changes their own, and a revoked owner is refused a protected ticket or task.
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | Register one exact-principal ticket verdict (P5 step 1): on an issuer-stamped ticket the same sub from another issuer, an inactive owner and a session with no verified actor are refused on load, parent selection and state; operators still read; /api/tickets and cockpit verdicts are equal.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com   | Register dispatch-time pin authorization (Z-08): a non-operator's pin to a bot they may not call escalates terminally without a claim or a worker; operator, permitted-pin and absent-owner dispatches still reach the pinned bot; an invalid owner is refused, not treated as internal.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -203,6 +204,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ticket-chat-retired.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-state-compat-access.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-exact-principal-ownership.spec.ts' },
+    { level: 'integration', path: 'tests/unit/pinned-ticket-dispatch-gate.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },
