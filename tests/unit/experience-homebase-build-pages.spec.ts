@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The design study's pages and choices built into /homebase, in headless Chromium over the real static routes and the synthetic swarm: Routines (Jarvis briefing sources switched through the route with its own header and reverted on a refusal, the caller's schedules in words with pause and resume, a routine asked of Jarvis and the schedules read again, refusals named), search in this home (what the page read plus the caller-scoped swarm search, deep links only where the route gives one, refusal named, a result opening its record), the Room / Tasks / Files tabs, the day-by-day agenda with a read-only event dialog beside the unchanged Add dialog, the assistant bubble and inline composer on the same Jarvis thread with the catch-up dismissed on this device, the "Make it yours" choices (what greets you, what stays close at hand; device-local, no server write) and six viewport widths per preset with no horizontal overflow.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Guards for paths the design study lists that were built earlier without a browser case: + Add posting a personal Little Monsters event (title kept as typed, day and time); the display choices (compact density, the activity panel and the week strip hidden) saved on this device, surviving a reload and restored; the My access and About access dialogs, a sidebar application's dialog with its summary, and All applications. A notice shown before the repaint that follows it (the added event) is still shown after it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The access dialog names the preset's own space since #1042: Business reads "The same workspace, different access", and a family and a classroom case pin "home" and "classroom" (the regression test #1042 shipped without).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -214,7 +215,7 @@ describe('the access and application dialogs', () => {
     await open('company', '.home-shell');
     await page.getByRole('button', { name: 'My access' }).click();
     const policy = await dialogText();
-    expect(policy).toContain('The same home, different access');
+    expect(policy).toContain('The same workspace, different access');
     expect(policy).toContain('Signed in as Synthetic Teacher · teacher in Little Monsters.');
     expect(policy).toContain('Skins, density and pins are saved on this device and never change permissions.');
     await page.keyboard.press('Escape');
@@ -229,6 +230,14 @@ describe('the access and application dialogs', () => {
     await page.keyboard.press('Escape');
     await page.locator('.home-sidebar').getByRole('button', { name: 'All applications' }).click();
     await page.waitForURL(/\/portal#catalog-directory$/);
+  });
+});
+
+describe('the access dialog names each preset\'s own space', () => {
+  it.each([['family', 'home'], ['classroom', 'classroom']])('“My access” on the %s preset reads “The same %s, different access”', async (preset, space) => {
+    await open(preset, '.home-shell');
+    await page.getByRole('button', { name: 'My access' }).click();
+    expect(await dialogText()).toContain(`The same ${space}, different access`);
   });
 });
 

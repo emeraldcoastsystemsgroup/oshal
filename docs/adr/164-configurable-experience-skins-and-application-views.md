@@ -517,9 +517,10 @@ require separate explicit approval. They are not implicit implementation details
 
 ## Amendment — experiences are applications (operator, 2026-10-02)
 
-**Status:** Proposed amendment; slice 1 implemented and its server lock hardened 2026-10-04
-(canonical surface paths; the profile route holds a focused non-operator to manifest profiles),
-slices 2–3 in the backlog.
+**Status:** Proposed amendment; slice 1 implemented and hardened 2026-10-04 (canonical surface
+paths; the profile route holds a focused non-operator to manifest profiles; the cockpit draws its
+operator doors closed until an unlocked verdict and keeps every unreadable profile closed), slices
+2–3 in the backlog.
 
 ### Context
 
@@ -592,7 +593,8 @@ Business, Classroom) and the core entry pages become the first experience packag
    non-operator only from manifest synthesis: a name that does not synthesise for them is refused
    404 `experience_unavailable`, and no name serves the landing application. Done when: the
    `experience-shell-lock`, `cockpit-shell-lock-routes`, `ui-profile-focused-refusal`,
-   `ui-profile-rls-hidden-experience-postgres` and `ribbon-shell-lock` specs are green and a
+   `ui-profile-rls-hidden-experience-postgres`, `ribbon-shell-lock`, `ribbon-profile-refusal` and
+   `cockpit-shell-lock-browser` specs are green and a
    throwaway non-operator on a focused-landing box is redirected from `/cockpit/` and `/portal`, sees
    no hub and no Experiences menu (`node scripts/operations/live-acceptance.js shell-lock` asks the
    server half).
