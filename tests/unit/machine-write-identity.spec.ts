@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Keep the Apply ingest identity driver explicit about confirmation-artifact retention so the callback cannot imply verified submission evidence without the reviewed persistence boundary.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Keep the internal-tool identity probe on its intended grant-denial path by supplying the request-start executor descriptor now required by the fail-closed MCP boundary.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L6: readLocationTokenBinding joins the machine-auth markers (a location credential is a per-credential bearer the token-auth middleware admits on one path), so the core device ingest is discovered; its driver sends a real bearer through the real createCliTokenAuthMiddleware and the real location router over HTTP, answers the device read as the recorded owner, and observes the device subject 'device:<id>' with isOperator false on the connection at the observation INSERT, with the row's subject equal to it.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | The Jarvis driver drives the write again. c18f057a made POST /tasks/:id/delivered read the owner's row back through filterJarvisResultRows before the UPDATE; the driver's pool answered that read with no row, so the handler replied 200 {ok:false} and never wrote. The pool now serves the owner's row, and the driver fails unless the route answers {ok:true}. Inventory entry added for agent-provider-mount.ts, which discovery finds since its mount applies serviceSecretOr(requiresAuth) itself (cea82ded); it issues no query, and both routers it mounts are already inventoried.
  */
 
 /**
@@ -305,9 +306,13 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
   'jarvis-service-callers': async () => {
     vi.stubEnv('SWARM_SERVICE_SECRET', SERVICE_USER_PLACEHOLDER);
     const observations: WriteObservation[] = [];
+    // c18f057a: the route reads the owner's row back (and filters it) before the UPDATE; with no
+    // row it answers 200 {ok:false} and never writes, so the pool must serve the owner's row.
     const pool = capturingPool(
       observations,
-      () => ({ rows: [], rowCount: 1 }),
+      (sql, params) => (/SELECT id,user_sub,principal_issuer,session_id,ticket_id FROM jarvis_tasks WHERE id=/i.test(sql)
+        ? { rows: [{ id: params[0], user_sub: params[1], principal_issuer: null, session_id: null, ticket_id: null }], rowCount: 1 }
+        : { rows: [], rowCount: 1 }),
       /UPDATE jarvis_tasks SET delivered/i,
       1,
     );
@@ -319,7 +324,9 @@ const DRIVERS: Record<string, MachineWriteIdentityDriver> = {
       const response = await fetch(endpoint, {
         method: 'POST', headers: serviceUserHeaders('auth0|jarvis-owner'), body: '{}',
       });
-      if (!response.ok) throw new Error(`Jarvis identity probe failed: HTTP ${response.status}`);
+      const body = await response.json() as { ok?: boolean };
+      // ok:true is required: a pre-check that blocks the write must fail loudly, not read as "no write".
+      if (!response.ok || body.ok !== true) throw new Error(`Jarvis identity probe failed: HTTP ${response.status} ${JSON.stringify(body)}`);
     } finally {
       await close();
     }
