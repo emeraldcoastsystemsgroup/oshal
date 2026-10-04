@@ -37,6 +37,8 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Separated the two questions reportResolvedLlmFailure was conflating (operator decision 2026-09-22). It gates ROTATION — may this prompt be replayed on a DIFFERENT provider — and for an explicit BYO endpoint the answer stays a permanent no. But because it was also the only retryability gate on the path, an explicit BYO turn got no retry at all, so a provider-side spend cap that trips intermittently cost the whole turn and showed the user an error. RETRYABLE_PROVIDER_FAILURE is now exported as the ONE wall vocabulary and same-endpoint-retry.ts subtracts from it (403 and the completed-but-empty answers are rotation-only); the refusal here is byte-identical.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | RETRYABLE_PROVIDER_FAILURE now LIVES in the llm-provider feature (the retry wraps the provider call there, and a feature may not import this app module) and is re-exported here unchanged in meaning, gaining 503/high-demand. The explicit-BYO branch of the rotation gate records the SECOND rule beside the first (operator, 2026-09-22): a non-operator's explicit endpoint is still never rotated, but the OPERATOR'S OWN explicit turns may fall to the portal's configured hot-fallback chain after the same-endpoint retry is exhausted — decided in byo-hot-fallback.ts under the ADR-127/137 gates, never here. isOperatorKeyLaneCooling exposes the lane cooldown to that readiness probe.
  *
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Reuse the existing operator-plus-demo key-lending predicate for Token Chase provider selection.
+ *
  * @module free-tier-rotation
  */
 
@@ -662,6 +664,11 @@ function isOperatorCaller(userSub: string): boolean {
   const subs = (process.env.OSHAL_OPERATOR_SUBS || '')
     .split(',').map((s) => s.trim()).filter(Boolean);
   return subs.includes(userSub);
+}
+
+/** @description Whether current verified operator facts and the demo posture permit lending host vendor keys. @param userSub Exact caller subject. @param operatorFact Optional current server-resolved operator fact. @returns True only under both existing lending gates. */
+export function operatorKeysAvailable(userSub: string, operatorFact?: boolean): boolean {
+  return demoKeysEnabled() && (operatorFact ?? isOperatorCaller(userSub));
 }
 
 /** Cached operator-lane verdict: the resolved lane (or null = none usable) and when to re-probe. */

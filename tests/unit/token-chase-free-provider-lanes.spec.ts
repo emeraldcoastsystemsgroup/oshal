@@ -1,9 +1,10 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Adversarial coverage for Token Chase `free:auto`: offer only eligible aggregate rotation, resolve probed-live owner/platform lanes, retain exact provider/model evidence, rotate a provider wall, carry the winner across a savings run, and fail closed without an implicit paid/default replay.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep ordinary free-lane fixtures outside the operator vendor-key carve.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,6 +39,7 @@ vi.mock('../../src/app/routes/connector-tenancy', () => ({
 }));
 
 vi.mock('../../src/app/routes/free-tier-rotation', () => ({
+  operatorKeysAvailable: vi.fn(() => false),
   freeTierRuntimeSnapshot: vi.fn(),
   listFreeTierConnections: vi.fn(),
   platformFreeConnection: vi.fn(),
@@ -90,6 +92,7 @@ function frame(seq: number): TokenChaseFrameDetail {
     systemPrompt: 'Answer exactly.',
     responseContent: 'The stable answer.',
     responseBlocks: [],
+    toolSchema: [], workspaceCommit: null, ownerStoreVersion: null, ownerSub: 'free-owner',
     history: [{ role: 'user', content: 'What is the stable answer?' }],
   };
 }

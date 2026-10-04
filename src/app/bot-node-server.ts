@@ -37,6 +37,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Validate and forward fallbackOrder with the rest of the signed provider authority on /api/swarm-execute so configured fallback chains survive the HTTP hop intact.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward imageTurn from /api/swarm-execute into the execution envelope, only when it is a literal true (ADR-130 amendment 2026-10-02: the storyboard render executor marks its dispatch so the Antigravity wrapper hands back generate_image's output).
  * 34 | maintainer@emeraldcoastsystemsgroup.com | Document the renderInstruction carrier field on the swarm-execute body (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02). It is validated and forwarded by parseBotNodePromptCarrier like app/capability/pattern, so the existing promptCarrier spread places it in the envelope; the handler files it under TRUSTED CONFIGURATION on an image turn only. The brief remains body.text.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | Mount extracted caller-bound Token Chase replay cost route.
  */
 
 /**
@@ -89,6 +90,7 @@ import {
 import { parseTrustedProviderIntent } from './bot-node-provider-intent';
 import { registerBotNodeLlmProviderRoute } from './bot-node-llm-provider-route';
 import { registerBotNodeTokenChaseTailRoute } from './bot-node-token-chase-tail-route';
+import { registerBotNodeTokenChaseReplayRoute } from './bot-node-token-chase-replay-route';
 import { registerBotNodeSelfHealRoute } from './bot-node-self-heal-route';
 import { registerBotNodeClaudeAuthRoutes } from './bot-node-claude-auth-routes';
 import {
@@ -485,88 +487,14 @@ async function start(): Promise<void> {
     }
   });
 
-  // ── /api/token-chase/replay-call — single-call no-edit determinism replay ─────
-  // The controller's TokenChaseReplayService calls this to re-fire ONE captured
-  // frame's exact prompt (rehydrated history + system prompt) so the determinism
-  // gate's LLM call lands here, on the accountable bot node — never on the
-  // controller (ADR-046). Runs exactly one generateResponse: no agentic loop, no
-  // tools. Cost is recorded under a `::replay` task id so it is attributable
-  // without polluting the baseline task's chat_tasks rollup.
-  app.post('/api/token-chase/replay-call', authorizeBotNodeCall, async (req, res) => {
-    try { await assertBotNodeApplicationTransport(pool, agentId, agentId); }
-    catch { res.status(403).json({ success: false, error: 'authorization_replay_unavailable' }); return; }
-    const body = req.body as { history?: unknown[]; systemPrompt?: string | null; taskId?: string; seq?: number; byoLlmConnection?: { baseUrl?: string; apiKey?: string; model?: string }; variantLabel?: string };
-    // Live attribution defaults, pinned once per request so a mid-request provider
-    // switch cannot mix two configs inside one response.
-    const { provider: liveProvider, model: liveModel } = activeLlm();
-    if (!Array.isArray(body.history)) {
-      res.status(400).json({ success: false, content: '', error: 'Missing history[]', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, cost: 0, model: liveModel, provider: liveProvider, latencyMs: 0 });
-      return;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodeOs = require('os'); // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodePath = require('path'); // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodeFs = require('fs');
-    const workspaceDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'tc-replay-'));
-    const startedAt = Date.now();
-    // Token Chase optimizer (ADR-046 step 3): a variant replay carries a byoLlmConnection so this ONE
-    // call fires against a different OpenAI-compatible model — an ephemeral per-call swap (no
-    // switchProvider, nothing persisted, safe to run repeatedly). A bare replay uses the bot's own
-    // configured provider (the no-edit determinism baseline).
-    const byo = body.byoLlmConnection;
-    const isVariant = !!(byo && byo.baseUrl && byo.apiKey && byo.model);
-    try {
-      let provider: { generateResponse: (h: unknown[], o: Record<string, unknown>) => Promise<Record<string, unknown>> };
-      if (isVariant) {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const OpenAIProvider = require('../../any-bot/server/services/llm/OpenAIProvider');
-        provider = new OpenAIProvider({ apiKey: byo!.apiKey, model: byo!.model, baseUrl: byo!.baseUrl });
-        logger.info({ model: byo!.model, label: body.variantLabel }, 'Token Chase variant replay — ephemeral BYO provider');
-      } else {
-        provider = agenticController.getActiveProvider('token-chase-replay');
-      }
-      const response = await provider.generateResponse(body.history, {
-        systemPrompt: body.systemPrompt || undefined,
-        tools: [],
-        workspaceDir,
-        source: 'token-chase-replay',
-        agentId,
-        autoApprove: false,
-      }) as { content?: string; usage?: { inputTokens?: number; outputTokens?: number }; cost?: number; model?: string; provider?: string };
-      const latencyMs = Date.now() - startedAt;
-      const usage = (response && response.usage) || {};
-      const inputTokens = Number(usage.inputTokens || 0);
-      const outputTokens = Number(usage.outputTokens || 0);
-      // Accountable cost capture — the replay is a real LLM call, so it is recorded like any other.
-      // Variant replays are tagged `::replay-variant` so optimizer spend never pollutes the baseline rollup.
-      await costTrackingService.recordCost({
-        taskId: `${body.taskId || 'token-chase'}::${isVariant ? 'replay-variant' : 'replay'}`,
-        agentId,
-        providerId: response.provider || liveProvider,
-        modelId: response.model || liveModel,
-        inputTokens, outputTokens,
-        inputCost: 0, outputCost: 0, totalCost: Number(response.cost || 0),
-        currency: 'USD', requestCount: 1,
-      }).catch((err: unknown) => logger.error({ err }, 'Token Chase replay cost record failed'));
-      res.json({
-        success: true,
-        content: response.content || '',
-        usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
-        cost: Number(response.cost || 0),
-        model: response.model || liveModel,
-        provider: response.provider || liveProvider,
-        latencyMs,
-      });
-    } catch (err) {
-      logger.error({ err, taskId: body.taskId, seq: body.seq }, '/api/token-chase/replay-call failed');
-      res.status(500).json({
-        success: false, content: '', error: err instanceof Error ? err.message : String(err),
-        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, cost: 0,
-        model: liveModel, provider: liveProvider, latencyMs: Date.now() - startedAt,
-      });
-    } finally {
-      try { nodeFs.rmSync(workspaceDir, { recursive: true, force: true }); } catch (err) { logger.warn({ err, workspaceDir }, 'Token Chase replay workspace cleanup failed'); }
-    }
+  registerBotNodeTokenChaseReplayRoute(app, {
+    agentId, authorize: authorizeBotNodeCall, pool, activeLlm, costTrackingService,
+    currentProvider: () => agenticController.getActiveProvider('token-chase-replay'),
+    variantProvider: connection => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const OpenAIProvider = require('../../any-bot/server/services/llm/OpenAIProvider');
+      return new OpenAIProvider(connection);
+    },
   });
 
   // ── POST /api/token-chase/replay-tail — hermetic no-edit tail executor (ADR-046 §3) ──

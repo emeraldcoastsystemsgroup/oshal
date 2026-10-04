@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Exported the provider switch store + snapshot (migration 147): the rows behind "a bot's LLM provider is a row in a table".
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exported BrainFallbackMarker, the wire marker a hot-fallback turn carries (operator decision 2026-09-22).
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exported BotNodeTailReplayClient and the /api/token-chase/replay-tail wire contract (BACKLOG "Workspace-bound checkpoint and tail replay"): the controller delegates the hermetic no-edit tail to the accountable bot node through it.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Export existing replay request/response wire types for caller-bound app composition.
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -159,6 +160,8 @@ export {
 } from './agent-eligibility-service';
 export {
   BotNodeClient,
+  type ReplayCallRequest,
+  type ReplayCallResponse,
   createRegistryEndpointResolver,
   isControllerInlineContainer,
   resolveDisplayOnline,
