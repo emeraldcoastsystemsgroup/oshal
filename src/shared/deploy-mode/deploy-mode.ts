@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 — deploy modes. Every posture this resolves already existed as an individual environment switch; what did not exist was anything that read the COMBINATION. A deployer sets a dozen unrelated variables and the dangerous combinations fail OPEN and silently: MOCK_OIDC makes requiresAuth a pass-through, REMOTE_CLIENT_REQUIRE_NODE_TOKEN ships false so the retired swarm-wide shared secret stays live, a stopped Headscale turns an off-LAN join request into a LAN-only code. This module is a pure function over the environment — no I/O, no singletons — so the mode table is testable as a table, which matters because the composition is the thing most likely to be got wrong. Generalizes the one precedent that already did this right: local-auth-routes throws at boot when LOCAL_AUTH and MOCK_OIDC are both set, rather than degrading to open auth. Unset mode resolves to the deployment's CURRENT behaviour and only advises — choosing a default here would silently re-posture every existing box, which is the exact failure the ADR exists to prevent.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction. This module's own flag() accepted `on`, which is where half the disagreement came from; it stays for the other variables it reads.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The identity-provider check read OIDC_ISSUER_BASE_URL, a variable nothing else in the tree reads; the OIDC middleware (oidc.ts resolveOidcEnv) uses OIDC_ISSUER_URL for any generic issuer, else an explicitly configured Keycloak realm. Wired to boot as written, `tenant` would have refused every real-OIDC box and detectMode would have called the operator's box `home`. hasIdentityProvider now reads the same two branches the middleware does. The resolver still has no runtime caller (ADR-137 defers boot enforcement), so no deployment changes behaviour.
  *
  * @module shared/deploy-mode
  */
@@ -117,6 +118,19 @@ function flag(raw: string | undefined): boolean {
 }
 
 /**
+ * @description Whether the environment configures a real identity provider, read the way the
+ * OIDC middleware reads it (oidc.ts resolveOidcEnv): a generic issuer in OIDC_ISSUER_URL, or an
+ * explicitly configured Keycloak realm. Reading a different variable than the middleware is how
+ * a posture check and the login it describes end up disagreeing about the same box.
+ * @param env - The environment to read.
+ * @returns True when a real issuer is configured.
+ */
+function hasIdentityProvider(env: NodeJS.ProcessEnv): boolean {
+  const configured = (raw: string | undefined): boolean => String(raw ?? '').trim().length > 0;
+  return configured(env.OIDC_ISSUER_URL) || configured(env.KEYCLOAK_URL) || configured(env.KEYCLOAK_EXTERNAL_URL);
+}
+
+/**
  * @description The posture a mode asserts.
  * @param mode - The deployment mode.
  * @returns A copy of the mode's posture.
@@ -147,8 +161,7 @@ export function parseDeployMode(raw: string | undefined): DeployMode | null | 'i
  */
 export function detectMode(env: NodeJS.ProcessEnv): DeployMode {
   if (isMockOidcEnabled(env)) return 'demo';
-  const hasIdp = Boolean(String(env.OIDC_ISSUER_BASE_URL || '').trim());
-  if (hasIdp && !flag(env.LOCAL_AUTH)) return 'tenant';
+  if (hasIdentityProvider(env) && !flag(env.LOCAL_AUTH)) return 'tenant';
   if (String(env.HEADSCALE_URL || '').trim()) return 'connected';
   return 'home';
 }
@@ -183,9 +196,9 @@ function auditAgainstMode(
       reason: 'LOCAL_AUTH and MOCK_OIDC are both enabled - pick one auth mode',
     });
   }
-  if (posture.requiresIdentityProvider && !String(env.OIDC_ISSUER_BASE_URL || '').trim()) {
+  if (posture.requiresIdentityProvider && !hasIdentityProvider(env)) {
     violations.push({
-      setting: 'OIDC_ISSUER_BASE_URL',
+      setting: 'OIDC_ISSUER_URL',
       value: '(unset)',
       reason: `${mode} mode serves more than one tenant and requires a real identity provider`,
     });
