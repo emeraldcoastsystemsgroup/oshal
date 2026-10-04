@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real compact header disclosure and relocated theme control in the component fixture.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Include the real workspace navigation that owns the OSHAL menu and shared chooser controls.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Serve cockpit preferences independently of installed Smart Home route ownership.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Provide explicit synthetic operator/refusal and delayed HTTP seams for the actual complete Settings view, without real roles or configuration writes.
  * =============================================================================
  */
 import express from 'express';
@@ -17,6 +18,48 @@ import { resolve } from 'node:path';
 import { registerCockpitStaticRoutes } from '@/app/routes/cockpit-static-routes';
 
 const ROOT = process.cwd();
+
+/**
+ * @description Register synthetic Settings HTTP seams before the normal shell fixture; this does not assert production authorization.
+ * @param app Existing isolated Express fixture.
+ * @returns Mutable response controls and bounded request observations used by shipped-client regressions.
+ */
+export function installSettingsBoundaryFixture(app: express.Express) {
+  const current = { operator: true as unknown, identityStatus: 200, configStatus: 200, malformedConfig: false,
+    identityGate: null as Promise<void> | null, configGate: null as Promise<void> | null, requests: [] as string[] };
+  app.use('/api', (req, _res, next) => { current.requests.push(`${req.method} /api${req.path}`); next(); });
+  app.get('/api/cli-tokens/whoami', async (_req, res) => {
+    const { operator, identityStatus, identityGate } = current;
+    await identityGate;
+    res.status(identityStatus).json({ operator });
+  });
+  app.get('/api/config', async (_req, res) => {
+    const { configStatus, malformedConfig, configGate } = current;
+    await configGate;
+    res.status(configStatus).json(configStatus === 200
+      ? { config: malformedConfig ? 'invalid synthetic configuration' : { llmProvider: 'openai-codex' } }
+      : { error: 'synthetic_configuration_refused' });
+  });
+  settingsBoundaryReads(app);
+  return current;
+}
+
+/** @description Fixed metadata exercises real renderers, never actual stored settings, providers, OAuth or writes. */
+function settingsBoundaryReads(app: express.Express) {
+  const bodies: Record<string, unknown> = {
+    '/api/providers': [{ id: 'openai-codex', displayName: 'Synthetic Codex', models: [] }],
+    '/api/config/rag': { config: {} }, '/api/rag/health': { chromadb: 'connected' },
+    '/api/dev-console/access': { superAdmin: false }, '/api/openai-codex/oauth/status': { authenticated: false },
+    '/api/config/ownership': { ownership: {
+      globalConfig: { routeBase: '/api/config', summary: 'Shared runtime configuration.', examples: ['Provider'] },
+      perAgentProfile: { routeBase: '/api/agents/:agentId/profile', summary: 'Agent profile.', examples: ['Role'] },
+      perAgentTools: { routeBase: '/api/agents/:agentId/tools', summary: 'Agent tools.', examples: ['Tools'] },
+      legacyCompatibility: { guidance: ['Use the mounted configuration APIs.'] },
+    } },
+  };
+  for (const [path, body] of Object.entries(bodies)) app.get(path, (_req, res) => res.json(body));
+}
+
 const BOOTSTRAP = `
 import { ThemeManager } from '/cockpit/js/theme-manager.js';
 import { initHeaderOptions } from '/cockpit/js/header-options.js';

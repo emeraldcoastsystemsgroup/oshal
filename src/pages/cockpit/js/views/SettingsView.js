@@ -18,6 +18,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Added a "Chat channels" settings tab that embeds the self-serve channels page (/cockpit/tools/channels.html), the same way Connections embeds /utilities, so linking Discord/Telegram/SMS/WhatsApp and the operator's Discord bot setup are reachable from Settings as well as the platform-tools rail.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Added a first-class "Knowledge" (RAG) settings tab (SettingsKnowledgeTab): ingestion tool + permission-aware visibility, replacing the flaky embedded-chat RAG popup. Data-driven tab bar honors a one-shot deep-link tab hint so the cockpit header RAG icon lands directly on Knowledge
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L3: a "Location" settings tab that embeds /cockpit/tools/location.html the way Chat channels embeds its page: per-browser opt-in, precision, where you are (as a place), who can see you, and deleting your history. The frame is allowed geolocation; its sign-in-again confirmations open in their own window.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Qualify shared settings with fresh operator identity and successful configuration reads while preserving personal controls and discarding stale responses.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -65,6 +66,10 @@ export class SettingsView {
     this.showToast = options.onToast || (() => {});
     this.openAiCodexAuthState = createPendingOpenAiCodexAuthState();
     this.openAiCodexAuthPollToken = 0;
+    this.sharedRuntimeAccess = 'pending';
+    this.sharedRuntimeEpoch = 0;
+    this.destroyed = false;
+    this.focusHandler = () => { if (this.currentTab === 'global') void this._loadData(); };
     logger.info('Created cockpit settings view', {
       hasContainer: Boolean(this.container),
     });
@@ -94,8 +99,9 @@ export class SettingsView {
       </div>`;
 
     this.bindTabButtons();
-    await this._loadData();
     this._renderTab();
+    window.addEventListener('focus', this.focusHandler);
+    await this._loadData();
   }
 
   /**
@@ -104,28 +110,67 @@ export class SettingsView {
    * @returns {Promise<void>}
    */
   async _loadData() {
-    logger.debug('Loading cockpit settings view data');
-    const results = await Promise.allSettled([
-      this.api.getSafe('/api/config', {}),
-      this.api.getAgents(),
-      this.api.getSafe('/api/providers', []),
-      this.api.getSafe('/api/config/ownership', null),
-      this.api.getSafe('/api/config/rag', { config: {} }),
-      this.loadServiceHealth(),
-    ]);
-
-    this.settings = readConfigResult(results[0], {});
-    this.agents = readAgentsResult(results[1]);
-    this.providers = readConfigResult(results[2], []);
-    this.configOwnership = readOwnershipResult(results[3]);
-    this.ragServiceConfig = readConfigResult(results[4], {});
-    this.serviceHealth = readServiceHealthResult(results[5]);
-    logger.info('Loaded cockpit settings view data', {
-      agentCount: this.agents.length,
-      providerCount: this.providers.length,
-      hasConfigOwnership: Boolean(this.configOwnership),
-    });
+    if (this.destroyed || this.currentTab !== 'global') return;
+    const epoch = ++this.sharedRuntimeEpoch;
+    this._clearSharedRuntime('pending');
+    try {
+      const identity = await readSettingsJson('/api/cli-tokens/whoami');
+      if (!this._currentRuntimeEpoch(epoch)) return;
+      if (typeof identity?.operator !== 'boolean') throw new Error('Operator identity unavailable');
+      if (identity.operator !== true) { this._clearSharedRuntime('operator-required'); return; }
+      const config = await readSettingsJson('/api/config');
+      if (!this._currentRuntimeEpoch(epoch)) return;
+      const settings = readConfigEnvelope(config);
+      const [providers, ownership, rag, health] = await Promise.all([
+        readSettingsJson('/api/providers'), readSettingsJson('/api/config/ownership'),
+        readSettingsJson('/api/config/rag'), this.loadServiceHealth(),
+      ]);
+      if (!this._currentRuntimeEpoch(epoch)) return;
+      if (!Array.isArray(providers)) throw new Error('Provider catalog unavailable');
+      const ragConfig = readConfigEnvelope(rag);
+      this.settings = settings;
+      this.providers = providers;
+      this.configOwnership = ownership?.ownership ?? ownership;
+      this.ragServiceConfig = ragConfig;
+      this.serviceHealth = health;
+      this.sharedRuntimeAccess = 'admitted';
+      this._refreshSharedRuntime();
+    } catch (error) {
+      logger.error('Failed to qualify shared settings', { error: serializeUiError(error) });
+      if (this._currentRuntimeEpoch(epoch)) {
+        this._clearSharedRuntime([401, 403].includes(error.status) ? 'operator-required' : 'unavailable');
+      }
+    }
   }
+
+  /** @description Forget shared data and invalidate OAuth work without replacing personal controls. @param {string} state Admission state. @returns {void} */
+  _clearSharedRuntime(state) {
+    this.sharedRuntimeAccess = state;
+    this.settings = {}; this.providers = []; this.configOwnership = null; this.ragServiceConfig = {};
+    this.serviceHealth = SettingsGlobalTab.createDefaultServiceHealthState();
+    this.openAiCodexAuthPollToken += 1;
+    this.openAiCodexAuthState = createPendingOpenAiCodexAuthState();
+    this._refreshSharedRuntime();
+  }
+
+  /** @description Match yielded reads to the live Settings instance. @param {number} epoch Captured admission generation. @returns {boolean} Whether it is current. */
+  _currentRuntimeEpoch(epoch) { return !this.destroyed && this.sharedRuntimeEpoch === epoch; }
+
+  /** @description Recheck the active shared surface after async control work. @param {number} epoch Captured admission. @param {HTMLElement} body Current tab body. @returns {boolean} Whether shared controls still belong here. */
+  _currentSharedControls(epoch, body) {
+    return this._currentRuntimeEpoch(epoch) && this.sharedRuntimeAccess === 'admitted'
+      && this.currentTab === 'global' && body.isConnected;
+  }
+
+  /** @description Replace only the shared section, preserving personal drafts and the active tab. @returns {void} */
+  _refreshSharedRuntime() {
+    if (this.destroyed) return;
+    const body = this.container?.querySelector('#settingsBody');
+    if (body && this.currentTab === 'global') new SettingsGlobalTab(this, body).refreshShared();
+  }
+
+  /** @description Retire shared controls after an authoritative refusal. @returns {void} */
+  _refuseSharedRuntime() { this.sharedRuntimeEpoch += 1; this._clearSharedRuntime('operator-required'); }
 
   /**
    * @description Render the currently selected settings tab.
@@ -149,6 +194,7 @@ export class SettingsView {
     if (this.currentTab === 'knowledge') {
       // The first-class RAG surface: ingestion tool + permission-aware visibility (swarm/bot/private).
       new SettingsKnowledgeTab(this, body).render();
+      void this._loadKnowledgeAgents(body);
       return;
     }
 
@@ -175,7 +221,34 @@ export class SettingsView {
       return;
     }
 
-    new SettingsBotsTab(this, body).render();
+    void this._renderBotsTab(body);
+  }
+
+  /** @description Keep ordinary bot discovery independent of global runtime admission. @param {HTMLElement} body Active body. @returns {Promise<void>} */
+  async _renderBotsTab(body) {
+    body.innerHTML = '<div role="status">Loading bot settings…</div>';
+    try {
+      const payload = await this.api.getAgents();
+      if (this.destroyed || this.currentTab !== 'bots' || !body.isConnected) return;
+      this.agents = payload?.agents || payload || [];
+      new SettingsBotsTab(this, body).render();
+    } catch (error) {
+      logger.error('Failed to load bot settings discovery', { error: serializeUiError(error) });
+      if (!this.destroyed && this.currentTab === 'bots') body.textContent = 'Bot settings are unavailable. Open this tab again to retry.';
+    }
+  }
+
+  /** @description Load normal bot choices without global config or replacing a knowledge draft. @param {HTMLElement} body Current knowledge body. @returns {Promise<void>} */
+  async _loadKnowledgeAgents(body) {
+    try {
+      const payload = await this.api.getAgents();
+      if (this.destroyed || this.currentTab !== 'knowledge' || !body.isConnected) return;
+      this.agents = payload?.agents || payload || [];
+      const select = body.querySelector('#knowledgeAgentSelect');
+      if (select) select.innerHTML = new SettingsKnowledgeTab(this, body).renderAgentOptions();
+    } catch (error) {
+      logger.error('Failed to load knowledge bot choices', { error: serializeUiError(error) });
+    }
   }
 
   /**
@@ -321,6 +394,8 @@ export class SettingsView {
    * @returns {Promise<void>}
    */
   async _refreshOpenAiCodexAuthStatus(body, suppressToast = false) {
+    if (this.sharedRuntimeAccess !== 'admitted' || this.currentTab !== 'global' || !body.isConnected) return;
+    const epoch = this.sharedRuntimeEpoch;
     const selectedProviderId = this._readSelectedProviderFromBody(body, this._resolveSelectedProviderId());
     logger.debug('Refreshing cockpit OpenAI Codex auth status', {
       providerId: selectedProviderId,
@@ -336,6 +411,7 @@ export class SettingsView {
     this._applyOpenAiCodexAuthState(body);
     try {
       const payload = await this.api.get('/api/openai-codex/oauth/status');
+      if (!this._currentSharedControls(epoch, body)) return;
       this.openAiCodexAuthState = createResolvedOpenAiCodexAuthState(payload);
       logger.info('Refreshed cockpit OpenAI Codex auth status', {
         authenticated: this.openAiCodexAuthState.authenticated,
@@ -344,6 +420,7 @@ export class SettingsView {
       logger.error('Failed to refresh cockpit OpenAI Codex auth status', {
         error: serializeUiError(error),
       });
+      if (!this._currentSharedControls(epoch, body)) return;
       this.openAiCodexAuthState = createOpenAiCodexAuthErrorState(error);
       if (!suppressToast) {
         this.showToast(`Failed to read OpenAI Codex auth status: ${error.message}`, 'error');
@@ -359,6 +436,8 @@ export class SettingsView {
    * @returns {Promise<void>}
    */
   async _startOpenAiCodexAuthFlow(body) {
+    if (!this._currentSharedControls(this.sharedRuntimeEpoch, body)) return;
+    const epoch = this.sharedRuntimeEpoch;
     const selectedProviderId = this._readSelectedProviderFromBody(body, this._resolveSelectedProviderId());
     if (selectedProviderId !== 'openai-codex') {
       this.showToast('Select OpenAI Codex as provider before starting OAuth sign-in.', 'info');
@@ -369,7 +448,9 @@ export class SettingsView {
     logger.info('Starting cockpit OpenAI Codex auth flow');
     try {
       const result = await this.api.get('/api/openai-codex/oauth/start');
+      if (!this._currentSharedControls(epoch, body)) return;
       await openOAuthPopupOrRedirect(result?.authUrl);
+      if (!this._currentSharedControls(epoch, body)) return;
       this.showToast('OpenAI Codex sign-in started', 'info');
       this.openAiCodexAuthState = createPendingOpenAiCodexAuthState('Waiting for OAuth completion...', 'Waiting for sign-in to finish...');
       this._applyOpenAiCodexAuthState(body);
@@ -378,6 +459,7 @@ export class SettingsView {
       logger.error('Failed to start cockpit OpenAI Codex auth flow', {
         error: serializeUiError(error),
       });
+      if (!this._currentSharedControls(epoch, body)) return;
       this.openAiCodexAuthState = createOpenAiCodexAuthErrorState(error);
       this._applyOpenAiCodexAuthState(body);
       this.showToast(`Failed to start OpenAI Codex sign-in: ${error.message}`, 'error');
@@ -398,10 +480,11 @@ export class SettingsView {
     });
     while (Date.now() - pollStart < 180000) {
       await delay(2000);
-      if (this.openAiCodexAuthPollToken !== pollToken) {
+      if (this.openAiCodexAuthPollToken !== pollToken || this.sharedRuntimeAccess !== 'admitted' || !body.isConnected) {
         return;
       }
       await this._refreshOpenAiCodexAuthStatus(body, true);
+      if (this.openAiCodexAuthPollToken !== pollToken || this.sharedRuntimeAccess !== 'admitted') return;
       if (this.openAiCodexAuthState.authenticated) {
         logger.info('Cockpit OpenAI Codex auth flow completed', {
           pollToken,
@@ -426,6 +509,8 @@ export class SettingsView {
    * @returns {Promise<void>}
    */
   async _signOutOpenAiCodexAuth(body) {
+    if (!this._currentSharedControls(this.sharedRuntimeEpoch, body)) return;
+    const epoch = this.sharedRuntimeEpoch;
     const selectedProviderId = this._readSelectedProviderFromBody(body, this._resolveSelectedProviderId());
     if (selectedProviderId !== 'openai-codex') {
       this.showToast('Select OpenAI Codex as provider to sign out OAuth credentials.', 'info');
@@ -435,12 +520,14 @@ export class SettingsView {
     logger.info('Signing out cockpit OpenAI Codex auth');
     try {
       await postEmptyJson('/api/openai-codex/oauth/signout');
+      if (!this._currentSharedControls(epoch, body)) return;
       this.showToast('OpenAI Codex credentials removed', 'success');
       await this._refreshOpenAiCodexAuthStatus(body, true);
     } catch (error) {
       logger.error('Failed to sign out cockpit OpenAI Codex auth', {
         error: serializeUiError(error),
       });
+      if (!this._currentSharedControls(epoch, body)) return;
       this.openAiCodexAuthState = createOpenAiCodexAuthErrorState(error);
       this._applyOpenAiCodexAuthState(body);
       this.showToast(`Failed to sign out OpenAI Codex credentials: ${error.message}`, 'error');
@@ -469,6 +556,10 @@ export class SettingsView {
    */
   destroy() {
     logger.info('Destroying cockpit settings view');
+    this.destroyed = true;
+    this.sharedRuntimeEpoch += 1;
+    this._clearSharedRuntime('unavailable');
+    window.removeEventListener('focus', this.focusHandler);
     if (this.costUpdateHandler) {
       window.removeEventListener('cost-updated', this.costUpdateHandler);
     }
@@ -484,9 +575,7 @@ export class SettingsView {
    */
   async loadServiceHealth() {
     logger.debug('Loading cockpit shared service health');
-    const [ragRes] = await Promise.all([
-      this.api.getSafe('/api/rag/health', { chromadb: 'unknown' }),
-    ]);
+    const ragRes = await readSettingsJson('/api/rag/health');
 
     const serviceHealth = {
       rag: createServiceHealthEntry(
@@ -512,7 +601,13 @@ export class SettingsView {
         this.container.querySelectorAll('.settings-tab').forEach((item) => item.classList.remove('active'));
         tab.classList.add('active');
         this.currentTab = tab.dataset.tab;
+        this.openAiCodexAuthPollToken += 1;
+        if (this.currentTab !== 'global') {
+          this.sharedRuntimeEpoch += 1;
+          this._clearSharedRuntime('pending');
+        }
         this._renderTab();
+        if (this.currentTab === 'global') void this._loadData();
       });
     });
   }
@@ -533,35 +628,20 @@ function readPendingSettingsTab() {
   }
 }
 
-// Normalize a settled config result to a config object or fallback.
-function readConfigResult(result, fallback) {
-  if (result.status !== 'fulfilled' || !result.value) {
-    return fallback;
-  }
-  return result.value.config || result.value;
+// Keep refusal status and malformed JSON visible to admission instead of synthesizing defaults.
+async function readSettingsJson(endpoint) {
+  const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store' });
+  if (!response.ok) throw Object.assign(new Error('Settings request refused or unavailable'), { status: response.status });
+  return response.json();
 }
 
-// Normalize a settled agent list result to an array of agents.
-function readAgentsResult(result) {
-  if (result.status !== 'fulfilled' || !result.value) {
-    return [];
+/** @description Require the maintained success/config envelope; null, failed or raw payloads cannot become default admin forms. @param {object} payload Parsed response. @returns {object} Qualified config object. */
+function readConfigEnvelope(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.success !== true
+    || Object.hasOwn(payload, 'error') || !payload.config || typeof payload.config !== 'object' || Array.isArray(payload.config)) {
+    throw new Error('Configuration response unavailable');
   }
-  return result.value.agents || result.value || [];
-}
-
-// Normalize a settled ownership result to the ownership contract or null.
-function readOwnershipResult(result) {
-  if (result.status !== 'fulfilled' || !result.value) {
-    return null;
-  }
-  return result.value.ownership || result.value;
-}
-
-// Normalize a settled service-health result to a usable health model.
-function readServiceHealthResult(result) {
-  return result.status === 'fulfilled' && result.value
-    ? result.value
-    : SettingsGlobalTab.createDefaultServiceHealthState();
+  return payload.config;
 }
 
 // Render one model option for the provider-driven selector.

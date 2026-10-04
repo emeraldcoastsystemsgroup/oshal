@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Offer optional top workspace navigation as a separate browser-local preference from color themes.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Make the portal theme authoritative and expose optional application colors without changing content.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Put appearance first, separate approval preferences and collapse runtime ownership help while preserving settings actions.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Keep personal preferences and local budgets usable while shared forms require current operator and configuration admission with explicit retry states.
  */
 
 import { createUiLogger, serializeUiError } from '../../../shared/ui-debug.js';
@@ -66,8 +67,16 @@ export class SettingsGlobalTab {
   buildMarkup() {
     return [
       this.renderOperatorPreferencesSection(),
-      this.renderRuntimeIntroSection(),
       this.renderCostControlsSection(),
+      `<div id="settingsSharedRuntime">${this.buildSharedMarkup()}</div>`,
+    ].join('');
+  }
+
+  /** @description Build shared forms only after live admission; refusals never become empty admin forms. @returns {string} Shared section markup. */
+  buildSharedMarkup() {
+    const status = this.renderSharedAccessStatus();
+    if (this.view.sharedRuntimeAccess !== 'admitted') return status;
+    return [status, this.renderRuntimeIntroSection(),
       this.renderProviderSection(),
       this.renderOpenAiCodexSection(),
       this.renderIntegrationsSection(),
@@ -76,6 +85,30 @@ export class SettingsGlobalTab {
       this.renderApprovalPreferencesSection(),
       this.renderSaveRow(),
     ].join('');
+  }
+
+  /** @description Explain current admission without exposing identity or configuration errors. @returns {string} Accessible status and retry control. */
+  renderSharedAccessStatus() {
+    const state = this.view.sharedRuntimeAccess || 'pending';
+    const messages = {
+      pending: 'Checking access to shared runtime settings. Your personal preferences remain available.',
+      'operator-required': 'Shared runtime settings require operator access. Your personal preferences and account connections remain available.',
+      unavailable: 'Shared runtime settings are unavailable. Your personal preferences remain available. Retry to check access again.',
+      admitted: 'Operator access confirmed for shared runtime settings.',
+    };
+    return `<div class="setting-section" data-shared-runtime-state="${state}">
+      <div class="setting-section-title">Shared runtime access</div>
+      <p role="status" aria-live="polite">${messages[state] || messages.unavailable}</p>
+      <button type="button" class="settings-cancel-btn" id="settingsRetryRuntime"${state === 'pending' ? ' disabled' : ''}>${state === 'admitted' ? 'Check access' : 'Retry'}</button>
+    </div>`;
+  }
+
+  /** @description Replace only shared controls so async verdicts cannot discard personal drafts. @returns {void} */
+  refreshShared() {
+    const shared = this.body.querySelector('#settingsSharedRuntime');
+    if (!shared) return;
+    shared.innerHTML = this.buildSharedMarkup();
+    this.bindSharedEvents();
   }
 
   // Render the short intro that frames the page as a shared swarm runtime surface.
@@ -92,11 +125,11 @@ export class SettingsGlobalTab {
     const costStatus = this.view.api.getCostStatus();
     return `
       <div class="setting-section">
-        <div class="setting-section-title"><i class="ph ph-currency-dollar"></i> Cost Controls</div>
-        <div class="setting-section-desc">Set spending limits to control AI swarm costs</div>
+        <div class="setting-section-title"><i class="ph ph-currency-dollar"></i> Local Cost Controls</div>
+        <div class="setting-section-desc">Estimates and limits saved in this browser. These counters do not report total swarm spending or enforce a server-wide budget.</div>
         <div class="cost-status-grid">
-          ${this.renderCostStatusCard('Daily Spent', 'costDailySpent', costStatus.dailySpent, costStatus.dailyLimit)}
-          ${this.renderCostStatusCard('Bucket Spent', 'costBucketSpent', costStatus.bucketSpent, costStatus.bucketLimit)}
+          ${this.renderCostStatusCard('Daily browser estimate', 'costDailySpent', costStatus.dailySpent, costStatus.dailyLimit)}
+          ${this.renderCostStatusCard('Bucket browser estimate', 'costBucketSpent', costStatus.bucketSpent, costStatus.bucketLimit)}
         </div>
         <div class="setting-field">
           <label>Daily Spending Limit ($)</label>
@@ -236,9 +269,6 @@ export class SettingsGlobalTab {
           <a class="settings-cancel-btn" id="settingsAddComputerLink" href="/api/join/" target="_blank" rel="noreferrer" hidden>
             <i class="ph ph-laptop"></i> Add a computer (remote node)
           </a>
-          <a class="settings-cancel-btn" id="settingsDevicesLink" href="/cockpit/tools/devices.html" target="_blank" rel="noreferrer">
-            <i class="ph ph-devices"></i> Get oshal on your devices
-          </a>
         </div>
       </div>`;
   }
@@ -261,6 +291,9 @@ export class SettingsGlobalTab {
           <span class="field-hint">Use each application's own skin, such as Little Monsters or Create. Choosing a portal theme above returns every application to that palette.</span>
         </div>
         ${navigationSettingsMarkup()}
+        <a class="settings-cancel-btn" id="settingsDevicesLink" href="/cockpit/tools/devices.html" target="_blank" rel="noreferrer">
+          <i class="ph ph-devices"></i> Get oshal on your devices
+        </a>
       </div>`;
   }
 
@@ -290,6 +323,13 @@ export class SettingsGlobalTab {
     this.bindThemePicker();
     bindNavigationSettings(this.body);
     this.bindCostControls();
+    this.bindSharedEvents();
+  }
+
+  /** @description Bind shared actions only to the current admitted section, leaving personal controls independent. @returns {void} */
+  bindSharedEvents() {
+    this.body.querySelector('#settingsRetryRuntime')?.addEventListener('click', () => { void this.view._loadData(); });
+    if (this.view.sharedRuntimeAccess !== 'admitted') return;
     this.bindProviderControls();
     this.bindRuntimeRefresh();
     this.bindSave();
@@ -302,14 +342,15 @@ export class SettingsGlobalTab {
   // join surface at /api/join/) for super-admins — the same dev-console probe the retired cockpit
   // header apps button used. Both surfaces self-gate server-side regardless; this is cosmetic.
   revealOperatorLinks() {
+    const epoch = this.view.sharedRuntimeEpoch;
     fetch('/api/dev-console/access', { credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (!d || !d.superAdmin) return;
+        if (!d || !d.superAdmin || !this.view._currentSharedControls(epoch, this.body)) return;
         this.body.querySelector('#settingsManageAppsLink')?.removeAttribute('hidden');
         this.body.querySelector('#settingsAddComputerLink')?.removeAttribute('hidden');
       })
-      .catch(() => {});
+      .catch(error => { logger.error('Failed to read operator settings links', { error: serializeUiError(error) }); });
   }
 
   // Bind theme selection buttons.
@@ -342,6 +383,7 @@ export class SettingsGlobalTab {
 
   // Bind local cost-control actions.
   bindCostControls() {
+    if (this.view.costUpdateHandler) window.removeEventListener('cost-updated', this.view.costUpdateHandler);
     this.body.querySelector('#costSaveLimitsBtn')?.addEventListener('click', () => this.handleSaveCostLimits());
     this.body.querySelector('#costResetBucketBtn')?.addEventListener('click', () => this.handleResetBucket());
     this.view.costUpdateHandler = () => this.view._updateCostDisplay();
@@ -394,13 +436,17 @@ export class SettingsGlobalTab {
   // Bind the runtime-health refresh action.
   bindRuntimeRefresh() {
     this.body.querySelector('#settingsRefreshRuntimeBtn')?.addEventListener('click', async () => {
+      if (this.view.sharedRuntimeAccess !== 'admitted') return;
+      const epoch = this.view.sharedRuntimeEpoch;
       const refreshButton = this.body.querySelector('#settingsRefreshRuntimeBtn');
       if (refreshButton) {
         refreshButton.disabled = true;
       }
       logger.info('Refreshing cockpit runtime status');
       try {
-        this.view.serviceHealth = await loadServiceHealth(this.view.api);
+        const health = await this.view.loadServiceHealth();
+        if (!this.view._currentSharedControls(epoch, this.body)) return;
+        this.view.serviceHealth = health;
         this.replaceServiceHealthGrid();
         logger.info('Refreshed cockpit runtime status');
         this.view.showToast('Service runtime status refreshed', 'success');
@@ -408,6 +454,8 @@ export class SettingsGlobalTab {
         logger.error('Failed to refresh cockpit runtime status', {
           error: serializeUiError(error),
         });
+        if (!this.view._currentSharedControls(epoch, this.body)) return;
+        if ([401, 403].includes(error.status)) this.view._refuseSharedRuntime();
         this.view.showToast(`Failed to refresh runtime status: ${error.message}`, 'error');
       } finally {
         if (refreshButton) {
@@ -420,11 +468,16 @@ export class SettingsGlobalTab {
   // Bind the shared settings save action.
   bindSave() {
     this.body.querySelector('#settingsSaveBtn')?.addEventListener('click', async () => {
+      if (this.view.sharedRuntimeAccess !== 'admitted') return;
+      const epoch = this.view.sharedRuntimeEpoch;
       logger.info('Saving cockpit global settings');
       try {
         await Promise.all(this.buildSaveRequests());
+        if (!this.view._currentSharedControls(epoch, this.body)) return;
         this.refreshViewStateFromForm();
-        this.view.serviceHealth = await loadServiceHealth(this.view.api);
+        const health = await this.view.loadServiceHealth();
+        if (!this.view._currentSharedControls(epoch, this.body)) return;
+        this.view.serviceHealth = health;
         this.replaceServiceHealthGrid();
         void this.view._refreshOpenAiCodexAuthStatus(this.body, true);
         logger.info('Saved cockpit global settings');
@@ -433,6 +486,8 @@ export class SettingsGlobalTab {
         logger.error('Failed to save cockpit global settings', {
           error: serializeUiError(error),
         });
+        if (!this.view._currentSharedControls(epoch, this.body)) return;
+        if ([401, 403].includes(error.status)) this.view._refuseSharedRuntime();
         this.view.showToast(`Settings save failed: ${error.message}`, 'error');
       }
     });
@@ -637,21 +692,6 @@ function renderServiceHealthCard(card) {
     </div>`;
 }
 
-// Load live service runtime health from the mounted OSHAL routes.
-async function loadServiceHealth(api) {
-  const [ragRes] = await Promise.all([
-    api.getSafe('/api/rag/health', { chromadb: 'unknown' }),
-  ]);
-
-  return {
-    rag: createServiceHealthEntry(
-      ragRes?.chromadb || 'unknown',
-      ragRes?.chromadb === 'connected' ? 'Vector store is reachable for shared swarm knowledge.' : 'Vector store is not reachable from the current runtime.',
-      'GET /api/rag/health',
-    ),
-  };
-}
-
 // Create a consistent service-health entry for UI rendering.
 function createServiceHealthEntry(status, detail, target) {
   return {
@@ -671,8 +711,7 @@ async function saveCockpitSettings(payload) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error || response.statusText);
+    throw Object.assign(new Error('Shared settings save refused or unavailable'), { status: response.status });
   }
   return response.json();
 }
@@ -685,8 +724,7 @@ async function saveServiceConfig(endpoint, payload) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error || response.statusText);
+    throw Object.assign(new Error('Shared service settings save refused or unavailable'), { status: response.status });
   }
   return response.json();
 }

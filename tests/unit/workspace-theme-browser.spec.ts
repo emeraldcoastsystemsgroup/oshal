@@ -2,19 +2,20 @@
  * =============================================================================
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove selectable Workspace styling through real Cockpit components, persisted choices, shared iframes and transient package themes in Chromium.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify the existing chooser through relocated header controls with keyboard and pointer dismissal.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the chooser inside the OSHAL menu alongside the compact daily Home composition.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove first-screen appearance controls and keyboard-expandable runtime help through the complete Settings view.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Qualify existing shared-form cases as operator fixtures and cover personal controls, pending/refused/unavailable admission and stale shared responses through actual Settings modules.
  * =============================================================================
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { startWorkspaceThemeFixture } from '../fixtures/workspace-theme';
+import { installSettingsBoundaryFixture, startWorkspaceThemeFixture } from '../fixtures/workspace-theme';
 import { startWorkspaceNavigationFixture } from '../fixtures/workspace-navigation';
 import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isolated-browser';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
@@ -31,6 +32,7 @@ declare global {
 }
 let fixture: Awaited<ReturnType<typeof startWorkspaceThemeFixture>>;
 let settingsFixture: Awaited<ReturnType<typeof startWorkspaceNavigationFixture>>;
+let settingsBoundary: ReturnType<typeof installSettingsBoundaryFixture>;
 let isolated: Awaited<ReturnType<typeof launchIsolatedBrowser>>;
 let browser: Browser, context: BrowserContext, page: Page;
 let errors: string[];
@@ -70,12 +72,7 @@ function contrast(foreground: string, background: string) {
 beforeAll(async () => {
   fixture = await startWorkspaceThemeFixture();
   settingsFixture = await startWorkspaceNavigationFixture(app => {
-    app.get('/api/config/ownership', (_request, response) => response.json({ ownership: {
-      globalConfig: { routeBase: '/api/config', summary: 'Shared runtime configuration.', examples: ['Provider'] },
-      perAgentProfile: { routeBase: '/api/agents/:agentId/profile', summary: 'Agent profile.', examples: ['Role'] },
-      perAgentTools: { routeBase: '/api/agents/:agentId/tools', summary: 'Agent tools.', examples: ['Tools'] },
-      legacyCompatibility: { guidance: ['Use the mounted configuration APIs.'] },
-    } }));
+    settingsBoundary = installSettingsBoundaryFixture(app);
   });
   isolated = await launchIsolatedBrowser(); browser = isolated.browser;
 });
@@ -88,21 +85,62 @@ afterAll(async () => {
   } finally { await settingsFixture?.close(); await fixture?.close(); }
 }, BROWSER_HOOK_TIMEOUT_MS);
 beforeEach(async () => {
+  Object.assign(settingsBoundary, { operator: true, identityStatus: 200, configStatus: 200, malformedConfig: false,
+    identityGate: null, configGate: null, requests: [] });
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
   await context.route('**/*', route => [fixture.origin, settingsFixture.origin].includes(new URL(route.request().url()).origin)
     ? route.continue() : route.abort());
+  // Keep the original fixture bytes while making its synthetic GET envelope match the maintained config handler.
+  for (const path of ['/api/config', '/api/config/rag']) {
+    await context.route(settingsFixture.origin + path, async route => {
+      if (route.request().method() !== 'GET') { await route.continue(); return; }
+      const response = await route.fetch();
+      const payload = await response.json();
+      await route.fulfill({ response, json: { ...payload, success: response.ok() } });
+    });
+  }
   page = await context.newPage(); errors = [];
   page.on('pageerror', error => errors.push(error.message));
 });
 afterEach(async () => { await context?.close(); });
 
 /** @description Enter Global Settings through the actual shell action and its unchanged asynchronous data loading. */
-async function openFullSettings(reload = false) {
+async function openFullSettings(reload = false, state: string | null = 'admitted') {
   if (reload) await page.reload();
   else await page.goto(settingsFixture.origin + '/cockpit/');
   await page.locator('#workspaceNavigationMore > summary').click();
   await page.locator('#portalSettingsBtn').click();
   await page.locator('#settingsThemePicker').waitFor();
+  if (state) await sharedAccess(state);
+}
+
+/** @description Wait for the actual shared section's current verdict rather than inferring admission from static controls. */
+async function sharedAccess(state: string) {
+  await expect.poll(() => page.locator('[data-shared-runtime-state]').getAttribute('data-shared-runtime-state')).toBe(state);
+}
+
+/** @description Check shared controls are absent, independently of the explanatory text or zero-valued browser estimate. */
+async function noSharedControls() {
+  for (const id of ['settingsProvider', 'settingsModel', 'settingsApiKey', 'settingsGitToken', 'settingsRagEndpoint',
+    'settingsAutoSafe', 'settingsAutoRead', 'settingsAutoWrite', 'settingsSaveBtn', 'settingsOpenAiCodexSignInBtn']) {
+    expect(await page.locator('#' + id).count()).toBe(0);
+  }
+}
+
+/** @description Observe only global Settings requests; ordinary permission-aware bot/knowledge reads are separate features. */
+function sharedRequests() {
+  return settingsBoundary.requests.filter(request => /^\w+ \/api\/(config(?:\/|$)|providers$|rag\/health$|openai-codex\/oauth|dev-console\/access$)/.test(request));
+}
+
+/** @description Inspect booleans and counts on the real shipped view, without fixture overrides or configuration values. */
+async function sharedState() {
+  return page.evaluate(() => {
+    const view = (window as unknown as { __cockpit: { viewController: { activeViewInstance: {
+      settings: object; providers: unknown[]; openAiCodexAuthState: { authenticated: boolean }; openAiCodexAuthPollToken: number;
+    } } } }).__cockpit.viewController.activeViewInstance;
+    return { settingsFields: Object.keys(view.settings).length, providers: view.providers.length,
+      authenticated: view.openAiCodexAuthState.authenticated, pollToken: view.openAiCodexAuthPollToken };
+  });
 }
 
 /** @description Check actual first-screen geometry before any control can scroll itself into view. */
@@ -162,6 +200,182 @@ it('keeps full Global Settings runtime help closed until keyboard expansion with
   expect(await help.getAttribute('open')).toBeNull();
   expect(await summary.evaluate(element => element === document.activeElement)).toBe(true);
   expect(writes).toEqual([]); expect(errors).toEqual([]);
+}, 30000);
+
+it.each([{ width: 1280, height: 800 }, { width: 390, height: 844 }])(
+  'keeps ordinary personal Settings usable without global settings requests at $width pixels', async viewport => {
+    settingsBoundary.operator = false;
+    await page.setViewportSize(viewport); await openFullSettings(false, 'operator-required');
+    await firstScreenControl('#settingsApplicationColors'); await firstScreenControl('#settingsNavigationLayout');
+    await noSharedControls(); expect(sharedRequests()).toEqual([]);
+    expect(await page.locator('#settingsSharedRuntime').innerText()).toContain('require operator access');
+    expect(await page.locator('#settingsBody').innerText()).toContain('These counters do not report total swarm spending');
+    expect(await page.locator('#settingsDevicesLink').getAttribute('href')).toBe('/cockpit/tools/devices.html');
+    await page.locator('#costDailyLimit').fill('12'); await page.locator('#costSaveLimitsBtn').click();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cockpit-cost-tracker') || '{}').dailyLimit)).toBe(12);
+    await page.locator('#settingsApplicationColors').check(); await page.locator('#settingsThemePicker [data-theme=midnight]').click();
+    expect(await page.locator('#settingsApplicationColors').isChecked()).toBe(false);
+    await page.locator('#settingsNavigationLayout').selectOption('workspaces');
+    await openFullSettings(true, 'operator-required');
+    expect(await page.locator('#settingsNavigationLayout').inputValue()).toBe('workspaces');
+    expect(await page.locator('html').getAttribute('data-theme')).toBe('midnight');
+    for (const tab of ['knowledge', 'connections', 'channels', 'location', 'bots']) {
+      expect(await page.locator(`.settings-tab[data-tab=${tab}]`).isEnabled()).toBe(true);
+    }
+    await noSharedControls(); expect(sharedRequests()).toEqual([]); expect(errors).toEqual([]);
+  }, 30000,
+);
+
+it('renders pending access with personal drafts intact until the fresh identity verdict arrives', async () => {
+  await page.goto(settingsFixture.origin + '/cockpit/');
+  await page.locator('#workspaceNavigationMore > summary').click();
+  let release!: () => void;
+  settingsBoundary.identityGate = new Promise<void>(done => { release = done; });
+  settingsBoundary.operator = false;
+  try {
+    await page.locator('#portalSettingsBtn').click(); await sharedAccess('pending'); await noSharedControls();
+    await page.locator('#costDailyLimit').fill('17'); await page.locator('#settingsApplicationColors').check();
+    expect(sharedRequests()).toEqual([]);
+    release(); await sharedAccess('operator-required');
+    expect(await page.locator('#costDailyLimit').inputValue()).toBe('17');
+    expect(await page.locator('#settingsApplicationColors').isChecked()).toBe(true);
+    expect(sharedRequests()).toEqual([]); expect(errors).toEqual([]);
+  } finally { release(); settingsBoundary.identityGate = null; }
+}, 30000);
+
+it('explains a config refusal after operator identity without constructing fallback shared forms', async () => {
+  settingsBoundary.configStatus = 403;
+  await openFullSettings(false, 'operator-required'); await noSharedControls();
+  expect(sharedRequests()).toEqual(['GET /api/config']);
+  await page.locator('#costDailyLimit').fill('19');
+  settingsBoundary.configStatus = 200; await page.locator('#settingsRetryRuntime').click();
+  await sharedAccess('admitted');
+  expect(await page.locator('#settingsSaveBtn').count()).toBe(1);
+  expect(await page.locator('#costDailyLimit').inputValue()).toBe('19'); expect(errors).toEqual([]);
+}, 30000);
+
+it.each(['identity', 'config', 'malformed'] as const)(
+  'offers Retry for unavailable %s instead of default admin controls', async failure => {
+    if (failure === 'identity') settingsBoundary.identityStatus = 503;
+    if (failure === 'config') settingsBoundary.configStatus = 503;
+    if (failure === 'malformed') settingsBoundary.malformedConfig = true;
+    await openFullSettings(false, 'unavailable'); await noSharedControls();
+    expect(await page.locator('#settingsRetryRuntime').isEnabled()).toBe(true);
+    await page.locator('#costBucketLimit').fill('23');
+    Object.assign(settingsBoundary, { identityStatus: 200, configStatus: 200, malformedConfig: false });
+    await page.locator('#settingsRetryRuntime').click(); await sharedAccess('admitted');
+    expect(await page.locator('#settingsProvider').inputValue()).toBe('openai-codex');
+    expect(await page.locator('#costBucketLimit').inputValue()).toBe('23'); expect(errors).toEqual([]);
+  }, 30000,
+);
+
+it('requires a literal current operator boolean rather than a truthy identity field', async () => {
+  settingsBoundary.operator = 'true';
+  await openFullSettings(false, 'unavailable'); await noSharedControls();
+  expect(sharedRequests()).toEqual([]); expect(errors).toEqual([]);
+}, 30000);
+
+it.each([{ config: null, success: true }, { config: {}, success: false, error: 'synthetic_config_failure' }])(
+  'refuses a malformed successful-HTTP config envelope %j without default admin forms', async payload => {
+    await page.route(settingsFixture.origin + '/api/config', route => route.fulfill({ status: 200, json: payload }));
+    await openFullSettings(false, 'unavailable'); await noSharedControls();
+    expect(await page.locator('#settingsRetryRuntime').isEnabled()).toBe(true);
+    expect(sharedRequests()).toEqual([]); expect(errors).toEqual([]);
+  }, 30000,
+);
+
+it('retires shared controls immediately during delayed ordinary bot discovery and refuses detached shared actions', async () => {
+  await openFullSettings(); await page.locator('#settingsOpenAiCodexSignInBtn').waitFor({ state: 'visible' });
+  const save = await page.locator('#settingsSaveBtn').elementHandle();
+  const signIn = await page.locator('#settingsOpenAiCodexSignInBtn').elementHandle();
+  expect(save).not.toBeNull(); expect(signIn).not.toBeNull();
+  let release!: () => void;
+  const held = new Promise<void>(done => { release = done; });
+  await page.route(settingsFixture.origin + '/api/agents', async route => {
+    await held; await route.fulfill({ status: 200, json: { agents: [] } });
+  });
+  try {
+    settingsBoundary.requests = [];
+    const request = page.waitForRequest(settingsFixture.origin + '/api/agents');
+    await page.locator('.settings-tab[data-tab=bots]').click(); await request;
+    await noSharedControls(); expect(await page.locator('#settingsBody').innerText()).toContain('Loading bot settings');
+    await save!.evaluate(element => (element as HTMLButtonElement).click());
+    await signIn!.evaluate(element => (element as HTMLButtonElement).click());
+    expect(sharedRequests()).toEqual([]);
+    const completed = page.waitForResponse(settingsFixture.origin + '/api/agents'); release(); await (await completed).finished();
+    await page.locator('.settings-tab[data-tab=global]').click(); await sharedAccess('admitted');
+    expect(await page.locator('#settingsSaveBtn').count()).toBe(1);
+    expect(sharedRequests().filter(request => request.startsWith('POST ') || request.endsWith('/oauth/start'))).toEqual([]);
+    expect(errors).toEqual([]);
+  } finally { release(); await save?.dispose(); await signIn?.dispose(); }
+}, 30000);
+
+it('clears admitted shared fields on current revocation while retaining personal drafts and invalidating OAuth work', async () => {
+  await openFullSettings();
+  const initial = await sharedState();
+  await page.locator('#costDailyLimit').fill('29');
+  settingsBoundary.operator = false; settingsBoundary.requests = [];
+  await page.locator('#settingsRetryRuntime').click(); await sharedAccess('operator-required');
+  await noSharedControls(); expect(await page.locator('#costDailyLimit').inputValue()).toBe('29');
+  const revoked = await sharedState();
+  expect(revoked.settingsFields).toBe(0); expect(revoked.providers).toBe(0); expect(revoked.authenticated).toBe(false);
+  expect(revoked.pollToken).toBeGreaterThan(initial.pollToken);
+  expect(sharedRequests()).toEqual([]);
+  await page.locator('.settings-tab[data-tab=knowledge]').click();
+  await page.locator('#knowledgeTextInput').fill('An ordinary knowledge draft.');
+  expect(await page.locator('#knowledgeTextInput').inputValue()).toBe('An ordinary knowledge draft.');
+  await page.locator('.settings-tab[data-tab=global]').click(); await noSharedControls();
+  expect(sharedRequests()).toEqual([]); expect(errors).toEqual([]);
+}, 30000);
+
+it('discards a late successful config response after a newer ordinary verdict', async () => {
+  await page.goto(settingsFixture.origin + '/cockpit/');
+  await page.locator('#workspaceNavigationMore > summary').click();
+  let release!: () => void;
+  settingsBoundary.configGate = new Promise<void>(done => { release = done; });
+  try {
+    await page.locator('#portalSettingsBtn').click(); await sharedAccess('pending');
+    await expect.poll(() => settingsBoundary.requests.includes('GET /api/config')).toBe(true);
+    await page.locator('#costDailyLimit').fill('31'); settingsBoundary.operator = false;
+    const completed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/config');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await sharedAccess('operator-required'); release(); await (await completed).finished();
+    await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => done())));
+    await sharedAccess('operator-required');
+    await noSharedControls(); expect(await page.locator('#costDailyLimit').inputValue()).toBe('31');
+    expect((await sharedState()).settingsFields).toBe(0); expect((await sharedState()).providers).toBe(0);
+    expect(sharedRequests()).toEqual(['GET /api/config']); expect(errors).toEqual([]);
+  } finally { release(); settingsBoundary.configGate = null; }
+}, 30000);
+
+it('discards a delayed OAuth status after shared admission has been revoked', async () => {
+  let release!: () => void;
+  const held = new Promise<void>(done => { release = done; });
+  await page.route('**/api/openai-codex/oauth/status', async route => {
+    await held; await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ authenticated: true }) });
+  });
+  try {
+    const request = page.waitForRequest('**/api/openai-codex/oauth/status');
+    await openFullSettings(); await request;
+    settingsBoundary.operator = false;
+    await page.locator('#settingsRetryRuntime').click(); await sharedAccess('operator-required');
+    const completed = page.waitForResponse('**/api/openai-codex/oauth/status'); release(); await (await completed).finished();
+    await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => done())));
+    await sharedAccess('operator-required');
+    await noSharedControls();
+    expect((await sharedState()).authenticated).toBe(false);
+    expect(await page.locator('#settingsOpenAiCodexAuthStatus').count()).toBe(0); expect(errors).toEqual([]);
+  } finally { release(); }
+}, 30000);
+
+it('clears shared controls after a save refusal while personal local actions remain available', async () => {
+  await openFullSettings(); await page.locator('#costDailyLimit').fill('37');
+  await page.locator('#settingsSaveBtn').click(); await sharedAccess('operator-required');
+  await noSharedControls(); expect(await page.locator('#costDailyLimit').inputValue()).toBe('37');
+  const writes = () => settingsBoundary.requests.filter(request => request.startsWith('POST /api/config'));
+  expect(writes().sort()).toEqual(['POST /api/config', 'POST /api/config/rag']);
+  await page.locator('#costSaveLimitsBtn').click();
+  expect(writes().sort()).toEqual(['POST /api/config', 'POST /api/config/rag']); expect(errors).toEqual([]);
 }, 30000);
 
 it('selects through the real Settings picker, persists and stays in the existing theme cycle', async () => {
