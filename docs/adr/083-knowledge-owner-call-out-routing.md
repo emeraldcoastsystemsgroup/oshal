@@ -11,7 +11,9 @@
   Walmart trace proved that resolving a credential is not enough: every bot-node transport and
   workspace materializer must admit the same explicit broker allowlist, and parallel owners must
   use separate workspaces so cleanup cannot erase a sibling's credential. See the companion
-  checklist's "Decisions — LOCKED".
+  checklist's "Decisions — LOCKED". Amended 2026-10-04: explicit `metadata.targetAgentId` pins
+  were kept, not deleted, and are now authorized at filing and at dispatch (see the amendment at
+  the end).
 - **Amends / relates to:** ADR-050 (Jarvis, in-framework bot with hand-off), ADR-036 (bot-owned application architecture), ADR-038 (swarms bundled by type), ADR-081 (which patched the same misroute class), ADR-079 (Haven), ADR-025 (tool auto-discovery)
 - **Companion:** [docs/architecture/knowledge-owner-routing-config-checklist.md](../architecture/knowledge-owner-routing-config-checklist.md) — the per-bot config actions to execute this decision.
 
@@ -141,3 +143,28 @@ When no owner bids above threshold, route to a **defined general, tool-capable f
 ## Rollout
 
 Execute via the companion **[knowledge-owner routing config checklist](../architecture/knowledge-owner-routing-config-checklist.md)**: Phase 0 biddability (the unblock) → Phase 1 declarations → Phase 2 the routing wiring (delete the regex, call-out on the task lane, lane selection) → Phase 3 reason-only pre-fetch + accountability + fallback. The two orthogonal infra fixes (Claude-token refresh, dev-bot git auth) are tracked in [BACKLOG.md](../BACKLOG.md), not here.
+
+## Amendment 2026-10-04: explicit pins are kept, and authorized
+
+Decision 1 deleted the free-text pin resolver, `resolveTaskBotAgentId`. The `metadata.targetAgentId`
+field itself was never deleted. A ticket that names a bot in it is still dispatched to that bot,
+without a call-out (`routedBy: 'pinned'` in `dispatch-manifest-worker.ts`). The field is a
+caller's explicit choice of bot, so since 2026-10-04 it is authorized at both ends:
+
+- **At filing.** When a non-operator creates or updates a ticket, the pin must pass that caller's
+  direct-call entitlement before anything is written (`src/app/routes/ticket-filing-guard.ts`,
+  #1050).
+- **At dispatch.** The dispatcher decides the pin again, against the ticket owner's current direct
+  entitlement (`src/features/swarm-orchestration/services/dispatch-ticket-gates.ts`, #1053). It
+  escalates the ticket in three cases:
+  - The owner may no longer call the pinned bot (`pinned_agent_not_entitled`).
+  - The owner subject is invalid (`pinned_ticket_owner_invalid`).
+  - The check could not be decided (`pin_authorization_unavailable`). This is never recorded as an
+    entitlement verdict.
+
+  A bot chosen by a trusted server-authored provider intent is not re-checked, and neither are the
+  swarm's own choices: call-out winners and workflow defaults.
+
+Guards: [ticket-filing-integrity.spec.ts](../../tests/unit/ticket-filing-integrity.spec.ts) and
+[pinned-ticket-dispatch-gate.spec.ts](../../tests/unit/pinned-ticket-dispatch-gate.spec.ts). Record:
+[door authorization, 2026-10-04](../releases/door-authorization-2026-10-04.md).

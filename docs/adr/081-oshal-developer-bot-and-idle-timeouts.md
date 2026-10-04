@@ -1,6 +1,6 @@
 # ADR-081: The OSHAL Developer Bot (in-swarm platform development) + idle-based CLI harness timeouts
 
-**Status:** Accepted (2026-07-07)
+**Status:** Accepted (2026-07-07). Amended 2026-10-04: privileged types are also refused at intake (§2).
 **Relates to:** ADR-077 (self-developing platform / dev console), ADR-036 (bot-owned apps), ADR-045 (graph extension)
 
 ## Context
@@ -70,6 +70,13 @@ the single-bot manifest-worker dispatch ([swarm-apps/oshal-dev.yaml](../../swarm
   The set of privileged ticket types is **hardcoded** so a manifest edit can
   never widen who can task the bot. Gated at dispatch, not intake, because
   `POST /api/tickets` accepts any ticketType from any authenticated user.
+- **2026-10-04: also refused at intake; the dispatch gate moved.** The ticket routes no longer
+  accept a privileged type from just any user. On create and on update, they answer
+  `403 superadmin_required` unless the **filer** is on `OSHAL_SUPERADMIN_SUBS`
+  (`src/app/routes/ticket-filing-guard.ts`, #1050). The dispatch gate checks the owner, so this
+  closes the path where an operator filed under a super-admin's sub. The dispatch gate's behavior
+  is unchanged, but it moved from `dispatch-manifest-worker.ts` to
+  `src/features/swarm-orchestration/services/dispatch-ticket-gates.ts` (#1053).
 
 ### 3. Idle-based timeouts for CLI harnesses ("only time out on idle, not duration")
 
