@@ -1,10 +1,11 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise actual refused profile HTTP responses and ribbon initialisation without widening a focused deployment's shell.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Behaviour instead of source text. The refusal boot is driven through bootInitialView on the profile the real _init produced (with a ?ticket= deep link): no view opens, no ticket is preselected, the panel renders. Every closed answer (403/404/503/500, network, non-JSON, a 200 without a profile, a timeout) is asserted to be the profile renderProfileRefusal recognises, through the one shared PROFILE_UNAVAILABLE name. A locked shell registers no platform views and never answers the hub handshake or a view navigation; only the registered hub frame may. An unreadable answer on the plain document stays closed. An operator's rail, hub and doors are unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Reject malformed successful profiles and bound both real HTTP identity prerequisites before any profile read or view registration.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
@@ -21,7 +22,7 @@ const ORIGIN = 'https://cockpit.fixture.invalid';
 let server: Server | undefined;
 afterEach(async () => {
   vi.unstubAllGlobals();
-  if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
+  if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server!.close(() => resolve())); }
   server = undefined;
 });
 
@@ -48,15 +49,17 @@ const frame = (src: string): Frame => ({ contentWindow: { postMessage: vi.fn() }
  * @param response Profile response or transport failure. @param focused Whether the URL names an application.
  * @param operator Current whoami verdict. @param frames Frames on the page, for the hub check.
  * @returns The initialized ribbon. */
-async function initialise(response: (init?: RequestInit) => Promise<Response>, focused = true, operator = false, frames: Frame[] = []) {
+async function initialise(response: (init?: RequestInit, url?: string) => Promise<Response>, focused = true, operator = false, frames: Frame[] = [], options: { realIdentity?: boolean; timeoutMs?: number } = {}) {
   vi.stubGlobal('window',{location:{search:focused ? '?app=home-experience&ticket=T-9' : '?ticket=T-9',replace:vi.fn(),origin:ORIGIN,href:`${ORIGIN}/cockpit/`}});
   vi.stubGlobal('document',{querySelectorAll:(selector: string) => (selector === 'iframe' ? frames : [])});
-  vi.stubGlobal('fetch',vi.fn((_url: string, init?: RequestInit) => response(init)));
+  vi.stubGlobal('fetch',vi.fn((url: string, init?: RequestInit) => response(init, url)));
   const ribbon = Object.create(RibbonNav.prototype);
   Object.assign(ribbon,{isOperator:operator,profileOperator:true,landingApp:'stale-landing',studentMode:false,workspaceNames:[],container:null,
     _loadGuestState:vi.fn(async () => undefined),_loadOperatorState:vi.fn(async () => undefined),
     _applyAppBranding:vi.fn(),_appendPlatformHub:vi.fn(function (this: { views: object[] }) { this.views.push({ id: PLATFORM_HUB_ID, section: 'bottom', toolUi: { iframeUrl: '/cockpit/tools/platform.html' } }); }),
     _applyShellLock:vi.fn(),_openShellDoors:vi.fn(),_loadExperiences:vi.fn(async () => undefined),render:vi.fn(),_loadToolViews:vi.fn(),setActive:vi.fn()});
+  ribbon.profileTimeoutMs = options.timeoutMs;
+  if (options.realIdentity) { delete ribbon._loadGuestState; delete ribbon._loadOperatorState; }
   await ribbon._init();return ribbon;
 }
 
@@ -66,7 +69,7 @@ function boot(ribbon: { profile: object; views: Array<{ id: string }>; getActive
   const container = { innerHTML:'',querySelector:vi.fn(() => ({ addEventListener:vi.fn() })) };
   const viewController: { pendingTicketSelection?: string } = {};
   const switchView = vi.fn();
-  const result = bootInitialView({ ribbon: { ...ribbon, getActive: () => (ribbon as { activeView?: string }).activeView ?? 'home' },
+  const result = bootInitialView({ ribbon: Object.assign(Object.create(ribbon), { getActive: () => (ribbon as { activeView?: string }).activeView ?? 'home' }),
     container: container as never, viewController, isBusy: () => false, switchView, ticketId: 'T-9' });
   return { result, container, viewController, switchView };
 }
@@ -134,6 +137,51 @@ describe('profile refusal retains focused shell context',() => {
     expect(ribbon._loadExperiences).not.toHaveBeenCalled();expect(ribbon._openShellDoors).not.toHaveBeenCalled();
     expectClosed(ribbon);
     expect(boot(ribbon).switchView).not.toHaveBeenCalled();
+  });
+  it.each([{}, 'invalid-profile', { name: 'invalid' }, { name: 'invalid', ribbon: { items: 'invalid' } },
+    { name: 'invalid', ribbon: { items: [null] } }, { name: 'invalid', ribbon: { items: [], dynamicTools: { allow: [42] } } }])
+  ('a malformed successful profile stays closed on the plain document: %j', async profile => {
+    const ribbon = await initialise(async () => new Response(JSON.stringify({ profile }), { status: 200 }), false);
+    expectClosed(ribbon); expect(ribbon.shellLocked).toBe(true);
+    expect(ribbon._appendPlatformHub).not.toHaveBeenCalled(); expect(ribbon._openShellDoors).not.toHaveBeenCalled();
+    expect(boot(ribbon).switchView).not.toHaveBeenCalled();
+  });
+  it.each(['/api/auth/user', '/api/cli-tokens/whoami'])('a real hanging %s read reaches bounded closed refusal', async hangingPath => {
+    const nativeFetch = fetch; const requests: string[] = []; const app = express();
+    app.use((req, res) => { requests.push(req.path);
+      if (req.path === hangingPath) return;
+      res.json(req.path === '/api/auth/user' ? { guestMode: false } : { operator: false });
+    });
+    await new Promise<void>((resolve, reject) => { server = app.listen(0, '127.0.0.1', error => error ? reject(error) : resolve()); });
+    const base = `http://127.0.0.1:${(server!.address() as AddressInfo).port}`;
+    const ribbon = await initialise((init, url) => nativeFetch(new URL(url!, base), init), true, false, [],
+      { realIdentity: true, timeoutMs: 150 });
+    expect(requests).toContain(hangingPath); expect(requests).not.toContain('/api/ui/profile');
+    expectClosed(ribbon); expect(ribbon.shellLocked).toBe(true); expect(ribbon._openShellDoors).not.toHaveBeenCalled();
+    expect(boot(ribbon).switchView).not.toHaveBeenCalled();
+  });
+  it('a valid empty held rail never boots the native fallback workbench', async () => {
+    const data = { profile: { name: landing, ribbon: { items: [], dynamicTools: { allow: [] } }, defaultView: null }, landingApp: landing, operator: false };
+    const ribbon = await initialise(async () => new Response(JSON.stringify(data), { status: 200 }));
+    const result = boot(ribbon);
+    expect(ribbon.shellLocked).toBe(true); expect(ribbon.views).toEqual([]);
+    expect(result.result).toBe('empty'); expect(result.switchView).not.toHaveBeenCalled();
+    expect(result.viewController.pendingTicketSelection).toBeUndefined(); expect(result.container.innerHTML).toContain('No views available');
+    expect(ribbon._loadToolViews).toHaveBeenCalledOnce();
+  });
+  it('a filtered default selects the admitted own tool instead of Tickets', async () => {
+    const data = { profile: { name: landing, defaultView: 'tickets', ribbon: { items: [{ id: 'tool-own', toolUi: { iframeUrl: '/fixture/own' } }], dynamicTools: { allow: [] } } }, landingApp: landing, operator: false };
+    const ribbon = await initialise(async () => new Response(JSON.stringify(data), { status: 200 }));
+    const result = boot(ribbon);
+    expect(result.result).toBe('tool-own'); expect(result.switchView).toHaveBeenCalledWith('tool-own');
+    expect(result.viewController.pendingTicketSelection).toBeUndefined();
+  });
+  it('boot excludes both role-locked and guest-blocked registered views', () => {
+    const ribbon = { profile: {}, activeView: 'tickets', views: [{ id: 'tickets', locked: {} }, { id: 'guest-only' }, { id: 'tool-own' }],
+      _isGuestBlocked: (view: { id: string }) => view.id === 'guest-only' };
+    const result = boot(ribbon);
+    expect(result.result).toBe('tool-own'); expect(result.switchView).toHaveBeenCalledWith('tool-own');
+    expect(result.viewController.pendingTicketSelection).toBeUndefined();
   });
   it('a locked shell answers neither the hub handshake nor a view navigation, from any sender', async () => {
     const response = await fetch(await endpoint(403));const data = await response.json();

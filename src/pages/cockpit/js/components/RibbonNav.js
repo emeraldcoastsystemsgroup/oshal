@@ -23,32 +23,18 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep focused profile refusals closed and preserve the server's shell-lock inputs.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client). Every non-OK, unreadable or timed-out profile answer (AbortSignal bound) is the closed PROFILE_UNAVAILABLE fallback whether or not ?app= is set, and a refusal locks unless the caller is an operator; the framework fallback that unlocked a plain document on a 502 is gone. A locked shell registers no platform views at all and always collapses platform chrome. The header doors are drawn closed in index.html and opened only on an unlocked verdict (cockpit-shell-doors.js). platform-hub-ready and app-navigate {view} are accepted only from the registered hub frame's own window on this origin; the surface-bridge relay posts only the {tool} form. Operators see no change after the verdict.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Extract shell reads instead of growing the oversized ribbon; bound identity prerequisites and profile together and validate successful profile shape before opening doors.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
 import { WORKSPACE_DESTINATIONS_EVENT, isWorkspaceDelegated } from '../workspace-navigation.js';
 import { PROFILE_UNAVAILABLE } from '../cockpit-profile-refusal.js';
 import { closeShellDoors, openShellDoors } from '../cockpit-shell-doors.js';
+import { loadInitialShellProfile, readShellIdentity, readShellProfile } from '../cockpit-profile-load.js';
 
 const logger = createUiLogger('cockpit-ribbon-nav');
 
 const PROFILE_LS_KEY = 'oshal-ui-profile';
-
-/** How long the profile read may take before the ribbon gives up and stays closed. */
-const PROFILE_FETCH_TIMEOUT_MS = 20_000;
-
-/**
- * @description A signal that aborts the profile read after the bound, so a hung answer falls into
- * the closed refusal instead of leaving the shell undecided indefinitely.
- * @param {number} ms - The bound.
- * @returns {AbortSignal} The signal.
- */
-function profileSignal(ms) {
-  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms);
-  return controller.signal;
-}
 
 /** Framework default ribbon items — used when no profile file exists. */
 const HARDCODED_VIEWS = [
@@ -370,9 +356,7 @@ export class RibbonNav {
   }
 
   async _init() {
-    await this._loadGuestState();
-    await this._loadOperatorState();
-    this.profile = await this._fetchProfile();
+    this.profile = await loadInitialShellProfile(this, this.profileTimeoutMs);
     if (this.profile?.experience?.shell === 'page') {
       window.location.replace(`/api/ui/experiences/${encodeURIComponent(this.profile.name)}/open`);
       return;
@@ -481,17 +465,16 @@ export class RibbonNav {
    * @description Resolves whether the current session is a guest and, if so, which
    * app segments are blocked (Tier C). Drives the ribbon graying. Falls back to a
    * non-guest (everything-enabled) view on any error.
+   * @param {AbortSignal} signal Shared shell initialization deadline.
    * @returns {Promise<void>}
    */
-  async _loadGuestState() {
+  async _loadGuestState(signal) {
     this.guestMode = false;
     this.guestCaps = null;
     this.guestBlocked = new Set(); // Tier C
     this.guestTierA = new Set(); // fully interactive
     try {
-      const res = await fetch('/api/auth/user');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await readShellIdentity('/api/auth/user', signal);
       if (data?.guestMode && data?.capabilities) {
         this.guestMode = true;
         this.guestCaps = data.capabilities;
@@ -511,14 +494,13 @@ export class RibbonNav {
    * requiresAuth + requiresOperator server-side, and the surface itself renders an honest
    * "operator only" panel on a 403, so a wrong answer here leaks nothing. Fails closed
    * (non-operator) on any error, because pinning a dead tool is worse than omitting one.
+   * @param {AbortSignal} signal Shared shell initialization deadline.
    * @returns {Promise<void>}
    */
-  async _loadOperatorState() {
+  async _loadOperatorState(signal) {
     this.isOperator = false;
     try {
-      const res = await fetch('/api/cli-tokens/whoami', { credentials: 'same-origin' });
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await readShellIdentity('/api/cli-tokens/whoami', signal);
       this.isOperator = data?.operator === true;
     } catch (err) {
       logger.debug('Could not resolve operator state (non-fatal, treated as non-operator)', { error: err?.message });
@@ -568,28 +550,15 @@ export class RibbonNav {
    * non-JSON or network failure, a 200 without a profile, or no answer within the bound — becomes
    * the closed PROFILE_UNAVAILABLE fallback (empty rail, empty allowlist), focused or not, keeping
    * the server's lock inputs when the body carried them.
+   * @param {AbortSignal} signal Shared shell initialization deadline, when provided.
    * @returns {Promise<object>} The profile, or the closed fallback.
    */
-  async _fetchProfile() {
-    const requested = resolveRequestedProfileName();
-    this.profileOperator = null;
-    this.landingApp = null;
-    try {
-      const url = requested ? `/api/ui/profile?name=${encodeURIComponent(requested)}` : '/api/ui/profile';
-      const res = await fetch(url, { signal: profileSignal(this.profileTimeoutMs ?? PROFILE_FETCH_TIMEOUT_MS) });
-      const data = await res.json();
-      // Shell lock inputs ride the profile response: the deployment's landing application and
-      // the server's own operator verdict for this caller.
-      this.landingApp = typeof data.landingApp === 'string' && data.landingApp ? data.landingApp : null;
-      this.profileOperator = typeof data.operator === 'boolean' ? data.operator : null;
-      if (!res.ok || !data.profile) throw new Error(`HTTP ${res.status}`);
-      return data.profile;
-    } catch (err) {
-      if (requested) this.landingApp ||= requested;
-      logger.warn('Profile unavailable or unreadable; keeping the ribbon closed', { error: err?.message, requested });
-      return { name: PROFILE_UNAVAILABLE, displayName: 'Application unavailable',
-        ribbon: { items: [], dynamicTools: { allow: [] } }, defaultView: null };
-    }
+  async _fetchProfile(signal) {
+    const result = await readShellProfile({ requested: resolveRequestedProfileName(), signal, timeoutMs: this.profileTimeoutMs });
+    this.profileOperator = result.profileOperator;
+    this.landingApp = result.landingApp;
+    if (result.error) logger.warn('Profile unavailable or unreadable; keeping the ribbon closed', { error: result.error });
+    return result.profile;
   }
 
   /**

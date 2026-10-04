@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The cockpit header's operator doors (ADR-164 amendment shell lock): the logo's link to the plain cockpit, the Central assistant and Simple chat entries, and the Settings and Knowledge buttons. index.html draws every door CLOSED; the ribbon opens them only on an unlocked verdict, so a pending, unreadable, refused or locked profile never shows one. Before this the doors were drawn open and the lock tried to close them afterwards: while the profile read was pending (or hung) they stayed open, and Settings and Knowledge were never closed at all.
  */
