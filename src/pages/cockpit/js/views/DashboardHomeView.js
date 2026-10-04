@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Documentation backfill: added file-header change log block and JSDoc on exported members
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Published responsive application/core GitHub request and defect entry points on the cockpit home screen
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Point the four request/defect links at the repos a user can actually open. All four 404'd: app work went to the private application trunk, and core work went to open-shal — the pre-cutover repo, a frozen reference archive since ADR-115. The public trunks (oshal / oshal-apps) are where issues are accepted, which is already what README's request queues say.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Distinguish operator-only, unavailable and genuinely empty swarm activity without rendering refused records.
  */
 
 /**
@@ -184,18 +185,26 @@ export class DashboardHomeView {
   /**
    * @description Give a recent-activity feel for the swarm by listing its
    * latest work items, so the operator sees the system is alive and what it is
-   * doing. Tolerates multiple response shapes and title/timestamp field names.
+   * doing. Refused or unavailable reads stay distinct from a real empty list.
    * @returns {Promise<void>} Resolves after the section is updated (success or failure state).
    */
   async loadSwarmMessages() {
     const el = document.querySelector('#dashSwarmMessages .dash-loading');
+    if (!el) return;
+    el.setAttribute('role', 'status');
     try {
       const res = await fetch('/api/swarm/work-items');
+      if (res.status === 403) { el.textContent = 'Global swarm activity is available to operators only.'; return; }
+      if (res.status !== 200) throw new Error('Swarm activity unavailable');
       const data = await res.json();
-      const items = (data.workItems || data.items || []).slice(0, 5);
+      const rows = data?.workItems ?? data?.items;
+      if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+        throw new Error('Malformed swarm activity');
+      }
+      const items = rows.slice(0, 5);
       if (!items.length) { el.textContent = 'No recent swarm activity.'; return; }
       el.outerHTML = `<ul class="dash-list">${items.map(e => `<li class="dash-list-item"><span class="dash-item-title">${this.esc(e.title || e.summary || e.type || e.ticketId || 'Work item')}</span><span class="dash-item-meta">${this.timeAgo(e.updatedAt || e.createdAt || e.timestamp)}</span></li>`).join('')}</ul>`;
-    } catch { el.textContent = 'No recent swarm activity.'; }
+    } catch { el.textContent = 'Swarm activity is unavailable. Try opening this dashboard again.'; }
   }
 
   /**

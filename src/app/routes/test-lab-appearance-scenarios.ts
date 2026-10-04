@@ -2,7 +2,7 @@
  * =============================================================================
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register a read-only Workspace stylesheet readiness check and actual Cockpit/shared-surface browser regression.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Register current workspace navigation discovery and linked permission and browser regression suites.
@@ -14,6 +14,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Register the per-surface in-app help contract: the covered-surface list the cockpit header reads, and a representative deep link, so a deployment that ships without the guide corpus (or with a mapping to a guide nobody wrote) reports it here instead of failing in front of a stuck reader.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Link the default-rail band guard. config-seed/profiles/oshal-framework.json is hand-maintained with no linkage to install state, so a tile drifting between rail groups — or out of the rail entirely — went unnoticed until somebody opened the cockpit and looked.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Link the light/dark contrast walk. The existing appearance coverage proves a surface consumes theme tokens and inherits a live change; none of it measures what the pixels come out as, which is where a wrongly mapped role hides.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Register actual dashboard swarm activity refusal, unavailable, empty and escaped-row browser coverage.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -85,6 +86,7 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
   regressionTests: [
     { level: 'browser', path: 'tests/unit/cockpit-startup-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/cockpit-profile-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/dashboard-home-swarm-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-appearance-registration.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-theme-browser.spec.ts' },
     { level: 'browser', path: 'tests/unit/workspace-chat-theme-browser.spec.ts' },
