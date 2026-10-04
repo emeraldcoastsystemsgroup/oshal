@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Keep Home singular and group secondary actions in a theme-aware options disclosure.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Keep the sidebar utility disclosure opaque over application content.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Styled the status-bar durable-storage indicator (.status-persistence) for the degraded and unreadable states, matching the existing cost-indicator colours.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | Shell-lock doors: a header door (data-shell-door) with the hidden attribute is not displayed, whatever its own display rule — the Nexus and Simple entries carry an inline display:flex and .header-btn sets display, both of which beat the user-agent [hidden] rule, so a "hidden" door was still drawn.
  */
 
 /* ===== Layout — Cockpit Shell (Apple Liquid Glass) ===== */
@@ -109,6 +110,7 @@ body {
 [data-navigation-layout="workspaces"] #cockpitHomeLink .workspace-home-label { display: block; }
 .header-options { position: relative; }
 .header-options[hidden] { display: none; }
+[data-shell-door][hidden] { display: none !important; }
 .header-options > summary { list-style: none; }
 .header-options > summary::-webkit-details-marker { display: none; }
 .header-options > .header-utilities {

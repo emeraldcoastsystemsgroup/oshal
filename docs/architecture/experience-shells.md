@@ -166,7 +166,7 @@ public requests on 2026-10-04 showed that caller-supplied `X-Forwarded-Host` sur
 Cloudflare edge/tunnel and controls Express `req.hostname`; no authenticated access claim was
 tested by that observation.
 
-What the server lock covers (2026-10-04):
+What the lock covers (2026-10-04):
 
 - **Every spelling of a surface.** One pathless guard ahead of every mount decides on the
   *canonical* path (`canonicalSurfacePath`, `operatorSurfaceKind`): percent-decoded, doubled slashes
@@ -185,6 +185,24 @@ What the server lock covers (2026-10-04):
   disk or built-in "Default full-operator profile". With no name they get the landing application
   through the same synthesis and `app.open` path, never the deployment's env profile. Operators and
   deployments without a focused landing keep the disk fallback.
+- **The cockpit's doors are drawn closed.** `index.html` draws the logo with no link and the
+  Knowledge, Settings, Central assistant and Simple chat entries hidden (`data-shell-door`); the
+  ribbon opens them only on an unlocked verdict (`cockpit-shell-doors.js`), exactly as an operator
+  saw them before. A locked shell keeps them closed and points the logo at the landing application;
+  a pending, refused or unreadable profile never shows one. Settings and Knowledge also refuse in
+  `openCockpitSettingsPage` while the shell is locked or still undecided.
+- **Every profile answer that is not a readable profile is closed.** A refusal, a non-JSON or
+  network failure, a 200 without a usable named ribbon profile, or no answer within 20 seconds becomes the closed
+  `profile-unavailable` state (empty rail, empty allowlist, the refusal panel), with or without
+  `?app=`; it locks every non-operator. The plain document no longer falls back to the full
+  framework rail. `cockpit-profile-load.js` shares one abortable deadline across the identity
+  prerequisites and profile read, so a hung auth-user or whoami request also reaches the refusal.
+- **A locked shell registers no platform view** and always collapses platform chrome, and the
+  ribbon accepts the hub handshake and `app-navigate {view}` only from the registered hub frame's own
+  window on this origin (the surface-bridge relay posts only the `{tool}` form, which needs a
+  rendered button). Initial navigation, including a `?ticket=` link, uses only registered,
+  openable views and skips role-locked and guest-blocked tiles. A filtered default falls back
+  to an admitted view; an empty rail says "No views available" while dynamic discovery continues.
 
 ## Verification
 
@@ -277,8 +295,16 @@ What the server lock covers (2026-10-04):
   the refusal fed into the real `RibbonNav._init`); `tests/unit/ui-profile-rls-hidden-experience-postgres.spec.ts`
   (the real repository and service over a disposable PostgreSQL as the NOSUPERUSER NOBYPASSRLS
   `oshal_app` role: a person-scoped experience row another member cannot read is refused 404);
-  `tests/unit/ribbon-profile-refusal.spec.ts` and `tests/unit/ribbon-shell-lock.spec.ts` (the ribbon's
-  lock decision and refusal state). The live case `node scripts/operations/live-acceptance.js shell-lock`
+  `tests/unit/ribbon-profile-refusal.spec.ts` (every closed answer, malformed successful profiles,
+  actual HTTP hangs in either identity prerequisite, empty or filtered default rails and blocked
+  tiles, the boot step on the profile the real
+  ribbon produced, the hub-frame-only bridge) and `tests/unit/ribbon-shell-lock.spec.ts` (the lock decision,
+  the doors drawn closed, the quote-agnostic retired-entry matcher); `tests/unit/cockpit-shell-lock-browser.spec.ts`
+  (the real cockpit document and `app.js` in Chromium: refusal with a ticket link, a locked allowed application,
+  an unreadable plain document, the unchanged unlocked doors, and a 390px malformed-profile refusal with keyboard retry).
+  Empty rails still allow admitted dynamic tools to load and open through their navigation entry.
+  These synthetic fixture checks do not establish deployed non-operator acceptance.
+  The live case `node scripts/operations/live-acceptance.js shell-lock`
   asks the installed build as a non-operator on the actual mapped origin (it needs
   `OSHAL_VERIFY_SECOND_PAT`, `OSHAL_VERIFY_FOCUSED_HOST` and `OSHAL_VERIFY_BASE_URL` set to that
   focused HTTP(S) origin). The second caller's bound hostname must match before any case request;

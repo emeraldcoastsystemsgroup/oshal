@@ -56,6 +56,7 @@
  * 50 | maintainer@emeraldcoastsystemsgroup.com | Read the durable-storage indicator once at boot alongside the first metrics read, so a box that came up with a store stranded in memory says so on the first paint rather than at the first 60s poll.
  * 51 | maintainer@emeraldcoastsystemsgroup.com | Mount the per-surface help control and feed it every view change from switchView — the shell already owns the one chokepoint that knows which surface is on screen, so the control never has to guess from the DOM.
  * 52 | maintainer@emeraldcoastsystemsgroup.com | Show a focused profile refusal before opening a default workbench or ticket deep link.
+ * 53 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client): the ribbon-ready step is bootInitialView (cockpit-profile-refusal.js), which is unit-tested on the profile the real ribbon produces — the refusal stops the boot, and ?ticket= opens Tickets only when Tickets is a registered view. Header Settings and Knowledge (and the profile modal's Settings action, which shares openCockpitSettingsPage) refuse while the shell is locked or still undecided.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -65,7 +66,7 @@ import { initHeaderOptions } from './header-options.js';
 import { mountSurfaceHelp } from './surface-help.js';
 import { ApiClient } from './api-client.js';
 import { RibbonNav } from './components/RibbonNav.js';
-import { renderProfileRefusal } from './cockpit-profile-refusal.js';
+import { bootInitialView } from './cockpit-profile-refusal.js';
 import { renderModalContent, getAuthToken } from './cockpit-modals.js';
 import { CockpitBotSelectorController } from './cockpit-bot-selector-controller.js';
 // CM-7: Legacy CockpitChatPanelController removed — cockpit always uses embedded iframe
@@ -366,15 +367,14 @@ class CockpitApp {
     this.ribbon = new RibbonNav('ribbonContainer', (viewId) => this.switchView(viewId));
     void this.ribbon.ready.then(() => {
       this.workspaceNavigation = new WorkspaceNavigation({ profile: this.ribbon.profile, studentMode: this.ribbon.studentMode });
-      if (renderProfileRefusal(document.getElementById('mainContent'), this.ribbon.profile)) return;
-      if (this.pendingView || this.viewController.currentView) return;
-      const requestedTicketId = readRequestedTicketId();
-      const initialView = requestedTicketId ? 'tickets' : (this.ribbon?.getActive?.() || 'home');
-      // Seed the selection BEFORE the first render so TicketView picks it up from
-      // initialSelectedTicketId on its own load pass. Calling focusTicket AFTER switchView races
-      // the list fetch and selects nothing.
-      if (requestedTicketId) this.viewController.pendingTicketSelection = requestedTicketId;
-      void this.switchView(initialView);
+      bootInitialView({
+        ribbon: this.ribbon,
+        container: document.getElementById('mainContent'),
+        viewController: this.viewController,
+        isBusy: () => Boolean(this.pendingView || this.viewController.currentView),
+        switchView: (viewId) => this.switchView(viewId),
+        ticketId: readRequestedTicketId(),
+      });
     });
   }
 
@@ -607,6 +607,12 @@ class CockpitApp {
    * @returns {void}
    */
   openCockpitSettingsPage(tab) {
+    // Settings and Knowledge open the platform workbench: an operator door, refused while the shell
+    // is locked or still undecided (the header buttons are also drawn hidden until an unlocked verdict).
+    if (this.ribbon?.shellLocked !== false) {
+      console.warn(JSON.stringify({ level: 'warn', module: 'cockpit-app', action: 'open-settings', message: 'Settings refused: the shell is locked or not yet decided', shellLocked: this.ribbon?.shellLocked ?? null }));
+      return;
+    }
     if (typeof tab === 'string' && tab) {
       try {
         sessionStorage.setItem('cockpit-settings-tab', tab);
