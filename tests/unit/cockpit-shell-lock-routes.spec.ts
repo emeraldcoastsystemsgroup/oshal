@@ -5,12 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The cockpit document and the experience entry pages behind a real Express listener: a non-operator on a focused deployment is redirected to the landing (plain cockpit, index.html, /portal, /homebase, /little-monsters), an operator and a focused ?app= request are served, assets are untouched, and a deployment without a focused landing serves everyone as before.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve focused shell lock for package entry aliases, including raw legacy documents.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Every spelling of a surface over a raw socket (fetch would normalise the dot segments and %2e escapes before sending): case, doubled-slash, dot-segment, percent-encoded and malformed spellings of the cockpit document, /experience/index.html, nexus.html and simple.html, and HEAD, all redirect a non-operator on a focused host; ?app= exempts only the cockpit document; operators, the unfocused deployment and assets are unchanged.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
+import { request as httpRequest, type Server } from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,6 +36,24 @@ function startApp(landing: string): Promise<void> {
   });
   return new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => { baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; resolve(); });
+  });
+}
+
+/**
+ * @description One request over a raw socket with the path exactly as written: fetch (WHATWG URL)
+ * collapses dot segments and %2e escapes before sending, which is the spelling under test.
+ * @param path - The raw request target. @param operator - Whether the fake session is an operator.
+ * @param method - GET or HEAD.
+ * @returns Status, Location and body text.
+ */
+function raw(path: string, operator = false, method = 'GET'): Promise<{ status: number; location: string | undefined; text: string }> {
+  const { port } = new URL(baseUrl);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port: Number(port), path, method, headers: operator ? { 'x-test-operator': '1' } : {} }, (res) => {
+      let text = ''; res.setEncoding('utf8'); res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, location: res.headers.location, text }));
+    });
+    req.on('error', reject); req.end();
   });
 }
 
@@ -79,6 +98,39 @@ describe('focused-landing deployment', () => {
     expect(asset.status).toBe(200);
     expect(await asset.text()).toContain('fixture asset');
   });
+
+  it('redirects every spelling of the cockpit document and the experience pages, including HEAD', async () => {
+    for (const path of ['/Cockpit/', '/COCKPIT/', '/COCKPIT/index.html', '/Cockpit/index.html', '/cockpit/js/../index.html', '/cockpit//',
+      '/cockpit/%69ndex.html', '/%63ockpit/', '/cockpit%2Findex.html', '/cockpit/%2e%2e/cockpit/', '/cockpit/./', '/cockpit/%E0%A4%A',
+      '/experience/index.html', '/experience/nexus.html', '/experience/simple.html', '/Experience/Index.html', '/experience//nexus.html',
+      '/Portal', '/Nexus', '/SIMPLE/', '/Studio']) {
+      const res = await raw(path);
+      expect(res.status, path).toBe(302);
+      expect(res.location, path).toBe(LANDING);
+    }
+    const head = await raw('/Cockpit/', false, 'HEAD');
+    expect([head.status, head.location]).toEqual([302, LANDING]);
+  });
+
+  it('honours ?app= on the cockpit document only, never on an experience page', async () => {
+    expect((await raw('/Cockpit/?app=dnd')).status).toBe(200);
+    for (const path of ['/portal?app=zzz', '/nexus?app=zzz', '/simple?app=zzz', '/experience/?app=zzz', '/experience/index.html?app=zzz', '/studio?app=zzz']) {
+      const res = await raw(path);
+      expect([res.status, res.location], path).toEqual([302, LANDING]);
+    }
+  });
+
+  it('serves every spelling to an operator, and leaves assets and the experience scripts alone for a non-operator', async () => {
+    for (const path of ['/Cockpit/', '/cockpit/js/../index.html', '/cockpit//']) {
+      const res = await raw(path, true);
+      expect(res.status, path).toBe(200);
+      expect(res.text, path).toContain('cockpit fixture');
+    }
+    expect((await raw('/experience/nexus.html', true)).status).toBe(200);
+    expect((await raw('/cockpit/js/app.js')).status).toBe(200);
+    expect((await raw('/COCKPIT/js/app.js')).status).toBe(200);
+    expect((await raw('/experience/live-data.js')).status).toBe(200);
+  });
 });
 
 describe('deployment without a focused landing', () => {
@@ -91,5 +143,11 @@ describe('deployment without a focused landing', () => {
     const classroom = await get('/little-monsters');
     expect(classroom.status).toBe(302);
     expect(classroom.headers.get('location')).toBe('/api/ui/experiences/classroom-experience/open');
+  });
+
+  it('serves the spellings and the experience pages exactly as before', async () => {
+    for (const path of ['/Cockpit/', '/cockpit/js/../index.html', '/experience/index.html', '/experience/nexus.html', '/portal?app=zzz']) {
+      expect((await raw(path)).status, path).toBe(200);
+    }
   });
 });

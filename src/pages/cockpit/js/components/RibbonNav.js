@@ -22,10 +22,15 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Shell lock (ADR-164 amendment, 2026-10-02): a non-operator on a deployment whose landing names an application gets no platform hub, a logo that returns to that application and no Experiences menu — the deployment is that application's product for them. Inputs ride the profile response (landingApp, operator); resolveShellLock is the pure, exported decision.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep focused profile refusals closed and preserve the server's shell-lock inputs.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client). Every non-OK, unreadable or timed-out profile answer (AbortSignal bound) is the closed PROFILE_UNAVAILABLE fallback whether or not ?app= is set, and a refusal locks unless the caller is an operator; the framework fallback that unlocked a plain document on a 502 is gone. A locked shell registers no platform views at all and always collapses platform chrome. The header doors are drawn closed in index.html and opened only on an unlocked verdict (cockpit-shell-doors.js). platform-hub-ready and app-navigate {view} are accepted only from the registered hub frame's own window on this origin; the surface-bridge relay posts only the {tool} form. Operators see no change after the verdict.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Extract shell reads instead of growing the oversized ribbon; bound identity prerequisites and profile together and validate successful profile shape before opening doors.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
 import { WORKSPACE_DESTINATIONS_EVENT, isWorkspaceDelegated } from '../workspace-navigation.js';
+import { PROFILE_UNAVAILABLE } from '../cockpit-profile-refusal.js';
+import { closeShellDoors, openShellDoors } from '../cockpit-shell-doors.js';
+import { loadInitialShellProfile, readShellIdentity, readShellProfile } from '../cockpit-profile-load.js';
 
 const logger = createUiLogger('cockpit-ribbon-nav');
 
@@ -166,12 +171,15 @@ function resolveStudentMode() {
 /**
  * @description Shell lock (ADR-164 amendment, 2026-10-02): a deployment whose landing names an
  * application is that application's product for everyone who is not an operator — no platform
- * hub, no logo door to the operator cockpit, no Experiences menu. Operators keep every door.
+ * hub, no logo door to the operator cockpit, no Experiences menu. Operators keep every door. A
+ * refused or unreadable profile answer locks every non-operator, focused deployment or not: there
+ * is no verdict to open a door on.
  * Pure and exported so the decision is unit-tested beside the server's redirect.
- * @param {{isOperator: boolean, landingApp: string|null|undefined}} input - Caller and deployment.
+ * @param {{isOperator: boolean, landingApp?: string|null, refused?: boolean}} input - Caller, deployment and answer.
  * @returns {boolean} True when the operator doors must not render.
  */
-export function resolveShellLock({ isOperator, landingApp }) {
+export function resolveShellLock({ isOperator, landingApp, refused = false }) {
+  if (refused) return !isOperator;
   return !isOperator && typeof landingApp === 'string' && landingApp.length > 0;
 }
 
@@ -237,15 +245,8 @@ export class RibbonNav {
       // (not a hardcoded list in the page) is what keeps the hub from drifting as tools are added
       // or gated — a tool an operator may not have is never sent, so it can never be offered.
       if (d.type === 'platform-hub-ready') {
-        const src = e.source;
-        if (src) {
-          src.postMessage({
-            type: 'platform-hub-tools',
-            tools: this.views
-              .filter(v => v.platformTool || v.id === 'settings')
-              .map(v => ({ id: v.id, label: v.label, icon: v.icon })),
-          }, '*');
-        }
+        if (this._fromPlatformHub(e)) this._answerPlatformHub(e.source);
+        else logger.warn('Platform hub handshake from outside the hub frame — ignored');
         return;
       }
       let id = null;
@@ -258,6 +259,7 @@ export class RibbonNav {
       // still cannot grant a surface the profile never admitted.
       else if (d.type === 'app-navigate' && d.view) {
         const want = String(d.view);
+        if (!this._fromPlatformHub(e)) { logger.warn('Bridge view navigation from outside the platform hub — ignored', { target: want }); return; }
         if (this.views.find(v => v.id === want)) { this.setActive(want); return; }
         logger.warn('Bridge navigation target not registered — ignored', { target: want });
         return;
@@ -288,6 +290,44 @@ export class RibbonNav {
       }
   }
 
+  /**
+   * @description Whether a message comes from the registered platform hub's own frame: this origin,
+   * and a source that is the window of a frame showing the hub's page. The view form and the hub
+   * handshake address views the rail deliberately withholds, so only the hub may send them; the
+   * surface-bridge relay and package surfaces use the {tool} form, which needs a rendered button.
+   * @param {MessageEvent} event - The message.
+   * @returns {boolean} True only for the registered hub frame.
+   */
+  _fromPlatformHub(event) {
+    const hubUrl = this.views.find(view => view.id === PLATFORM_HUB_ID)?.toolUi?.iframeUrl;
+    if (!hubUrl || !event?.source || event.origin !== window.location.origin) return false;
+    const hubPath = new URL(hubUrl, window.location.href).pathname;
+    return [...document.querySelectorAll('iframe')].some((frame) => {
+      if (frame.contentWindow !== event.source) return false;
+      try {
+        return new URL(frame.getAttribute('src') || '', window.location.href).pathname === hubPath;
+      } catch (err) {
+        logger.error('Could not read a frame source while checking the hub', { error: err?.message, stack: err?.stack });
+        return false;
+      }
+    });
+  }
+
+  /**
+   * @description Answer the hub with the tools it should offer: the REGISTERED platform views (not
+   * a hardcoded list in the page), so a tool an operator may not have is never sent.
+   * @param {Window} source - The hub frame's window.
+   * @returns {void}
+   */
+  _answerPlatformHub(source) {
+    source.postMessage({
+      type: 'platform-hub-tools',
+      tools: this.views
+        .filter(v => v.platformTool || v.id === 'settings')
+        .map(v => ({ id: v.id, label: v.label, icon: v.icon })),
+    }, window.location.origin);
+  }
+
   /** Keep sidebar presentation synchronized with current discovery without replacing an application view. */
   _watchWorkspaceDestinations() {
     this.workspaceNames = [];
@@ -316,31 +356,32 @@ export class RibbonNav {
   }
 
   async _init() {
-    await this._loadGuestState();
-    await this._loadOperatorState();
-    this.profile = await this._fetchProfile();
+    this.profile = await loadInitialShellProfile(this, this.profileTimeoutMs);
     if (this.profile?.experience?.shell === 'page') {
       window.location.replace(`/api/ui/experiences/${encodeURIComponent(this.profile.name)}/open`);
       return;
     }
     this._applyAppBranding();
     this.activeView = this.profile?.defaultView || 'tickets';
-    this.views = this._buildFrameworkViews();
-    this._appendPlatformTools();
-
-    // Platform chrome is OPT-IN for a focused app, opt-out for the operator cockpit. An app that
-    // genuinely wants the operator tools on its rail says so with `ribbon.showPlatformTools: true`;
-    // it is deliberately an explicit opt-in, because the previous default shipped a dozen operator
-    // tools to every customer's staff and no manifest key could decline them.
-    this.hidePlatformChrome = !!resolveRequestedProfileName()
-      && this.profile?.ribbon?.showPlatformTools !== true
-      && !this.studentMode;
     // The server's answer wins when it gave one (the same operator check its redirect uses);
     // the whoami read stays the fallback for an older profile response.
-    this.shellLocked = resolveShellLock({ isOperator: this.profileOperator ?? this.isOperator, landingApp: this.landingApp });
+    this.shellLocked = resolveShellLock({ isOperator: this.profileOperator ?? this.isOperator,
+      landingApp: this.landingApp, refused: this.profile?.name === PROFILE_UNAVAILABLE });
+    this.views = this._buildFrameworkViews();
+    // A locked shell registers no platform view at all: withheld from the rail is not enough,
+    // because a registered view is reachable through the navigate bridge.
+    if (!this.shellLocked) this._appendPlatformTools();
+
+    // Platform chrome is OPT-IN for a focused app, opt-out for the operator cockpit, and always
+    // collapsed for a locked shell. An app that genuinely wants the operator tools on its rail says
+    // so with `ribbon.showPlatformTools: true`; it is deliberately an explicit opt-in, because the
+    // previous default shipped a dozen operator tools to every customer's staff.
+    this.hidePlatformChrome = this.shellLocked || (!!resolveRequestedProfileName()
+      && this.profile?.ribbon?.showPlatformTools !== true
+      && !this.studentMode);
     if (this.hidePlatformChrome && !this.shellLocked) this._appendPlatformHub();
     if (this.shellLocked) this._applyShellLock();
-    else await this._loadExperiences();
+    else { this._openShellDoors(); await this._loadExperiences(); }
 
     logger.info('Ribbon initialised with profile', {
       profile: this.profile?.name,
@@ -354,18 +395,23 @@ export class RibbonNav {
   }
 
   /**
-   * @description Close the operator doors for a locked shell: the logo returns to the landing
-   * application instead of the operator cockpit, and the header's Experiences entries are hidden.
-   * The server redirects those surfaces anyway; this keeps the doors from being drawn.
+   * @description Keep the operator doors closed for a locked shell: the logo returns to the landing
+   * application (or links nowhere without one) and Settings, Knowledge, the experience entries and
+   * the Experiences menu stay hidden. index.html draws them closed; the server redirects the
+   * surfaces anyway.
    * @returns {void}
    */
   _applyShellLock() {
-    const home = document.getElementById('cockpitHomeLink');
-    if (home) {
-      home.setAttribute('href', `/cockpit/?app=${encodeURIComponent(this.landingApp)}`);
-      home.setAttribute('aria-label', `${this.profile?.displayName || this.landingApp} — home`);
-    }
-    for (const el of document.querySelectorAll('[data-experience], [data-experiences-label]')) el.hidden = true;
+    closeShellDoors(this.landingApp, this.profile?.displayName);
+  }
+
+  /**
+   * @description Open the operator doors on an unlocked verdict: exactly what an operator saw before
+   * the doors were drawn closed by default.
+   * @returns {void}
+   */
+  _openShellDoors() {
+    openShellDoors();
   }
 
   /**
@@ -419,17 +465,16 @@ export class RibbonNav {
    * @description Resolves whether the current session is a guest and, if so, which
    * app segments are blocked (Tier C). Drives the ribbon graying. Falls back to a
    * non-guest (everything-enabled) view on any error.
+   * @param {AbortSignal} signal Shared shell initialization deadline.
    * @returns {Promise<void>}
    */
-  async _loadGuestState() {
+  async _loadGuestState(signal) {
     this.guestMode = false;
     this.guestCaps = null;
     this.guestBlocked = new Set(); // Tier C
     this.guestTierA = new Set(); // fully interactive
     try {
-      const res = await fetch('/api/auth/user');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await readShellIdentity('/api/auth/user', signal);
       if (data?.guestMode && data?.capabilities) {
         this.guestMode = true;
         this.guestCaps = data.capabilities;
@@ -449,14 +494,13 @@ export class RibbonNav {
    * requiresAuth + requiresOperator server-side, and the surface itself renders an honest
    * "operator only" panel on a 403, so a wrong answer here leaks nothing. Fails closed
    * (non-operator) on any error, because pinning a dead tool is worse than omitting one.
+   * @param {AbortSignal} signal Shared shell initialization deadline.
    * @returns {Promise<void>}
    */
-  async _loadOperatorState() {
+  async _loadOperatorState(signal) {
     this.isOperator = false;
     try {
-      const res = await fetch('/api/cli-tokens/whoami', { credentials: 'same-origin' });
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await readShellIdentity('/api/cli-tokens/whoami', signal);
       this.isOperator = data?.operator === true;
     } catch (err) {
       logger.debug('Could not resolve operator state (non-fatal, treated as non-operator)', { error: err?.message });
@@ -501,34 +545,20 @@ export class RibbonNav {
     return this.guestCaps.notations[this._viewAppSegment(view)] || null;
   }
 
-  /** Fetch the profile; a refused focused request stays closed with its shell context. */
-  async _fetchProfile() {
-    const requested = resolveRequestedProfileName();
-    this.profileOperator = null;
-    try {
-      const url = requested ? `/api/ui/profile?name=${encodeURIComponent(requested)}` : '/api/ui/profile';
-      const res = await fetch(url);
-      const data = await res.json();
-      // Shell lock inputs ride the profile response: the deployment's landing application and
-      // the server's own operator verdict for this caller.
-      this.landingApp = typeof data.landingApp === 'string' && data.landingApp ? data.landingApp : null;
-      this.profileOperator = typeof data.operator === 'boolean' ? data.operator : null;
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return data.profile;
-    } catch (err) {
-      if (requested) {
-        this.landingApp ||= requested;
-        logger.warn('Focused application profile unavailable; keeping its ribbon closed', { error: err?.message });
-        return { name: 'profile-unavailable', displayName: 'Application unavailable',
-          ribbon: { items: [], dynamicTools: { allow: [] } }, defaultView: null };
-      }
-      logger.warn('Failed to fetch UI profile; preserving shell context in framework fallback', { error: err?.message });
-      return {
-        name: 'framework-fallback',
-        ribbon: { items: HARDCODED_VIEWS.map(v => v.id), dynamicTools: { allow: ['*'] } },
-        defaultView: 'tickets',
-      };
-    }
+  /**
+   * @description Fetch the profile. Every answer that is not a readable profile — a refusal, a
+   * non-JSON or network failure, a 200 without a profile, or no answer within the bound — becomes
+   * the closed PROFILE_UNAVAILABLE fallback (empty rail, empty allowlist), focused or not, keeping
+   * the server's lock inputs when the body carried them.
+   * @param {AbortSignal} signal Shared shell initialization deadline, when provided.
+   * @returns {Promise<object>} The profile, or the closed fallback.
+   */
+  async _fetchProfile(signal) {
+    const result = await readShellProfile({ requested: resolveRequestedProfileName(), signal, timeoutMs: this.profileTimeoutMs });
+    this.profileOperator = result.profileOperator;
+    this.landingApp = result.landingApp;
+    if (result.error) logger.warn('Profile unavailable or unreadable; keeping the ribbon closed', { error: result.error });
+    return result.profile;
   }
 
   /**

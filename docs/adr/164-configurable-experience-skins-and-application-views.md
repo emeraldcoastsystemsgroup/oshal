@@ -517,7 +517,10 @@ require separate explicit approval. They are not implicit implementation details
 
 ## Amendment — experiences are applications (operator, 2026-10-02)
 
-**Status:** Proposed amendment; slice 1 implemented, slices 2–3 in the backlog.
+**Status:** Proposed amendment; slice 1 implemented and hardened 2026-10-04 (canonical surface
+paths; the profile route holds a focused non-operator to manifest profiles; the cockpit draws its
+operator doors closed until an unlocked verdict and keeps every unreadable profile closed), slices
+2–3 in the backlog.
 
 ### Context
 
@@ -585,9 +588,16 @@ Business, Classroom) and the core entry pages become the first experience packag
    platform hub, repoints the logo and hides the Experiences menu (`RibbonNav.js`, inputs on the
    `/api/ui/profile` response). Operators, focused `?app=` requests, assets and deployments without
    a focused landing are unchanged. This is D12 for the degenerate case of one experience, not a
-   per-deployment flag. Done when: the `experience-shell-lock`, `cockpit-shell-lock-routes` and
-   `ribbon-shell-lock` specs are green and a throwaway non-operator on a focused-landing box is
-   redirected from `/cockpit/` and `/portal`, sees no hub and no Experiences menu.
+   per-deployment flag. The redirect decides on the canonical path (case, `index.html`, doubled
+   slashes, dot segments and percent escapes collapsed), and the profile route answers a focused
+   non-operator only from manifest synthesis: a name that does not synthesise for them is refused
+   404 `experience_unavailable`, and no name serves the landing application. Done when: the
+   `experience-shell-lock`, `cockpit-shell-lock-routes`, `ui-profile-focused-refusal`,
+   `ui-profile-rls-hidden-experience-postgres`, `ribbon-shell-lock`, `ribbon-profile-refusal` and
+   `cockpit-shell-lock-browser` specs are green and a
+   throwaway non-operator on a focused-landing box is redirected from `/cockpit/` and `/portal`, sees
+   no hub and no Experiences menu (`node scripts/operations/live-acceptance.js shell-lock` asks the
+   server half).
 2. **The experience contract.** `experience:` block + `experience` kernel skill + loader
    validation; `shell: page`; packaged skin registration; the switcher and `/portal` built from
    installed, discoverable experience packages; `GET /api/swarm/apps` and `/applications`

@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | The Lab's `api` port honours a case's per-call `timeoutMs` as the host runner's does, over a real loopback listener that answers late: the call bounded at 80 ms is aborted by the adapter's own signal (its headers and cookie still sent), while the same call without the option, or with a non-positive or non-numeric budget, is still pending well past it and answers when the listener does (the 30 s default applies). The storyboard-agy card run from the Lab aborted at 30 s because the adapter read only `options.headers`. The file also references the dom.iterable lib: tsconfig.tests.json's lib is DOM without DOM.Iterable, so `form.keys()` in the Create upload case (entry 7) did not typecheck.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | The timeoutMs guard no longer races its abort against loopback connection setup: on a loaded host the 80 ms budget fired before the request reached the listener (red once, green on the same tree a minute later). The bounded call now carries 500 ms against a listener that answers at 3 s, its arrival at the listener is awaited (bounded, named failure) before the header and cookie assertion because Node delivers an expired timer before it polls the socket, the wall-clock upper bound is gone (a default-budget call resolves 200 at 3 s, so the TimeoutError name alone proves the per-call signal), the defaults' still-pending probe sits at 1 s past the case budget, and the case declares its own 20 s timeout.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | The case list ends with capability-stt (ADR-173 S1 live proof).
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | The case list ends with shell-lock (the focused-landing shell lock, read-only as a non-operator second caller).
  */
 /// <reference lib="dom.iterable" />
 import { createHash } from 'node:crypto';
@@ -175,7 +176,7 @@ describe('live-acceptance Test Lab cards', () => {
 
   it('registers one explicit-only card per case, with its host command and suites on disk', () => {
     expect(LIVE_ACCEPTANCE_SCENARIOS).toHaveLength(LIVE_ACCEPTANCE_CASES.length);
-    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit', 'tickets-in-tickets', 'package-run', 'storyboard-agy', 'capability-stt']);
+    expect(LIVE_ACCEPTANCE_CASES.map((c) => c.module.KEY)).toEqual(['response-renderer', 'congress', 'dev-workspace', 'floater', 'linkedin', 'commerce', 'lm-class-material', 'jarvis-cache', 'trading-parity', 'vids-publish', 'token-chase-replay', 'create-region-edit', 'forge-edit', 'tickets-in-tickets', 'package-run', 'storyboard-agy', 'capability-stt', 'shell-lock']);
     for (const scenario of LIVE_ACCEPTANCE_SCENARIOS) {
       const key = scenario.id.replace(/^live-acceptance-/, '');
       expect(SCENARIOS.filter((s) => s.id === scenario.id)).toEqual([scenario]);

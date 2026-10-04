@@ -13,7 +13,8 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | A ticked shopping item leaves the Purchasing list and stays struck through for the visit (the design study's checked state).
  * 9 | maintainer@emeraldcoastsystemsgroup.com | The central assistant's readback keeps its outcome on the status line after Stop (STOPPED · READY WHEN YOU ARE, the demo's rule) instead of returning to the resting prompt; the ask-flow case asserts that outcome.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Verify authorized package cards and package chooser values instead of retired static portal entries.
- * 11 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | The paint-timing case waits for the CONNECTING placeholder to be replaced, a marker every preset shares. Since #1042 the classroom placeholder reads "Reading your classroom", so waiting for "Reading your home" to vanish was true on first paint and timed nothing.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -335,7 +336,7 @@ describe('experience shells over the real routes', () => {
     fixture.state.delays.tasks = 3000;
     const started = Date.now();
     await open('/homebase?preset=classroom', '.home-shell');
-    await page.waitForFunction(() => !document.body.innerText.includes('Reading your home'));
+    await page.waitForFunction(() => !Array.from(document.querySelectorAll('.home-shell .eyebrow')).some(el => el.textContent === 'CONNECTING'));
     expect(Date.now() - started).toBeLessThan(2500);
     await page.waitForFunction(() => document.body.innerText.includes('Synthetic ledger review'), null, { timeout: 9000 });
     expect(errors).toEqual([]);
