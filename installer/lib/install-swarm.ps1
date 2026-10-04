@@ -13,6 +13,8 @@
 
   7 | maintainer@emeraldcoastsystemsgroup.com | SESSION_SECRET is minted for a fresh install. The installer generated four secrets but not this one, so a new box kept the published .env.example placeholder, and SESSION_SECRET signs every login session (express-openid-connect, the local-auth cookie) as well as deriving the at-rest key for connector tokens: such a box could have sessions forged. Initialize-SessionSecret replaces a placeholder only when .env was created in this run (or the value is empty). An existing install still on the placeholder is warned loudly and NOT rotated, because rotation signs everyone out and makes stored connector tokens unreadable.
 
+  8 | maintainer@emeraldcoastsystemsgroup.com | Review fix (coordinator and @route_handover, 2026-10-04): SESSION_SECRET is minted ONLY into a .env this run created. Seq 7 also minted when an existing .env had it empty or missing, but the app then signs with its fallback (SESSION_SECRET || AUTH_SESSION_SECRET || KEYCLOAK_CLIENT_SECRET), so a rerun rotated a working signer: everyone signed out and stored connector tokens unreadable. An existing .env is now never written for this key; empty, missing and placeholder values are kept byte for byte and warned about.
+
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
   Runs standalone from a terminal, or as a subprocess of installer/install.ps1 (the GUI).
@@ -208,9 +210,17 @@ function Initialize-SessionSecret {
         Write-Ok "Reusing the existing session secret"
         return
     }
-    if ($EnvCreated -or -not $existing) {
+    if ($EnvCreated) {
         Set-EnvFileValue -Path $EnvFile -Key 'SESSION_SECRET' -Value (New-JoinSecret)
         Write-Ok "Generated a new session secret"
+        return
+    }
+    # An existing install keeps whatever signs its sessions today: writing here would rotate it.
+    if (-not $existing) {
+        Write-Warn "SESSION_SECRET is empty in .env, so this install signs sessions and protects stored"
+        Write-Warn "connector tokens with what the app falls back to (AUTH_SESSION_SECRET, then KEYCLOAK_CLIENT_SECRET)."
+        Write-Warn "It was NOT set: a new value would rotate that key, sign everyone out and make stored"
+        Write-Warn "connector tokens unreadable. Set SESSION_SECRET deliberately, to the key already in effect."
         return
     }
     Write-Warn "SESSION_SECRET in .env is still the published placeholder from .env.example."
@@ -284,8 +294,9 @@ function Initialize-OperatorAllowlist {
   JWT_SECRET                   -- otherwise dynamic-compose-service.ts:213 hands every launched
                                   bot the literal 'oshal-local-dev-secret-do-not-use-in-prod'.
   ENCRYPTION_KEY               -- the per-user AES-GCM connector-token store.
-SESSION_SECRET is handled separately (Initialize-SessionSecret): minted on a fresh .env,
-never rotated on an existing one, because it signs sessions and derives stored-token keys.
+SESSION_SECRET is handled separately (Initialize-SessionSecret): minted only into a .env this run
+created, never written on an existing one (empty, missing or placeholder included), because it
+signs sessions and derives stored-token keys, and an empty value means a fallback key is in use.
 .OUTPUTS [string] The remote-client shared secret.
 #>
 function Initialize-EnvFile {
