@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com  | Wire Token Chase's aggregate `free:auto` selector into variant and savings actions: health-qualified free lanes rotate on classified provider walls, expose exact provider/model evidence, and fail closed without falling through to the bot's paid/default lane.
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Tail replay delegated to the bot node (BACKLOG "Workspace-bound checkpoint and tail replay"): POST /runs/:runId/tail-replay no longer restages anything on the controller; TokenChaseTailReplayService asks the producing bot for the hermetic no-edit tail and relays its artifact/store verdict. Body gains optional refire:true for the token-spending prompt re-fire pass; default off.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | GET /runs/:runId/final — the run's end-of-run checkpoint (final.json: outcome, tree digest, checkpoint completeness, store binding) through the read service's existing getFinal, owner-scoped like the frames. Read-only. The live-acceptance case token-chase-replay compares a tail replay's replayTreeSha with final.checkpoint.treeSha read HERE, independently of the node's own baseline field, and selects store-bound runs by storeBound.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Bind all replay spending to the verified caller independently of optional DB identity middleware.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -46,6 +47,8 @@ import {
   resolveOptimizerLane,
 } from './optimizer-providers';
 import { createTokenChasePromotionRoutes, loadBaselineOverrides, maybeAutoPromote } from './token-chase-promotion-routes';
+import { getCaller, isOperator } from '@/shared/middleware/authz';
+import { bindTokenChaseReplayCaller, bindTokenChaseTailCaller, CallerBoundTokenChaseClient, callerBoundTailReplayer } from './token-chase-replay-authority';
 
 const logger = createChildLogger({ module: 'token-chase-routes' });
 
@@ -59,7 +62,7 @@ const ADMIN_SUBS = new Set((process.env.TOKEN_CHASE_ADMIN_SUBS ?? '').split(',')
  * @returns The access context for the read service.
  */
 function accessOf(req: Request): TokenChaseAccess {
-  const callerSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub ?? null;
+  const callerSub = getCaller(req).sub;
   return { callerSub, isAdmin: callerSub !== null && ADMIN_SUBS.has(callerSub) };
 }
 
@@ -186,9 +189,10 @@ async function assessAndRecord(
 export function createTokenChaseRoutes(apiDir: string, ctx: AppContext): Router {
   const router = Router();
   const service = new TokenChaseReadService();
-  const replayService = new TokenChaseReplayService(service);
-  const tailReplayService = new TokenChaseTailReplayService(service);
-  const optimizeService = new TokenChaseOptimizeService(service);
+  const replayClient = new CallerBoundTokenChaseClient(ctx.pool);
+  const replayService = new TokenChaseReplayService(service, replayClient);
+  const tailReplayService = new TokenChaseTailReplayService(service, callerBoundTailReplayer(replayClient));
+  const optimizeService = new TokenChaseOptimizeService(service, replayClient);
 
   router.get('/runs', handleListRuns(service));
   router.get('/runs/:runId', handleGetFrames(service));
@@ -200,24 +204,24 @@ export function createTokenChaseRoutes(apiDir: string, ctx: AppContext): Router 
   // POST /replay and POST .../variant above remain the only actions.
   router.get('/runs/:runId/observations', handleRunObservations(ctx));
   router.get('/runs/:runId/frames/:seq/inspect', handleFrameInspect(service, ctx));
-  router.post('/runs/:runId/replay', handleReplay(replayService));
+  router.post('/runs/:runId/replay', bindTokenChaseReplayCaller, handleReplay(replayService));
   // Tail replay (ADR-046 §1/§8): restage frame N's workspace tree, then replay N..end on the
   // accountable bot node, determinism-gating each frame and STOPPING at the first divergence.
-  router.post('/runs/:runId/tail-replay', handleTailReplay(tailReplayService));
+  router.post('/runs/:runId/tail-replay', bindTokenChaseTailCaller, handleTailReplay(tailReplayService));
   router.get('/demo/comparison', (_req: Request, res: Response) => {
     res.json({ variant: buildTokenChaseDemoComparison(), noTokenSpend: true });
   });
   // Owner-visible provider lanes plus the health-qualified aggregate free rotation selector.
   router.get('/connections', handleConnections(ctx));
   // Token Chase optimizer (ADR-046 step 3) — replay a captured call on the caller's chosen connection.
-  router.post('/runs/:runId/frames/:seq/variant', handleVariant(optimizeService, ctx));
+  router.post('/runs/:runId/frames/:seq/variant', bindTokenChaseReplayCaller, handleVariant(optimizeService, ctx));
   // Savings (ADR-046 step 5): GET reads the caller's corpus into an estimated-vs-actual roll-up
   // (?runId= to narrow); POST replays every frame of a run on a chosen lane and returns the live loop.
   router.get('/savings', handleSavingsRead(ctx));
   // Step 4b (ADR-046 §12): the judged headline report — per-lane $ saved with quality-held counts,
   // llm-judged vs lexical-fallback numbers kept separate. Corpus read only; re-runs nothing.
   router.get('/savings/report', handleJudgedSavingsRead(ctx));
-  router.post('/runs/:runId/savings', handleRunSavings(optimizeService, ctx));
+  router.post('/runs/:runId/savings', bindTokenChaseReplayCaller, handleRunSavings(optimizeService, ctx));
   // Keep-winner → re-baseline (ADR-046): promote a frame's winning lane, revert it, and read the
   // promotion store + audit trail. Same requiresAuth wrapper — mounted inside this router.
   router.use(createTokenChasePromotionRoutes(ctx));
@@ -241,7 +245,7 @@ function handleConnections(ctx: AppContext) {
       return;
     }
     try {
-      const connections = await listOptimizerLogins(ctx.pool, sub);
+      const connections = await listOptimizerLogins(ctx.pool, sub, isOperator(req));
       res.json({ connections });
     } catch (error) {
       logger.error({ err: error }, 'Failed to list optimizer connections');

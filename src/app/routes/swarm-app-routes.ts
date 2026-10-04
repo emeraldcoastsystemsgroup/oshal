@@ -28,6 +28,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | DELETE /:name removes the app's schedule overrides after the app is removed (clearManifestOverridesFor), so a reinstall starts from the manifest; a toggle keeps them. A failure to clear is logged and does not fail the uninstall.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Refuse and log nonoperator identity resolution failures before filtering installed applications.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Require operator authority for pending manifests and shared bot activation through workflow publish or clone, regardless of resulting application scope.
  */
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import multer from 'multer';
@@ -241,7 +242,7 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
    * Inject (authenticated as the operator) for each. Registered before /:name so
    * the literal segment isn't captured by the name param.
    */
-  router.get('/pending', async (_req: Request, res: Response) => {
+  router.get('/pending', requiresOperator, async (_req: Request, res: Response) => {
     try {
       const active = new Set((await service.listApps()).map((a) => a.name));
       const pending: Array<{ name: string; displayName: string; description: string; path: string }> = [];
@@ -471,14 +472,15 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
    * three compile to the SAME emit: pipeline 'graph' plus a processDefinition the
    * engine runs. Neither 'manifest-worker' nor 'staged' is ever an emit target.
    *
+   * Publishing requires operator privilege because loading registers shared bots.
    * Scope: 'person' (default) is owned by the caller and visible only to them;
-   * 'public'/'tenant' require operator privilege. Owner is taken from the session,
+   * owner is taken from the session,
    * never the spec. A name already owned by someone else (or a built-in/public app)
    * is rejected with 409 so a publish can't stomp another user's workflow.
    *
    * Body: { spec: WorkflowPublishSpec, scope?: 'person'|'tenant'|'public' }
    */
-  router.post('/publish', async (req: Request, res: Response) => {
+  router.post('/publish', requiresOperator, async (req: Request, res: Response) => {
     try {
       const spec = (req.body?.spec ?? req.body) as Record<string, unknown>;
       const requested = (typeof req.body?.scope === 'string' ? req.body.scope : (spec?.scope as string)) ?? 'person';
@@ -538,11 +540,12 @@ export function createSwarmAppRoutes(service: SwarmAppService, appAccess: AppAcc
    * your own, or any if operator) as a NEW personal queue owned by the caller. This is
    * the "import a public workflow into my scope" path of the scope model — the source
    * is never mutated; the caller gets an independent copy with its own ticketType so the
-   * two queues don't collide. Only workflow apps can be cloned.
+   * two queues don't collide. Only workflow apps can be cloned. Activation requires
+   * operator privilege because the copy registers the source's shared bot IDs.
    *
    * Body: { name?: <slug>, displayName?: string }  (name defaults to "<source>-<sub>")
    */
-  router.post('/:name/clone', async (req: Request, res: Response) => {
+  router.post('/:name/clone', requiresOperator, async (req: Request, res: Response) => {
     const sourceName = String(req.params.name);
     try {
       const { sub } = getCaller(req);

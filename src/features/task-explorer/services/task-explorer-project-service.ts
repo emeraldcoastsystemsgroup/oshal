@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted task explorer project, hierarchy, and metrics logic into a dedicated service to satisfy the Session 68 decomposition gate
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Defaulted task-explorer project labeling to the canonical Default project when metadata does not specify another project
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Filter project source tasks by verified caller and current read authority before aggregating.
  */
 
 import { DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME } from '@/entities/ticket';
@@ -66,9 +67,10 @@ export class TaskExplorerProjectService {
   /**
    * @description Lists task explorer projects derived from task metadata.
    *
+   * @param options - Verified owner scope and current read predicate.
    * @returns Project summaries sorted by ticket count
    */
-  async listProjects(): Promise<Array<{
+  async listProjects(options: { ownerSub?: string; canRead?: (task: StoredTask) => Promise<boolean> } = {}): Promise<Array<{
     id: string;
     name: string;
     identifier: string;
@@ -77,8 +79,10 @@ export class TaskExplorerProjectService {
     workspaceSlug: string;
   }>> {
     return this.measure('listProjects', async () => {
-      const tasks = await this.taskStore.list({ limit: 500 });
-      return this.buildProjectSummaries(tasks);
+      const tasks = await this.taskStore.list({ limit: 500, ownerSub: options.ownerSub });
+      const decisions = await Promise.all(tasks.map(task => options.canRead?.(task) ?? true));
+      return this.buildProjectSummaries(tasks.filter((task, i) =>
+        (!options.ownerSub || task.ownerSub === options.ownerSub) && decisions[i]));
     });
   }
 

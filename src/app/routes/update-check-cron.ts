@@ -17,7 +17,7 @@
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial update-check daemon: daily app-vs-store + core-vs-upstream version checks, GET /api/version (first runtime self-identity) + auth-gated GET /api/updates.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Completion: operator-gated POST /api/updates/apps/:name/apply (re-install from the package's own source: via scripts/oshal-app.js, then hot-reload through the injected SwarmAppService.loadApp) + notifyOperator alert when a check first finds an update (detectNewUpdates transition diff — no re-alert on every daily tick).
@@ -26,14 +26,15 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | APP-02: pass the validated package-audit posture to update installers so enforce mode re-installs only an exact evidenced SHA.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167 release identity: getRunningBuild(), GET /api/version and the core status now carry `release`, the core release name the image was cut as (OSHAL_RELEASE, baked at the Dockerfile tail by scripts/core-promote/cut-release.sh). A value outside the core-YYYY.MM.DD[.N] scheme - including the `unreleased` default - reads as null, so the public endpoint never reflects an arbitrary build argument.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Reserve global refresh for operators and filter cached app updates through current discovery before returning metadata.
  */
 import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import yaml from 'js-yaml';
-import type { Express, RequestHandler } from 'express';
+import type { Express, Request, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
-import { getCaller, requiresOperator } from '@/shared/middleware/authz';
+import { getCaller, isOperator, requireOperator, requiresOperator } from '@/shared/middleware/authz';
 import { notifyOperator } from '@/features/notifications';
 import { resolvePackageAuditMode } from '@/features/swarm-apps';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
@@ -434,6 +435,8 @@ export async function runUpdateCheck(): Promise<UpdateCheckReport> {
 export interface UpdateApplyDeps {
   /** SwarmAppService.loadApp — re-registers the freshly installed manifest live. */
   loadApp: (manifestPath: string, scopeMeta?: { ownerSub?: string | null }) => Promise<unknown>;
+  /** Current caller-scoped discovery; absent or unavailable must never disclose the global cache. */
+  visibleApps?: (req: Request) => Promise<ReadonlySet<string>>;
 }
 
 type ApplyResult =
@@ -511,8 +514,9 @@ export async function applyAppUpdate(name: string, ownerSub: string | null, deps
  * @description /api/version is the platform's first runtime self-identity — package.json version,
  *  the build commit and the ADR-167 release name (null unless the image was cut as a release) —
  *  public like /api/health (the source repo and its release tags are public; this leaks nothing).
- *  /api/updates serves the cached report; `?refresh=1` awaits a fresh check (auth-gated, so no
- *  anonymous fetch-amplification against GitHub). When `deps` is provided, also mounts
+ *  /api/updates serves current discoverable app statuses to ordinary callers and the full
+ *  report to operators; `?refresh=1` requires operator authority before global network reads.
+ *  When `deps` is provided, also mounts
  *  POST /api/updates/apps/:name/apply — requiresAuth + requiresOperator (it rewrites the shared
  *  deployed-apps volume and re-registers bots/tools/routes — an operator action, like /load).
  * @param app the Express app
@@ -525,12 +529,16 @@ export function registerUpdateRoutes(app: Express, requiresAuth: RequestHandler,
     res.json({ name: 'oshal', version: build.version, commit: build.commit, release: build.release });
   });
   app.get('/api/updates', requiresAuth, async (req, res) => {
+    if (req.query.refresh === '1' && !requireOperator(req, res)) return;
     try {
       const report = req.query.refresh === '1' ? await runUpdateCheck() : lastReport;
-      res.json({ success: true, ...report });
+      if (isOperator(req)) { res.json({ success: true, ...report }); return; }
+      if (!deps?.visibleApps) throw new Error('Current update visibility unavailable');
+      const visible = await deps.visibleApps(req);
+      res.json({ success: true, checkedAt: report.checkedAt, core: null, apps: report.apps.filter(app => visible.has(app.name)) });
     } catch (err) {
       logger.error({ err }, 'GET /api/updates failed');
-      res.status(500).json({ success: false, error: 'update check failed' });
+      res.status(503).json({ success: false, error: 'update status unavailable' });
     }
   });
   if (deps) {

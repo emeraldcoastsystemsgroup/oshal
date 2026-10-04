@@ -3,23 +3,27 @@
  *
  * Guards (guard-per-fix doctrine): version compare (the drift contract), source-block →
  * raw-manifest URL resolution, remote version extraction (incl. the regex fallback), and
- * local manifest reading. Network + timer paths are exercised live, not here.
+ * local manifest reading. Scoped HTTP checks use owned temporary manifests, synthetic
+ * sessions and recorded upstream responses; no installer, timer or live provider runs.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                                      | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the update-check daemon's pure logic.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Completion guards: detectNewUpdates alerts once per released version (not every daily tick), applyAppUpdate fails closed on bad/uninstalled names before touching git or the volume.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-167 release identity: getRunningBuild reports a well-formed OSHAL_RELEASE and nulls the `unreleased` default and anything off-scheme, and the real GET /api/version route (mounted on an Express app, reached over HTTP) serves `release` publicly while /api/updates stays behind the auth gate.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Exercise current scoped cache visibility and operator-only refresh over real HTTP with isolated manifests and recorded upstream reads.
  */
-import { describe, it, expect, afterAll, beforeAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import type { AuthorizationActor } from '@/shared/application-authorization';
+import { createUpdateCheckVisibility } from '@/app/composition/update-check-visibility';
 import {
   compareVersions,
   rawManifestUrl,
@@ -31,8 +35,18 @@ import {
   resolveStoreToken,
   scrubSecret,
   registerUpdateRoutes,
+  runUpdateCheck,
   type UpdateCheckReport,
 } from '../../src/app/routes/update-check-cron';
+
+/** @description Remove only this suite's owned, directly nested temporary directory. */
+function removeFixtureDirectory(directory: string, prefix: string): void {
+  const target = path.resolve(directory);
+  if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith(prefix)) {
+    throw new Error('Refusing cleanup outside the owned update fixture directory');
+  }
+  fs.rmSync(target, { recursive: true, force: true });
+}
 
 describe('compareVersions — the store drift contract', () => {
   it('orders plain dotted versions numerically, not lexically', () => {
@@ -52,6 +66,84 @@ describe('compareVersions — the store drift contract', () => {
     expect(compareVersions('2.1.0', '2.1.0-beta.1')).toBeGreaterThan(0);
     expect(compareVersions('2.1.0-beta.1', '2.1.0-beta.2')).toBeLessThan(0);
     expect(compareVersions('2.1.0-beta.1', '2.1.0-beta.1')).toBe(0);
+  });
+});
+
+describe('update administration and current caller discovery over HTTP', () => {
+  const request = globalThis.fetch;
+  let directory: string, server: Server, base: string, allowed: Set<string>;
+  let active = true, unavailable = false, mismatched = false;
+  const upstream = vi.fn(async () => new Response(JSON.stringify({ sha: 'a'.repeat(40), commit: {} }), { status: 200 }));
+  const scope = vi.fn(async () => ['own-app', 'shared-app', 'hidden-app'].map(name => ({ name })));
+  const resolveActor = vi.fn(async () => {
+    if (unavailable) throw new Error('directory unavailable');
+    return { sub: mismatched ? 'forged-owner' : 'fixture-member', issuer: 'urn:fixture', isActive: active, isSwarmAdmin: false } as AuthorizationActor;
+  });
+  beforeAll(async () => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'update-visibility-'));
+    for (const name of ['own-app', 'shared-app', 'hidden-app', 'foreign-app']) {
+      const target = path.join(directory, 'deployed-apps', name); fs.mkdirSync(target, { recursive: true });
+      const source = name === 'foreign-app' ? '\nsource:\n  url: https://github.com/fixture/private-source\n  path: foreign-app\n  ref: main\n' : '';
+      fs.writeFileSync(path.join(target, 'oshal-app.yaml'), `name: ${name}\nversion: 1.0.0\n${source}`);
+    }
+    vi.stubEnv('OSHAL_WORKSPACE_ROOT', directory); vi.stubEnv('GIT_SHA', 'unknown');
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', 'fixture-operator'); vi.stubEnv('OSHAL_OPERATOR_EMAILS', '');
+    vi.stubGlobal('fetch', upstream); await runUpdateCheck();
+    const app = express();
+    const visibility = createUpdateCheckVisibility({ listApps: scope }, {
+      resolveActor, canDiscover: async name => allowed.has(name),
+    });
+    registerUpdateRoutes(app, (req, res, next) => {
+      const user = req.get('x-fixture-user');
+      if (!['member', 'operator'].includes(user ?? '')) { res.sendStatus(401); return; }
+      Object.assign(req, { oidc: { isAuthenticated: () => true, user: { sub: `fixture-${user}` } } }); next();
+    }, { loadApp: async () => { throw new Error('installer must not run'); }, visibleApps: visibility });
+    server = app.listen(0, '127.0.0.1'); await new Promise<void>(done => server.once('listening', done));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  beforeEach(() => {
+    allowed = new Set(['own-app', 'shared-app']); active = true; unavailable = false; mismatched = false;
+    scope.mockClear(); resolveActor.mockClear(); upstream.mockClear();
+  });
+  afterAll(async () => {
+    server?.closeAllConnections(); if (server) await new Promise<void>(done => server.close(() => done()));
+    vi.unstubAllGlobals(); vi.unstubAllEnvs(); removeFixtureDirectory(directory, 'update-visibility-');
+  });
+  const call = (query = '', user = 'member') => request(base + '/api/updates' + query, { headers: { 'x-fixture-user': user } });
+
+  it('returns only currently discoverable cached apps, never foreign or denied names/source errors', async () => {
+    const response = await call('?ownerSub=fixture-operator&scope=all'); expect(response.status).toBe(200);
+    const report = await response.json(); expect(report.core).toBeNull();
+    expect(report.apps.map((app: { name: string }) => app.name)).toEqual(['own-app', 'shared-app']);
+    expect(JSON.stringify(report)).not.toMatch(/foreign-app|hidden-app|private-source/);
+    expect(scope).toHaveBeenCalledWith(undefined, { ownerSub: 'fixture-member', isOperator: false });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+  it('removes a revoked discovery grant on the next cached read without refreshing upstream', async () => {
+    expect((await (await call()).json()).apps).toHaveLength(2);
+    allowed.delete('shared-app'); expect((await (await call()).json()).apps.map((app: { name: string }) => app.name)).toEqual(['own-app']);
+    expect(resolveActor).toHaveBeenCalledTimes(2); expect(upstream).not.toHaveBeenCalled();
+  });
+  it.each(['inactive', 'unavailable', 'mismatch'])('refuses %s current authority without cached catalog metadata', async state => {
+    active = state !== 'inactive'; unavailable = state === 'unavailable'; mismatched = state === 'mismatch';
+    const response = await call(); expect(response.status).toBe(503);
+    expect(await response.text()).not.toMatch(/own-app|hidden-app|foreign-app/);
+    expect(scope).not.toHaveBeenCalled(); expect(upstream).not.toHaveBeenCalled();
+  });
+  it('refuses anonymous and ordinary refresh before any upstream check or catalog read', async () => {
+    expect((await call('?refresh=1', 'anonymous')).status).toBe(401);
+    expect((await call('?refresh=1&operator=true&ownerSub=fixture-operator')).status).toBe(403);
+    expect(scope).not.toHaveBeenCalled(); expect(upstream).not.toHaveBeenCalled();
+  });
+  it('preserves the operator full cache and refresh, and denies refresh after revocation', async () => {
+    const cached = await (await call('', 'operator')).json(); expect(cached.apps).toHaveLength(4); expect(cached.core).not.toBeNull();
+    expect(cached.apps.find((app: { name: string }) => app.name === 'foreign-app')).toMatchObject({
+      sourceUrl: 'https://raw.githubusercontent.com/fixture/private-source/main/foreign-app/oshal-app.yaml', error: 'manifest fetch failed (HTTP 200)',
+    });
+    expect((await call('?refresh=1', 'operator')).status).toBe(200); expect(upstream).toHaveBeenCalledTimes(2);
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', ''); expect((await call('?refresh=1', 'operator')).status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(2); expect(scope).not.toHaveBeenCalled();
+    vi.stubEnv('OSHAL_OPERATOR_SUBS', 'fixture-operator');
   });
 });
 
@@ -94,7 +186,7 @@ describe('parseRemoteVersion — store manifest version extraction', () => {
 
 describe('readLocalManifest — deployed package reading', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-update-check-'));
-  afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  afterAll(() => { removeFixtureDirectory(tmp, 'oshal-update-check-'); });
 
   it('reads name/version/source from a real package manifest shape', () => {
     const dir = path.join(tmp, 'hello-oshal');

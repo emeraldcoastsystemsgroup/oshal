@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly and first-run suites with honest local-runner prerequisites and a read-only progress probe.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register signed remote authorization and exact-principal result regressions with a fixed isolated runner.
@@ -25,6 +25,12 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the two-tenant isolation proof for provision-tenant.sh (isolated tier, ADR-035 amendment) on the isolated nightly scenario: it renders two tenants with the shipped script, applies each rendering with the real psql on a PostgreSQL it starts and destroys, and requires a cross-tenant database connection and a cross-tenant row read to be refused. It reads no database address, so the scenario's fixed local runner is the gate that executes it.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Register the logic spec of the tenant-isolation cluster acceptance (accept-tenant-isolation.sh over a stateful kubectl stand-in: accepts only proven isolation with both created namespaces confirmed deleted, refuses before creating anything) on the same isolated nightly scenario. It needs Git Bash and reaches no cluster.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Register the nightly-saturation guards on the isolated nightly scenario: the worker quiesce (only named, running, non-critical workers stop, silenced; restored after pass, fail, SIGTERM, SIGINT, and from the state file after SIGKILL), the RESOURCE-EXHAUSTED outcome (decided by measured host memory, never by words in gate output) and the duration measurement the backlog's done-when is read with. Git Bash and stand-ins only; no engine.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Register caller-private cockpit streams, activity contributors, project discovery and operator escalation reads.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP operator administration refusals and caller-summary compatibility.
+ * 24 | maintainer@emeraldcoastsystemsgroup.com | Register connector/channel administration refusals and caller override/link compatibility.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP workflow administration and shared publishing regressions with member-work compatibility.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com | Register mounted global swarm telemetry and Plane diagnostic operator boundaries with normal processing compatibility.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com | Register actual Token Chase spending HTTP gates and caller-bound replay attribution with qualified isolated provider/cost seams.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -166,6 +172,13 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/protected-jarvis-results.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-jarvis-thread-return.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
+    { level: 'integration', path: 'tests/unit/cockpit-private-reads-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/operator-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/workflow-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-publishing-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/token-chase-spending-authority-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },
     { level: 'unit', path: 'tests/unit/authorization-runtime.spec.ts' },

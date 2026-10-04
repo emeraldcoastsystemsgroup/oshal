@@ -34,6 +34,7 @@
  * 29 | maintainer@emeraldcoastsystemsgroup.com   | Export postJsonNoUndiciCeiling (+ RawHttpResponse) so the Token Chase tail-replay client (bot-node-tail-replay-client.ts) shares the one node:http POST instead of re-deriving the undici header-ceiling workaround. No behaviour change in this file.
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.imageTurn (ADR-130 amendment 2026-10-02): the storyboard render executor marks its dispatch as an image turn so a render on the Antigravity harness hands back the image generate_image wrote. Optional; absent means an ordinary turn.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.renderInstruction (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02): the server-authored render instruction an image turn carries beside `text`, which on that turn is the user's brief and stays untrusted data. Written only by the storyboard render executor; the bot files it under TRUSTED CONFIGURATION and names the harness's image tool in the rebind.
+ * 32 | maintainer@emeraldcoastsystemsgroup.com | Carry verified replay producer subject and issuer for caller-scoped spending and cost attribution.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -298,6 +299,9 @@ export interface BotNodeRequest {
  * so the bot reproduces the call without the controller ever touching an LLM.
  */
 export interface ReplayCallRequest {
+  /** Verified controller producer identity; not application authorization or operator attestation. */
+  userSub?: string;
+  principalIssuer?: string;
   history: unknown[];
   systemPrompt: string | null;
   taskId?: string;

@@ -27,6 +27,8 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Discord is configured from the cockpit, not from .env: the router now owns a DiscordChannelConfig (encrypted settings store + in-process Gateway supervisor) booted with the precedence saved-row, then DISCORD_BOT_TOKEN as a seed; /admin/* mounts the operator-only setup routes behind requiresAuth + requiresOperator; the mint route and GET / read configured state, the bot's name/id and the DM link from that config; replies are sent with the token the running Gateway identified with. deps.discord gains identity/validate seams so a spec can point validation at a local fake Discord.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Linked messages carry the owner's verified principal issuer into the bot turn. The owner identity was entered as { sub, isOperator: false } only, so user-bound delegation threw "User-bound delegation requires a verified principal issuer" and every linked Telegram/Discord message answered "Something went wrong reaching your swarm" whenever delegation signing was on. Every mint route now reads the caller's verified issuer with getAuthenticatedPrincipalIssuer (idTokenClaims.iss for a browser session - the OIDC presentation user has no iss) and refuses 403 issuer_required without one; the issuer rides the code onto the link; asOwner enters { sub, principalIssuer } from the link. A legacy link with no recorded issuer is refused before any claim or dispatch, audited (reason link_issuer_missing) and told to re-link - never dispatched with a guessed issuer. dispatchToSwarm no longer re-enters a narrower identity of its own: it always runs inside the owner identity the inbound processor established.
  *
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Restrict deployment Telegram webhook registration to operators while retaining member linking and secret-verified inbound delivery.
+ *
  * @module chat-channel-routes
  */
 
@@ -372,7 +374,7 @@ export function createChatChannelRoutes(ctx: AppContext, requiresAuth: RequestHa
   router.get('/', requiresAuth, (req, res) => void listChannels(links, discord, req, res));
   router.post('/telegram/link', requiresAuth, (req, res) => void mintTelegramLink(links, req, res));
   router.delete('/telegram/:channelUserId', requiresAuth, (req, res) => void unlinkChannel(links, req, res));
-  router.post('/telegram/register-webhook', requiresAuth, (req, res) => void doRegisterWebhook(req, res));
+  router.post('/telegram/register-webhook', requiresAuth, requiresOperator, (req, res) => void doRegisterWebhook(req, res));
   router.post('/sms/link', requiresAuth, (req, res) => void mintSmsLink(links, req, res));
   router.delete('/sms/:channelUserId', requiresAuth, (req, res) => void unlinkSms(links, req, res));
   router.post('/whatsapp/link', requiresAuth, (req, res) => void mintWhatsAppLink(links, req, res));

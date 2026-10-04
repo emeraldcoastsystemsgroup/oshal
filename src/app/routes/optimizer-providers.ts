@@ -28,6 +28,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the shared OpenRouter key on probed `:free` models and refuse it when the free quota is unavailable.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Add the aggregate `free:auto` selector backed by owner-scoped health/LRU rotation; replay-time provider walls rotate only through free lanes and otherwise fail closed.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Source the OpenAI-compatible endpoint table from the shared openai-compat-lanes module so the operator-key resolver and this optimizer cannot drift apart on base URLs or key env names.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Apply operator-plus-demo vendor lending before secret loading while retaining owner BYO and the shared OpenRouter free lane.
  *
  * @module optimizer-providers
  */
@@ -44,6 +45,7 @@ import {
   freeTierRuntimeSnapshot,
   listFreeTierConnections,
   platformFreeConnection,
+  operatorKeysAvailable,
   reportResolvedLlmFailure,
   reportSuccess,
   resolveLiveFreeTierConnection,
@@ -197,7 +199,7 @@ async function resolveFreeOptimizerLane(pool: unknown, userSub: string): Promise
  * @param userSub - The caller's OIDC sub.
  * @returns The offered logins (current first).
  */
-export async function listOptimizerLogins(pool: unknown, userSub: string): Promise<OptimizerLogin[]> {
+export async function listOptimizerLogins(pool: unknown, userSub: string, operatorFact?: boolean): Promise<OptimizerLogin[]> {
   const logins: OptimizerLogin[] = [];
   let activeProviderId: string | null = null;
 
@@ -215,8 +217,8 @@ export async function listOptimizerLogins(pool: unknown, userSub: string): Promi
     });
 
     // 3) OpenAI-compatible framework providers with a key — replayable as ephemeral byo lanes.
-    const secrets = loadPersistedSecrets();
-    for (const p of providers) {
+    const secrets = operatorKeysAvailable(userSub, operatorFact) ? loadPersistedSecrets() : null;
+    if (secrets) for (const p of providers) {
       if (p.id === activeProvider) continue; // already shown as "current"
       const compat = COMPAT[p.id];
       if (!compat) continue;
@@ -273,6 +275,12 @@ export async function resolveOptimizerLane(pool: unknown, userSub: string, conne
     const providerId = connectionId.slice(FRAMEWORK_PREFIX.length);
     const compat = COMPAT[providerId];
     if (!compat) return null;
+    if (!operatorKeysAvailable(userSub)) {
+      if (providerId !== 'openrouter') return null;
+      const free = await platformFreeConnection();
+      return free && isFreeModelId(free.model) ? { kind: 'byo', baseUrl: compat.baseUrl,
+        model: free.model, apiKey: free.apiKey, label: 'OpenRouter (:free — platform key)' } : null;
+    }
     const apiKey = resolveCompatKey(compat.envKeys, loadPersistedSecrets());
     if (!apiKey) return null;
     const { providers } = listConfiguredProviders();

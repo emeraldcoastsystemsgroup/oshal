@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — GET /api/cockpit/logs with ticket-trace resolution and structured filtering
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Require operator authority before reading process-wide logs or resolving their ticket traces.
  */
 
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { LogReaderService } from '@/features/logging';
+import { requiresOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
 
 const logger = createChildLogger({ module: 'cockpit-log-routes' });
@@ -40,7 +42,7 @@ export function createCockpitLogRoutes(ctx: AppContext): Router {
    *   limit     — max entries (default 200, max 1000)
    *   offset    — pagination offset
    */
-  router.get('/logs/query', async (req: Request, res: Response) => {
+  router.get('/logs/query', requiresOperator, async (req: Request, res: Response) => {
     try {
       const { ticketId, level, module, search, since, until, limit, offset } = req.query;
 
@@ -91,7 +93,7 @@ export function createCockpitLogRoutes(ctx: AppContext): Router {
    * @description Get distinct module names from recent logs.
    * GET /api/cockpit/logs/modules
    */
-  router.get('/logs/modules', async (_req: Request, res: Response) => {
+  router.get('/logs/modules', requiresOperator, async (_req: Request, res: Response) => {
     try {
       const modules = await logReader.getModules();
       res.json({ modules });

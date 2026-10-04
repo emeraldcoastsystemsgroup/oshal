@@ -4,10 +4,12 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase keep-winner → re-baseline routes (ADR-046, BACKLOG "auto keep-winner then re-baseline loop"): POST /runs/:runId/frames/:seq/promote runs the keep-winner bar (llm-judged only, min quality + min savings) over the frame's persisted observations and promotes the winner to the frame's preferred lane (422 + per-candidate rejections when nothing clears the bar); POST /promotions/:id/revert is the reversal; GET /runs/:runId/promotions lists the store + the promote/auto-promote/revert audit trail. maybeAutoPromote is the OPERATOR-GATED auto mode consumed by the savings loop — default OFF, on ONLY when TOKEN_CHASE_AUTO_PROMOTE=true, and it touches nothing when disabled. Optional applyToBotConfig routes a framework-provider winner through the EXISTING ADR-034 config-ownership path (ConfigSyncService.pushToBot → the bot's PUT /api/llm-provider, version bump + config_sync_log audit) — never a bypass; BYO/endpoint lanes are refused honestly because a per-user key must never become bot config. Mounted inside createTokenChaseRoutes, so every route sits behind the same requiresAuth wrapper.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse nonoperator shared bot-configuration application before reading or persisting an otherwise owner-scoped promotion.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { requireOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '@/app/composition/app-context';
 import {
   TokenChaseReadService,
@@ -270,6 +272,7 @@ function handlePromote(ctx: AppContext) {
       return;
     }
     const body = (req.body ?? {}) as { minQuality?: unknown; minSavingsUsd?: unknown; applyToBotConfig?: unknown };
+    if (body.applyToBotConfig === true && !requireOperator(req, res)) return;
     const thresholds = thresholdsFrom(body, process.env);
     if (!thresholds) {
       res.status(400).json({ error: 'minQuality must be 0..100 and minSavingsUsd must be >= 0.' });

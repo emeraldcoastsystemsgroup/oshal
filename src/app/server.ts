@@ -213,6 +213,7 @@
  * 198 | maintainer@emeraldcoastsystemsgroup.com   | Shell lock (ADR-164 amendment, 2026-10-02): the cockpit document and experience entry pages take the deployment landing + operator ports, and the profile response carries landingApp/operator, so a non-operator on a focused-landing deployment never reaches the operator cockpit by door or by URL.
  * 197 | maintainer@emeraldcoastsystemsgroup.com   | The storyboard CLI image wiring is handed the swarm's canonical runtime-params resolver (read per call): a render runs on the render bot's own effective harness and is stamped with that bot's own provider record, never switched onto an image harness (ADR-130 amendment 2026-10-02, the bot-level rule).
  * 199 | maintainer@emeraldcoastsystemsgroup.com   | Root and shared shell/profile landings use ingress Host through one helper, so caller-supplied forwarded-host values cannot remove focused-host admission.
+ * 200 | maintainer@emeraldcoastsystemsgroup.com | Wire update status to current scoped application discovery while preserving operator refresh and apply.
  */
 
 require('dotenv').config();
@@ -275,6 +276,7 @@ import { startApplyReaper, rehydrateApplyInFlight } from './apply-enqueue';
 import { createProfileStudioIngestRoutes } from './routes/profile-studio-ingest-routes';
 import { startGovContractingCron } from './routes/gov-contracting-cron';
 import { registerUpdateRoutes, startUpdateCheckCron } from './routes/update-check-cron';
+import { createUpdateCheckVisibility } from './composition/update-check-visibility';
 import { startFeedsIndexingCron } from './routes/feeds-indexing';
 import { createConnectorMarketplaceRoutes } from './routes/connector-marketplace-routes';
 import { mountConnectorSpecRoutes } from './routes/connector-spec-routes';
@@ -1183,6 +1185,7 @@ function createApp(): express.Application {
   // the daily apps-vs-store + core-vs-upstream check (UPDATE_CHECK_ENABLED=0 disables).
   registerUpdateRoutes(app, requiresAuth, {
     loadApp: (manifestPath, scopeMeta) => swarmAppService.loadApp(manifestPath, scopeMeta),
+    visibleApps: createUpdateCheckVisibility(swarmAppService, { resolveActor: applicationAuthorization.resolveActor, canDiscover: (name, actor) => applicationAuthorization.runtime.canDiscover(name, actor) }),
   });
   startUpdateCheckCron(); // cron: daily update check (no DB access, network = 2 anonymous GitHub reads/day)
   mountContentAndAssistantRoutes(app, ctx, requiresAuth, apiDir);

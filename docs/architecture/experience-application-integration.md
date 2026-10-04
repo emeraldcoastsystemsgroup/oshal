@@ -15,7 +15,7 @@ application-hosting baseline.
 | E3 composite roles | Deployed; installed lifecycle checks pass | Atomic assignment and reviewed optional-member upgrade, durable retry receipts, deny precedence, overlap-safe revoke, actual expiry, restart persistence and PostgreSQL RLS refusal checks pass |
 | E4 Home pilot | Released and installed | Selected required and optional member screens open; a temporary unpriced list note persists across reload and is removed; existing Smart Home and Education IDs and records are preserved |
 | E5 remaining six | All six released and installed | All seven entries pass desktop, phone and keyboard checks; named member views, the package chooser and preserved Central assistant/Simple chat are exercised through the real signed-in browser |
-| E6 installed acceptance | Installed checks pass; second-account privacy acceptance remains open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. Cross-user privacy still requires a second real authenticated non-admin account |
+| E6 installed acceptance | Bounded installed checks pass; full UX and cross-user acceptance remain open | Seven installed contract suites and seven real-cookie readiness checks pass; source/version/retry/cleanup, restart, overlap, expiry and final fixture cleanup are verified. Final contextual sidebar wording is deployed and browser-verified. A second real authenticated non-admin identity is qualified; privacy checks await the reviewed boundary fixes and coordinated deployment. The full audience/member-view acceptance and performance receipts below remain outstanding |
 
 The `experience` compatibility floor now supplies package hosting and discovery:
 `GET /api/ui/experiences` lists active scope-visible packages under current authorization;
@@ -71,9 +71,29 @@ unchanged release, without redeployment, timeout changes or skipped checks. The
 brief caption-verification assignments are removed, and zero grants plus strict
 data preservation are verified again.
 
-One acceptance item remains open: exercise cross-user privacy with a second real
-authenticated non-admin account. Source fixtures, the primary operator session
-and database RLS checks do not substitute for that acceptance.
+Final installed acceptance remains open. Exercise cross-user privacy on the corrected
+deployment. The verified directory and recent authentication logs qualify an
+existing non-admin identity; no additional account is required. Source fixtures,
+the primary operator session and database RLS checks do not substitute for the
+actual cross-user acceptance.
+
+The original [extended UX acceptance](../BACKLOG.md) also remains open: every expected
+page and audience view, including Create, needs evidence on the intended current image.
+The seven-entry sweep, selected member screens, persisted Home note and three caption
+contexts above prove their stated portions. They do not close all adult/child/guest
+journeys, selected member data parity, saved-work/deep-link/return behavior or the full
+audience matrix. Retain the fourteen external Lab cards as pending until their actual
+boundaries are exercised. Record Home request/render measurements before assigning
+performance budgets to later experiences.
+
+The follow-up renderer repair distinguishes loading, unavailable, unreadable and
+partial work from successful empty reads across all seven experiences. Valid companion
+feeds remain visible; unknown counts stay unknown. Read-only retry preserves unsent
+shell input and refuses to replace an open member frame. Operational notices use
+concise language, with source/HTTP details in the existing About or provenance panel.
+This shared-renderer work is tracked in [PR #1048](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1048).
+It is not deployed, and isolated browser evidence does not close the original installed
+audience, member-data or performance acceptance matrix above.
 
 The `experience-roles` floor requires migration 185 and the existing Access management
 authority. `GET /api/authorization/composites` lists current readable templates and
@@ -307,5 +327,72 @@ The final normal store gate passes all 87 checks with zero failures, partial res
 skips or blocked checks, using disposable Linux/PostgreSQL/physics prerequisites.
 No skip acceptance or hook bypass was used. Actual deployed verification, installed
 Test Lab results, lifecycle boundaries and cleanup/preservation are recorded in the
-delivery status above. The remaining acceptance item is a second real authenticated
-non-admin privacy check.
+delivery status above. Final privacy acceptance remains open. Subsequent route
+assessment confirmed unscoped cockpit ticket streams, global escalation reads and
+project discovery, plus focused-shell refusal gaps. These core repairs require
+independent source review, merge, coordinated deployment and the second real
+authenticated non-admin check before the experience work is complete.
+The stopped assessment has been recovered. Its 31 flagged records are grouped API
+assessments. A separate adversarial report recorded 22 confirmed and five refuted
+verdict groups; four flagged groups were never reached. Those counts describe that saved assessment,
+not unique routes or a completed current-deployment audit. The operator has selected
+operator-only global administration while preserving normal caller-owned and explicitly
+shared work. The follow-up source repairs below apply that decision without relabelling
+historical verdicts as new live results.
+
+### Follow-up changes awaiting merge and deployment
+
+The latest code is pushed to GitHub for review. None of the following PRs is merged
+or deployed; the installed release recorded above remains the deployment evidence.
+
+| Change | Review and bounded validation |
+| --- | --- |
+| [#1045 focused shell admission](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1045) | Canonical focused admission precedes document/profile delivery. Host mapping uses ingress Host; forwarded-host observations and configured Host preservation remain separately qualified. 110 unit/HTTP checks pass, including the actual-origin runner's refusal before token binding. |
+| [#1046 cockpit startup](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1046) | Deadline-bound combined authentication/profile startup stays closed on refusal or unreadable answers. Accepted Host source is normally merged into the client branch; 66 current affected guard/browser/Host checks pass. |
+| [#1047 private reads and administration](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1047) | Caller-scoped streams/activity/projects; operator-only global logs, metrics, queues, workflow design, bot activation, connector administration and swarm diagnostics. Cached update status joins current caller discovery; global refresh is operator-only. Mounted HTTP and compatibility checks cover refusals before reads or mutation and retained normal/shared work. |
+| [#1048 experience operational states](https://github.com/emeraldcoastsystemsgroup/oshal/pull/1048) | Operational headings and truthful work states in Home, Business, Classroom, Studio, Jarvis, Orbit and Commons; keyboard recovery, successful partial rows, draft retention and phone layouts are exercised over isolated APIs. |
+
+Token Chase's intentionally shared ownerless frames retain their established read
+contract, while foreign owned frames remain refused. Paid framework credential lending
+uses the existing operator-plus-demo posture before loading vendor secrets. Owner BYO,
+free rotation, shared free OpenRouter and normal hosted defaults remain supported.
+Shared bot-config application requires an operator before promotion reads or writes.
+Caller-facing spending replay routes bind the verified caller and issuer even without global DB
+identity middleware, and its node cost event uses a nonprivileged caller context with
+caller/issuer-separated replay rollups. Token-free tail restoration remains distinct
+from optional paid re-fire. The extracted production node route keeps its machine-auth
+and protected-bot refusal. The 81 affected checks use qualified session, provider,
+database, cost and hermetic-restore seams; they do not prove live vendor or ledger behavior.
+
+The generic cockpit dashboard also distinguishes operator-only swarm activity,
+unavailable reads and successful empty lists. Its 24 browser/registration checks load
+the actual shipped class over an owned loopback server, with synthetic API responses
+and verified browser cleanup.
+
+Independent source reviews and normal committed-head publication/type gates establish
+reviewable code. Repository policy still requires a non-author GitHub approval before
+merge. Release the shell server before its client and experience descendants, deploy
+through the normal verification path, then perform actual matched-host nonoperator
+privacy checks and the still-open extended UX matrix. Existing qualified identities
+are sufficient; fixtures or operator-only checks cannot replace that final evidence.
+
+Cockpit private reads use the verified owner, recorded issuer and current protected
+result authority. Streams recheck each event and heartbeat and close on refusal.
+Project discovery includes only admitted ticket/task records for ordinary callers;
+the global registry and escalation list require an operator. Activity details admit
+each contributing child and canonical task before exposing messages, counts or
+costs. Their costs come from admitted persisted tasks; unqualified direct SQL ticket
+totals cannot establish every contributor's read authority and are omitted on this
+surface. This can reduce displayed totals when task usage is absent; it does not
+change the underlying spend records.
+
+Historical work items correlated only by a unit string are withheld when no
+canonical ticket establishes their owner and current result access. A matching
+unit name alone cannot authorize output. The regression preserves direct admitted
+legacy work and protected work with valid execution lineage; it does not claim
+that every historical unit-only fallback remains visible.
+
+The isolated HTTP regression is `tests/unit/cockpit-private-reads-http.spec.ts`,
+registered in the protected remote application execution Test Lab scenario and
+`npm run test:remote-authorization`. Synthetic authentication and isolated policy
+fixtures prove source behavior; they do not replace live non-admin privacy evidence.
