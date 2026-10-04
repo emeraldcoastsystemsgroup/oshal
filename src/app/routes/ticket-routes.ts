@@ -18,6 +18,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Ticket filing integrity (ticket-filing-guard.ts) on POST / and PATCH /:ticketId: a non-operator pin (metadata.targetAgentId) must pass the direct-call entitlement, a parent the caller cannot read is refused 404 like a missing one (BACKLOG "POST /api/tickets accepts any parentTicketId", decided: refuse), and a privileged ticket type needs a super-admin filer. An operator can no longer set another owner on a privileged ticket, because the queue gate checks the owner. PATCH checks only fields whose value changes.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | requireTicketAccess decides through the shared canReadTicket predicate (owner or operator, AND current protected-result rights), the same verdict the filing guard now applies to a parent. Behavior-preserving here; it closes the drift where parent selection checked ownership alone.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Retired POST /:ticketId/chat (ADR-161 Tier-C register): 410 legacy_execution_route_retired, replacement POST /api/tasks/:taskId/messages. It ran a bot turn on the task orchestrator directly, past the one admission decision (entitlement, specialist and credential refusals, budget), ran unattributed, and posted into an existing task id with no ownership check. No product caller; the cockpit chats through the canonical message door.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | PUT /:ticketId/state (cockpit compatibility) decides like its sibling /status: a ticket through canReadTicket, a bare task through callerCanReadTaskResult (the canonical task verdict), refused and missing both 404. The bare-task branch had no ownership check at all, so any signed-in user could set another user's task status wherever RLS was not enforcing. Removed a stale chat section header left above pause/resume.
  */
 
 import { Router } from 'express';
@@ -31,10 +32,11 @@ import {
   normalizeOshalTicketState,
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
-import { canAccessResource, isOperator, getCaller } from '@/shared/middleware/authz';
+import { isOperator, getCaller } from '@/shared/middleware/authz';
 import { isPrivilegedTicketType } from '@/shared/middleware/superadmin';
 import { canReadTicket, canReadTicketApplicationResult } from './ticket-application-access';
 import { refuseTicketAuthorityFields } from './ticket-filing-guard';
+import { callerCanReadTaskResult } from './protected-result-access';
 import { emitAuditEvent, type AuditDecision } from '@/features/governance';
 import type { TaskStatus } from '@/shared/types';
 
@@ -313,7 +315,7 @@ export function createTicketRoutes(ctx: AppContext): Router {
     try {
       const internalTicket = await ctx.ticketService.getTicket(ticketId as string);
       if (internalTicket) {
-        if (!canAccessResource(req, (internalTicket as { ownerSub?: string | null }).ownerSub ?? null)) {
+        if (!await canReadTicket(ctx, req, internalTicket)) {
           res.status(404).json({ error: 'Ticket not found' });
           return;
         }
@@ -327,8 +329,9 @@ export function createTicketRoutes(ctx: AppContext): Router {
         return;
       }
 
+      // A bare task id gets the canonical task verdict; refused answers exactly like missing.
       const task = await ctx.taskStore.get(ticketId as string);
-      if (task) {
+      if (task && await callerCanReadTaskResult(ctx, req, task)) {
         const mappedTaskStatus = mapCockpitStateToTaskStatus(requestedStatus);
         await ctx.taskStore.updateStatus(ticketId as string, mappedTaskStatus);
         res.json({ success: true, status: 'updated', entity: 'task', newStatus: mappedTaskStatus });
@@ -344,7 +347,6 @@ export function createTicketRoutes(ctx: AppContext): Router {
     }
   });
 
-  /* ── POST /:ticketId/chat (cockpit compatibility) ──────────────── */
   // ── Ticket lifecycle control: pause, resume, cancel ──────────────────
   router.put('/:ticketId/pause', async (req: Request, res: Response) => {
     const { ticketId } = req.params;
