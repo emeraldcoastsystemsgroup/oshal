@@ -16,6 +16,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com | speak(): a readback stopped while POST /api/voice/synthesize is still answering never starts (the answer is dropped before any Audio element or browser utterance is created), and progress is reported through an onProgress hook where it is known (the audio element's time over its duration; the utterance's boundary index over the text length).
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Adapters for the full-swarm build over existing routes: one ticket's workflow read model (GET /api/v1/tickets/:id/workflow) and its owner-checked cancel, the caller's schedules with pause/resume (GET /api/v1/agent/schedules, POST /:id/pause|resume), Workflow Studio definitions, household/team membership (GET /api/tenants, /:id/members) and the caller's own location overview (GET /api/location/state). The catalog keeps the listing's package status for the package-facts panel.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | Keep readable personal overview fields when the global roster is intentionally omitted; qualify calendar readiness separately without inventing assistant totals.
  */
 (function attach(root, factory) {
   'use strict';
@@ -439,22 +440,26 @@
    */
   function sourceState(snapshot, keys) {
     var snap = snapshot || {}, sources = snap.sources || {}, selected = keys || ['tickets', 'tasks'];
-    var names = { tickets: 'Tickets', tasks: 'Assistant tasks', overview: 'Assistant status' };
-    var pending = snap.workLoading || snap.workLoaded === false || (snap.workLoaded !== true && selected.some(function (key) { return sources[key] === undefined; }));
+    var names = { tickets: 'Tickets', tasks: 'Assistant tasks', overview: 'Assistant status', overviewCalendar: 'Calendar', overviewComms: 'Communications' };
+    var sourceKey = function (key) { return key === 'overviewCalendar' || key === 'overviewComms' ? 'overview' : key; };
+    var pending = snap.workLoading || snap.workLoaded === false || (snap.workLoaded !== true && selected.some(function (key) { return sources[sourceKey(key)] === undefined; }));
     if (pending) return { kind: 'loading', complete: false, message: selected.length === 1 ? 'Loading ' + names[selected[0]].toLowerCase() + '…' : 'Loading work…', detail: '' };
     var valid = snap.sourceValidity || {};
-    var failed = selected.filter(function (key) { return sources[key] !== 200 || valid[key] === false; });
+    var failed = selected.filter(function (key) { return sources[sourceKey(key)] !== 200 || valid[key] === false; });
     if (!failed.length) return { kind: 'ready', complete: true, message: '', detail: '' };
-    var partial = failed.length < selected.length;
+    var partial = failed.length < selected.length || failed.some(function (key) { return snap.sourcePartial && snap.sourcePartial[key]; });
     var detail = failed.map(function (key) {
-      var status = sources[key], label = names[key] || 'Work';
+      var status = sources[sourceKey(key)], label = names[key] || 'Work';
+      if (key === 'overview' && snap.overviewRosterOmitted) return 'Global assistant status is not provided to this session.';
       if (status === 200 && valid[key] === false) return label + ' returned an unreadable response.';
       return label + (status === 401 || status === 403 ? ' not available to you' : ' unavailable right now') + ' (HTTP ' + (status || 'network') + ').';
     }).join(' ');
     var label = selected.length === 1 ? names[selected[0]] || 'Work' : 'Work';
-    var refused = failed.every(function (key) { return sources[key] === 401 || sources[key] === 403; });
+    var refused = failed.every(function (key) { return sources[sourceKey(key)] === 401 || sources[sourceKey(key)] === 403; });
     var unavailable = selected.length === 1 && (selected[0] === 'tickets' || selected[0] === 'tasks') ? ' are not available to you.' : ' is not available to you.';
-    var message = partial ? 'Only loaded work is shown.' : label + (refused ? unavailable : ' could not be loaded.');
+    var message = selected.length === 1 && selected[0] === 'overview' && snap.overviewRosterOmitted ? 'Assistant status is not provided to this session.'
+      : partial ? (selected.length === 1 && selected[0] === 'overviewCalendar' ? 'Only readable calendar events are shown.' : 'Only loaded work is shown.')
+      : label + (refused ? unavailable : ' could not be loaded.');
     return { kind: partial ? 'partial' : 'unavailable', complete: false, message: message, detail: detail };
   }
 
@@ -470,6 +475,29 @@
       var identity = key === 'bots' ? row.agentId : key === 'tickets' ? row.ticketId : row.id;
       return typeof identity === 'string' && Boolean(identity.trim()) && (key !== 'bots' || typeof row.online === 'boolean');
     }));
+  }
+
+  /** @description A JSON object, excluding lists and null; personal fields are validated independently. */
+  function record(value) { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
+
+  /** @description Read only the existing caller-bound overview contract; an explicitly malformed roster refuses every derived fact.
+   * @param {object} response The single overview HTTP receipt. @returns {object} Validated fields and their completeness. */
+  function personalOverview(response) {
+    var body = response.body, roster = readableRows(response, 'bots');
+    var hasRoster = record(body) && Object.prototype.hasOwnProperty.call(body, 'bots');
+    var allowed = response.ok && record(body) && (!hasRoster || roster);
+    var ov = allowed ? body : {}, comms = ov.comms, activity = ov.activity, calendar = ov.calendar;
+    var textOrNull = function (value) { return value === null || typeof value === 'string'; };
+    var commsReadable = record(comms) && (comms.digest === null || (record(comms.digest) && typeof comms.digest.summary === 'string' && typeof comms.digest.updatedAt === 'string' && Boolean(parseDate(comms.digest.updatedAt))))
+      && Array.isArray(comms.signals) && comms.signals.every(function (row) { return record(row) && textOrNull(row.from) && textOrNull(row.subject) && textOrNull(row.snippet) && typeof row.at === 'string' && Boolean(parseDate(row.at)); });
+    var activityReadable = record(activity) && Number.isInteger(activity.openCount) && activity.openCount >= 0 && Array.isArray(activity.tickets)
+      && activity.tickets.every(function (row) { return record(row) && typeof row.id === 'string' && Boolean(row.id.trim()) && typeof row.title === 'string' && typeof row.status === 'string'; });
+    var calendarList = record(calendar) && Array.isArray(calendar.events);
+    var events = calendarList ? calendar.events.filter(function (row) { return record(row) && typeof row.title === 'string' && Boolean(row.title.trim()) && typeof row.when === 'string' && Boolean(parseDate(row.when)); }) : [];
+    var calendarReadable = calendarList && events.length === calendar.events.length;
+    return { roster: roster, bots: roster ? body.bots : [], comms: commsReadable ? comms : null, commsReadable: Boolean(commsReadable),
+      activity: activityReadable ? activity : null, events: events, calendarReadable: Boolean(calendarReadable), calendarPartial: events.length > 0 && !calendarReadable,
+      rosterOmitted: Boolean(allowed && !hasRoster && (commsReadable || activityReadable || calendarList)) };
   }
 
   /** @description Build the adapter over an injectable fetch and storage so tests can drive it headlessly. */
@@ -519,18 +547,18 @@
     async function loadWork(snap) {
       var results = await Promise.all([getJson('/api/jarvis/tasks'), getJson('/api/tickets?limit=100'), getJson('/api/jarvis/overview')]);
       var tasks = results[0], tickets = results[1], overview = results[2];
-      var taskReadable = readableRows(tasks, 'tasks'), ticketReadable = readableRows(tickets, 'tickets'), overviewReadable = readableRows(overview, 'bots');
+      var taskReadable = readableRows(tasks, 'tasks'), ticketReadable = readableRows(tickets, 'tickets'), personal = personalOverview(overview);
       var work = mergeWork({ tickets: ticketReadable ? tickets.body.tickets : [], tasks: taskReadable ? tasks.body.tasks : [] }, snap.apps);
-      var ov = overviewReadable ? overview.body : {};
-      var bots = overviewReadable ? ov.bots : [];
+      var bots = personal.bots;
       snap.work.length = 0; Array.prototype.push.apply(snap.work, work);
       snap.bots.length = 0; Array.prototype.push.apply(snap.bots, bots);
       snap.botsOnline = bots.filter(function (b) { return b.online; }).length;
       var openFromWork = work.filter(function (w) { return w.kind === 'ticket' && w.status.open; }).length;
-      snap.openTickets = ov.activity && typeof ov.activity.openCount === 'number' ? ov.activity.openCount : openFromWork;
-      snap.comms = ov.comms || null; snap.calendarEvents = ov.calendar && Array.isArray(ov.calendar.events) ? ov.calendar.events : [];
+      snap.openTickets = personal.activity ? personal.activity.openCount : openFromWork;
+      snap.comms = personal.comms; snap.calendarEvents = personal.events;
       snap.sources.tasks = tasks.status; snap.sources.tickets = tickets.status; snap.sources.overview = overview.status;
-      snap.sourceValidity = { tasks: taskReadable, tickets: ticketReadable, overview: overviewReadable };
+      snap.sourceValidity = { tasks: taskReadable, tickets: ticketReadable, overview: personal.roster, overviewCalendar: personal.calendarReadable, overviewComms: personal.commsReadable };
+      snap.sourcePartial = { overviewCalendar: personal.calendarPartial }; snap.overviewRosterOmitted = personal.rosterOmitted;
       snap.unavailable = missing(snap.sources, snap.sourceValidity); snap.workLoaded = true; snap.loadedAt = new Date();
       return snap;
     }

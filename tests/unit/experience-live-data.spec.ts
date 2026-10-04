@@ -9,6 +9,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | speak(): a readback stopped before the swarm's synthesize answer arrives never creates an Audio element or a browser utterance; the browser engine reports progress from its boundary index, and swarm audio from its time over its duration.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment links that normalise to a '//' pathname ('/..//outside.example/x', '/.//…', '/%2e%2e//…', '/api/..//…') are refused, a same-origin dot segment is kept normalised and every kept path re-resolves to the page origin; an admitted workspace href that would leave the origin (dot-segment, absolute, non-string) falls back to the cockpit link.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove malformed successful overview cannot supply derived facts and its unavailable provenance agrees with visible source refusal.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prove admitted personal overview fields survive intentional roster omission while malformed and failed reads retain unknown readiness and valid companion work.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -173,6 +174,77 @@ describe('experience adapter: client over an injected fetch', () => {
     expect(snap.bots).toEqual([]); expect(snap.botsOnline).toBe(0);
     expect(snap.calendarEvents).toEqual([]); expect(snap.comms).toBeNull();
     expect(snap.openTickets).toBe(0);
+  });
+
+  const personalFields = () => ({
+    comms: { digest: { summary: 'Caller digest', updatedAt: '2026-10-04T09:00:00.000Z' }, signals: [{ from: 'Personal contact', subject: 'Caller subject', snippet: null, at: '2026-10-04T09:00:00.000Z' }] },
+    activity: { tickets: [{ id: 'caller-ticket', title: 'Caller activity', status: 'pending_approval' }], openCount: 1 },
+    calendar: { events: [{ title: '<b>Caller calendar</b>', when: '2026-10-05T10:00:00.000Z' }] },
+  });
+
+  it('retains caller-bound fields when the successful overview intentionally omits the global roster', async () => {
+    const body = personalFields(), { fetch, calls } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson(body) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.comms).toEqual(body.comms); expect(snap.calendarEvents).toEqual(body.calendar.events); expect(snap.openTickets).toBe(1);
+    expect(snap.bots).toEqual([]); expect(snap.sourceValidity).toMatchObject({ overview: false, overviewCalendar: true, overviewComms: true });
+    expect(snap.overviewRosterOmitted).toBe(true); expect(snap.unavailable).toEqual(['overview']);
+    expect(LIVE.sourceState(snap, ['overview'])).toMatchObject({ complete: false, kind: 'unavailable', message: 'Assistant status is not provided to this session.', detail: 'Global assistant status is not provided to this session.' });
+    expect(LIVE.sourceState(snap, ['overviewCalendar'])).toMatchObject({ complete: true, kind: 'ready' });
+    expect(LIVE.sourceState(snap, ['overviewComms'])).toMatchObject({ complete: true, kind: 'ready' });
+    expect(calls.filter(c => c.url === '/api/jarvis/overview')).toHaveLength(1);
+  });
+
+  it('keeps genuine empty personal fields readable without converting an omitted roster into a successful zero', async () => {
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson({ comms: { digest: null, signals: [] }, activity: { tickets: [], openCount: 0 }, calendar: { events: [] } }) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.comms).toEqual({ digest: null, signals: [] }); expect(snap.calendarEvents).toEqual([]);
+    expect(LIVE.sourceState(snap, ['overviewCalendar']).complete).toBe(true);
+    expect(LIVE.sourceState(snap, ['overviewComms']).complete).toBe(true);
+    expect(LIVE.sourceState(snap, ['overview']).complete).toBe(false);
+  });
+
+  it.each([{ bots: [] }, { bots: [{ agentId: 'operator-bot', online: true }] }])('preserves a readable operator roster and personal fields: %j', async ({ bots }) => {
+    const body = { ...personalFields(), bots }, { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson(body) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.bots).toEqual(bots); expect(snap.botsOnline).toBe(bots.length); expect(snap.overviewRosterOmitted).toBe(false);
+    expect(snap.calendarEvents).toEqual(body.calendar.events); expect(snap.comms).toEqual(body.comms);
+    expect(LIVE.sourceState(snap, ['overview']).complete).toBe(true);
+  });
+
+  it('retains readable calendar rows but qualifies a malformed sibling and an independently malformed communications field', async () => {
+    const body = personalFields();
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson({ ...body, comms: { digest: 'wrong family', signals: [] }, calendar: { events: [...body.calendar.events, { title: 'Undated phantom', when: 'not-a-date' }] } }) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.calendarEvents).toEqual(body.calendar.events); expect(snap.comms).toBeNull(); expect(snap.openTickets).toBe(1);
+    expect(LIVE.sourceState(snap, ['overviewCalendar'])).toMatchObject({ complete: false, kind: 'partial', message: 'Only readable calendar events are shown.' });
+    expect(LIVE.sourceState(snap, ['overviewComms'])).toMatchObject({ complete: false, kind: 'unavailable', detail: 'Communications returned an unreadable response.' });
+  });
+
+  it('does not claim an empty calendar or invalid activity count when only companion fields are readable', async () => {
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/tickets': okJson({ tickets: [{ ticketId: 'kept-ticket', title: 'Admitted ticket', status: 'pending_approval' }] }),
+      'GET /api/jarvis/overview': okJson({ ...personalFields(), activity: { tickets: [], openCount: -1 }, calendar: { events: [{ title: 'Missing date' }] } }),
+    });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.work.map((row: { ref: string }) => row.ref)).toEqual(['kept-ticket']); expect(snap.openTickets).toBe(1);
+    expect(snap.calendarEvents).toEqual([]); expect(snap.comms).not.toBeNull();
+    expect(LIVE.sourceState(snap, ['overviewCalendar'])).toMatchObject({ complete: false, kind: 'unavailable', message: 'Calendar could not be loaded.' });
+  });
+
+  it.each([{ bots: null }, { bots: [{ agentId: 'invalid-online', online: 'yes' }] }])('refuses all derived facts for an explicitly malformed roster: %j', async ({ bots }) => {
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/tasks': okJson({ tasks: [{ id: 'kept', title: 'Admitted companion task', status: 'running' }] }), 'GET /api/jarvis/overview': okJson({ ...personalFields(), bots }) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.work.map((row: { ref: string }) => row.ref)).toEqual(['kept']);
+    expect(snap.bots).toEqual([]); expect(snap.comms).toBeNull(); expect(snap.calendarEvents).toEqual([]); expect(snap.openTickets).toBe(0);
+    expect(snap.overviewRosterOmitted).toBe(false); expect(snap.sourceValidity).toMatchObject({ overview: false, overviewCalendar: false, overviewComms: false });
+  });
+
+  it.each([{ status: 503, body: personalFields() }, { status: 403, body: personalFields() }, { status: 200, body: null }, { status: 200, body: [] }, { status: 200 }])('withholds personal fields from a failed or unreadable HTTP receipt: %j', async reply => {
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': reply });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.comms).toBeNull(); expect(snap.calendarEvents).toEqual([]); expect(snap.openTickets).toBe(0);
+    expect(snap.overviewRosterOmitted).toBe(false); expect(snap.sourceValidity.overviewCalendar).toBe(false);
+    expect(LIVE.sourceState(snap, ['overviewCalendar']).complete).toBe(false);
+    expect(LIVE.sourceState(snap, ['overviewComms']).complete).toBe(false);
   });
 
   it('paints in two phases: identity and catalog first, then work merged into the same snapshot arrays', async () => {

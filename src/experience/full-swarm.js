@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Accept package-owned display labels and audience hints while retaining the dynamic caller catalog and shared engines.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Qualify the Jarvis agenda from its own overview calendar field while global assistant status remains private or unknown.
  */
 (() => {
   'use strict';
@@ -179,10 +180,12 @@
     const rows = feed.concat(classwork).filter(r => r.when && r.when >= today).sort((a, b) => a.when - b.when).slice(0, 5);
     const dayLabel = d => d.toDateString() === new Date().toDateString() ? 'Today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const list = rows.map(r => `<div class="agenda-row"><time>${esc(dayLabel(r.when))}</time><div class="agenda-detail">${esc(r.title)}<small>${esc(`${r.timed ? LIVE.clockTime(r.when) : 'All day'} · ${r.source}`)}</small></div></div>`).join('');
-    return `${list || '<p class="note-line">Nothing on your agenda from the sources below.</p>'}<p class="note-line agenda-sources">${esc(agendaSources(feed.length))}</p>`;
+    const calendar = shell.workState(['overviewCalendar']);
+    const empty = calendar.complete ? 'Nothing on your agenda from the sources below.' : 'No readable agenda events from the sources below.';
+    return `${list || `<p class="note-line">${esc(empty)}</p>`}<p class="note-line agenda-sources">${esc(agendaSources(feed.length))}</p>`;
   }
   function agendaSources(feedCount) {
-    const read = shell.workState(['overview']);
+    const read = shell.workState(['overviewCalendar']);
     const feed = !read.complete ? read.message : feedCount ? 'Swarm calendar feed from the overview.' : 'No application contributes events to the swarm calendar feed yet.';
     return `${feed} ${classSource(agendaClass)}`;
   }
