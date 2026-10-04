@@ -17,6 +17,8 @@
 
   9 | maintainer@emeraldcoastsystemsgroup.com | The empty/missing warning no longer implies a fallback key exists. The strict contract holds with or without AUTH_SESSION_SECRET / KEYCLOAK_CLIENT_SECRET: an empty value today is not permission to rotate whatever this install already signs sessions and stores tokens with.
 
+  10 | maintainer@emeraldcoastsystemsgroup.com | Comment only: the Initialize-SessionSecret description dropped "(or one with no value)", which described seq 7's behavior, and now states the strict rule: only a .env created in this run gets a secret; an existing .env is never written for this key.
+
   installer/lib/install-swarm.ps1 -- make THIS machine the swarm controller.
 
   Runs standalone from a terminal, or as a subprocess of installer/install.ps1 (the GUI).
@@ -200,10 +202,11 @@ function Test-PlaceholderSecret {
 .SYNOPSIS Gives a fresh install its own SESSION_SECRET; warns, and never rotates, on an existing one.
 .DESCRIPTION SESSION_SECRET signs every login session (express-openid-connect, the local-auth
 cookie) and derives the at-rest key for stored connector tokens. The .env.example value is a
-published placeholder, so an install that keeps it can have sessions forged. A .env created in
-this run (or one with no value) gets a random secret. An existing .env still on a placeholder
-is NOT rotated here: rotating signs everyone out and makes stored connector tokens unreadable,
-so the installer says so loudly and leaves the timing to the operator.
+published placeholder, so an install that keeps it can have sessions forged. Only a .env created
+in this run gets a random secret. An existing .env is never written for this key: an empty or
+missing value may mean a fallback key already signs (AUTH_SESSION_SECRET, KEYCLOAK_CLIENT_SECRET),
+and a placeholder is NOT rotated here, because rotating signs everyone out and makes stored
+connector tokens unreadable. The installer says so loudly and leaves the timing to the operator.
 #>
 function Initialize-SessionSecret {
     param([Parameter(Mandatory)][bool]$EnvCreated)
