@@ -66,7 +66,7 @@ async function endpoint(options: { landing?: string | null; operator?: boolean; 
   app.use('/api/ui', createUiProfileRoutes(new UIProfileService(), apps(options.visible),
     options.discovery === null ? undefined : (options.discovery ?? admitAll),
     { landingApp: () => landing, isOperator: () => options.operator === true }));
-  await new Promise<void>((done) => { server = app.listen(0, '127.0.0.1', done); });
+  await new Promise<void>((done) => { server = app.listen(0, '127.0.0.1', () => done()); });
   return `http://127.0.0.1:${(server!.address() as AddressInfo).port}/api/ui/profile`;
 }
 

@@ -73,7 +73,7 @@ beforeAll(async () => {
   const app = express();
   app.use(requestIdentity);
   app.use('/api/ui', createUiProfileRoutes(new UIProfileService(), apps, discovery, { landingApp: () => LANDING, isOperator: () => false }));
-  await new Promise<void>((done) => { server = app.listen(0, '127.0.0.1', done); });
+  await new Promise<void>((done) => { server = app.listen(0, '127.0.0.1', () => done()); });
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/ui/profile`;
 }, 180_000);
 
