@@ -16,6 +16,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | GET /:ticketId answers where a graph ticket is parked (CKR-13 / D6). A graph ticket is dispatched from `approved` and nothing writes an in_process_* status, so an operator saw "Approval Required" and a status history with no way to tell which node of which workflow was waiting or what had just finished - that lived in metadata and a workflow_run_steps row nobody joined. Added only when the ticket IS a graph run, so every other ticket's payload is byte-identical.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Record the authenticated caller on resume transitions so graph-gate approvals have a decision actor instead of a misleading system actor.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Ticket filing integrity (ticket-filing-guard.ts) on POST / and PATCH /:ticketId: a non-operator pin (metadata.targetAgentId) must pass the direct-call entitlement, a parent the caller cannot read is refused 404 like a missing one (BACKLOG "POST /api/tickets accepts any parentTicketId", decided: refuse), and a privileged ticket type needs a super-admin filer. An operator can no longer set another owner on a privileged ticket, because the queue gate checks the owner. PATCH checks only fields whose value changes.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | requireTicketAccess decides through the shared canReadTicket predicate (owner or operator, AND current protected-result rights), the same verdict the filing guard now applies to a parent. Behavior-preserving here; it closes the drift where parent selection checked ownership alone.
  */
 
 import { Router } from 'express';
@@ -31,7 +32,7 @@ import {
 import { createChildLogger } from '@/shared/logger';
 import { canAccessResource, isOperator, getCaller } from '@/shared/middleware/authz';
 import { isPrivilegedTicketType } from '@/shared/middleware/superadmin';
-import { canReadTicketApplicationResult } from './ticket-application-access';
+import { canReadTicket, canReadTicketApplicationResult } from './ticket-application-access';
 import { refuseTicketAuthorityFields } from './ticket-filing-guard';
 import { emitAuditEvent, type AuditDecision } from '@/features/governance';
 import type { TaskStatus } from '@/shared/types';
@@ -82,8 +83,7 @@ async function requireTicketAccess(
     res.status(404).json({ error: 'Ticket not found' });
     return null;
   }
-  const ownerSub = (ticket as { ownerSub?: string | null }).ownerSub ?? null;
-  if (!canAccessResource(req, ownerSub) || !await canReadTicketApplicationResult(ctx, req, ticket)) {
+  if (!await canReadTicket(ctx, req, ticket)) {
     logger.warn({ ticketId }, 'Ticket access denied (caller is not owner/operator) — returning 404');
     auditTicketAccess(ctx, req, ticketId, 'deny');
     res.status(404).json({ error: 'Ticket not found' });
