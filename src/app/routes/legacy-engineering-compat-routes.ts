@@ -11,9 +11,11 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added bot lifecycle status endpoint so engineering screens can query restart/rebuild target health directly
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | BF-030: Seed agent registry rows by agentId (UUID) instead of bot.name (slug) to prevent duplicate slug+UUID rows
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | A4/TD-15: Decomposed 1082-line file into types, helpers, and builders modules (governance cap compliance)
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Admit only operators to the deployment-wide queue activity snapshot before collecting records.
  */
 import { createChildLogger } from '@/shared/logger';
 import { SwarmBotLifecycleService } from '@/features/agent-management';
+import { requiresOperator } from '@/shared/middleware/authz';
 import type { LegacyEngineeringCompatRoutesOptions } from './legacy-engineering-compat-types';
 import {
   readLifecycleTarget,
@@ -135,7 +137,7 @@ export function registerLegacyEngineeringCompatRoutes(
     });
   });
 
-  app.get('/api/qm/activity', requiresAuth, async (_req, res) => {
+  app.get('/api/qm/activity', requiresAuth, requiresOperator, async (_req, res) => {
     const snapshot = await collectRuntimeSnapshot(ctx);
     const agents = buildLegacyAgentRegistry(snapshot);
     const ticketPhases = buildTicketPhases(snapshot.tickets);
