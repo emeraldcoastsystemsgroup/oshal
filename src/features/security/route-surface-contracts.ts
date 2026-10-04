@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added executable security contracts for helper-mounted, mixed-auth, and non-/api control surfaces that the literal server.ts mount scanner cannot fully classify.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A contract is active when its registration marker appears in the COMPOSITION source (every controller registrar), not server.ts alone. After the 2026-09-24 server decomposition moved registrations into server-auxiliary-routes.ts, a server.ts-only check silently deactivated contracts whose registration moved, so their guards stopped being audited.
  */
 
 import * as fs from 'fs';
@@ -103,7 +104,8 @@ type SourceReader = (absolutePath: string) => string;
 /**
  * @description Audits active non-standard registrations against their source-level guard
  * contract. A missing file or marker is a high-severity finding rather than a silent skip.
- * @param serverSource - Current server.ts source.
+ * @param serverSource - Current composition source: every controller registrar's text joined
+ *   (see discoverControllerRegistrars), so a registration that moves between files stays active.
  * @param root - Repository/security scan root.
  * @param contracts - Contracts to evaluate; injectable for focused tests.
  * @param readSource - Source reader; injectable for guard-removal tests.

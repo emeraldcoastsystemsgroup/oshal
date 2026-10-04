@@ -24,16 +24,20 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Removed the manual limiter-only exception from list reconciliation; both scanners now derive that handler-less shape through one shared classifier.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Split list synchronization from parser-method coverage so governance-counted describe callbacks remain below fifty physical lines.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Pin the SEC-01 delegated-user middleware as an explicit route-auditor guard.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | The auditor now covers every controller registrar, not server.ts alone (the 2026-09-24 decomposition had hidden about two thirds of the /api mount calls from it). The inventory floor moves above what server.ts alone carries so a registrar-blind regression fails it; the two-list sync check reads the whole composition source; and a synthetic src/app tree pins that an unguarded mount moved into an imported registrar module is still reported at its real file:line, while a module outside src/app is not walked.
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { auditRoutes, PUBLIC_BY_DESIGN } from '@/features/security';
+import { auditRoutes, discoverControllerRegistrars, PUBLIC_BY_DESIGN } from '@/features/security';
 import { UNGUARDED_ALLOWLIST } from '../helpers/unguarded-route-allowlist';
 
-const REAL_SERVER_TS = path.resolve(__dirname, '..', '..', 'src', 'app', 'server.ts');
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const REAL_SERVER_TS = path.join(REPO_ROOT, 'src', 'app', 'server.ts');
+/** Every controller registrar's source, joined: what the auditor itself scans. */
+const COMPOSITION_SOURCE = discoverControllerRegistrars(REPO_ROOT).map((registrar) => registrar.text).join('\n');
 
 /** Write a synthetic server file into a temp dir and return its path. */
 let tmpDir: string;
@@ -120,10 +124,12 @@ describe('route auditor — PUBLIC_BY_DESIGN stays reconciled with the real moun
   // Vacuous-pass tripwire: if the parser bitrots the clean-audit test above passes while
   // checking nothing. server.ts carried 60+ app.use('/api/…') mounts at time of writing
   // (a floor, not a census — it shrinks with ADR-085 carves).
+  // (Floor 60→140 on 2026-10-04: the scan now covers every controller registrar. server.ts ALONE
+  //  carries about 56 /api mounts, so a floor above that fails if the scan collapses to one file.)
   it('the parser still extracts a substantial mount inventory', () => {
     const report = auditRoutes(REAL_SERVER_TS);
     const inspected = Number((report.note || '').match(/inspected (\d+) \/api mounts/)?.[1] ?? 0);
-    expect(inspected).toBeGreaterThanOrEqual(60);
+    expect(inspected).toBeGreaterThanOrEqual(140);
   });
 
   it('every allowlist entry is an /api path (no accidental global prefixes)', () => {
@@ -174,7 +180,7 @@ describe('route auditor — PUBLIC_BY_DESIGN and the CI UNGUARDED_ALLOWLIST stay
     // that server.ts may not mount at all (/api/webhook, /api/oidc, …) and ADR-085 PACKAGE mounts
     // that server.ts never sees, and the CI inventory spec only scans server.ts.
     const reviewed = new Set(UNGUARDED_ALLOWLIST.map((e) => e.path));
-    const serverSource = fs.readFileSync(REAL_SERVER_TS, 'utf8');
+    const serverSource = COMPOSITION_SOURCE;
     const unreviewed = PUBLIC_BY_DESIGN
       // Is this entry a literal path server.ts actually mounts? If not, it is a generic prefix or
       // a package path and the CI inventory spec has nothing to say about it.
@@ -276,5 +282,40 @@ describe('route auditor - delegated-user guard', () => {
       `app.use('/api/synthetic-delegated', delegatedUserRouteAuth, createRoutes(ctx));\n`,
     );
     expect(auditRoutes(file).findings).toEqual([]);
+  });
+});
+
+/** Write one file under a synthetic scan root, creating its directories. */
+function writeUnder(root: string, relative: string, source: string): void {
+  const file = path.join(root, ...relative.split('/'));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, source, 'utf8');
+}
+
+describe('route auditor — registrar graph (the moved-mount guard)', () => {
+  // THE regression pin for 2026-09-24: server.ts handed most of its mounts to an imported module
+  // and the auditor, reading server.ts alone, kept reporting clean. A mount that moves into a
+  // registrar the entry imports must still be audited, and reported where it actually lives.
+  it('reports an unguarded mount in an imported src/app registrar at its real file:line', () => {
+    const root = path.join(tmpDir, 'composition');
+    writeUnder(root, 'src/app/server.ts', "import { registerMoved } from './moved-routes';\n"
+      + "import { outside } from '@/features/outside';\n"
+      + "app.use('/api/synthetic-entry', requiresAuth, createRoutes(ctx));\n");
+    writeUnder(root, 'src/app/moved-routes.ts', 'export function registerMoved(app) {\n'
+      + "  app.use('/api/synthetic-moved', createMovedRoutes(ctx));\n}\n");
+    // Outside the composition layer: imported, but never walked, so never reported.
+    writeUnder(root, 'src/features/outside.ts', "export function outside(app) { app.use('/api/synthetic-outside', createRoutes(ctx)); }\n");
+    const saved = process.env.SECURITY_SCAN_ROOT;
+    process.env.SECURITY_SCAN_ROOT = root;
+    try {
+      const report = auditRoutes();
+      expect(report.findings.map((f) => `${f.fingerprint} @ ${f.source}`)).toEqual([
+        'route_auth:/api/synthetic-moved @ src/app/moved-routes.ts:2',
+      ]);
+      expect(report.note).toContain('inspected 2 /api mounts in 2 controller registrar file(s)');
+    } finally {
+      if (saved === undefined) delete process.env.SECURITY_SCAN_ROOT;
+      else process.env.SECURITY_SCAN_ROOT = saved;
+    }
   });
 });

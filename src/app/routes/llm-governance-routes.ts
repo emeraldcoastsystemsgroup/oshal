@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | NEW: read-only admin route exposing LLM governance status (enforcement on/off, caps, today spend vs cap per scope). Additive; registered by a maintainer in server.ts.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Update docs/ paths after docs directory consolidation.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Make the machine-only governance check fail closed when no internal signing secret is configured and compare presented credentials in constant time, preventing an unconfigured public quota-exhaustion path and timing oracle.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | requiresAuth is now required and applied directly to GET /status. The optional guard (spread from an empty array when omitted) mounted the spend/caps status anonymous for any caller that left it out; the only caller (server-auxiliary-routes.ts) already passed it, so behavior is unchanged and the route inventory can see the guard. /check keeps its internal-token guard.
  */
 
 /**
@@ -67,22 +68,21 @@ interface LlmGovernanceRouteContext {
  *
  * @param app - Express application.
  * @param ctx - Application context (only `pool` is used).
- * @param requiresAuth - Optional auth middleware. Passed through when provided so
- *   the maintainer can gate the endpoint like the other /api routes.
+ * @param requiresAuth - The OIDC session guard for GET /status. Required: an optional guard
+ *   mounted the spend/caps status anonymous whenever a caller omitted it.
+ * @returns void
  */
 export function registerLlmGovernanceRoutes(
   app: Express,
   ctx: LlmGovernanceRouteContext,
-  requiresAuth?: RequestHandler,
+  requiresAuth: RequestHandler,
 ): void {
-  const handlers: RequestHandler[] = requiresAuth ? [requiresAuth] : [];
-
   /**
    * @route GET /api/llm-governance/status
    * @description Current governance posture: enforcement flag, caps, routing
    * policy, and today's spend vs cap for each budget scope.
    */
-  app.get('/api/llm-governance/status', ...handlers, async (_req: Request, res: Response) => {
+  app.get('/api/llm-governance/status', requiresAuth, async (_req: Request, res: Response) => {
     const startedAt = Date.now();
     try {
       const budgetConfig = readBudgetConfig();
