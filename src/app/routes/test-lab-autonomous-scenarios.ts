@@ -1,7 +1,7 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ | AUTHOR | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Register isolated nightly and first-run suites with honest local-runner prerequisites and a read-only progress probe.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register signed remote authorization and exact-principal result regressions with a fixed isolated runner.
@@ -28,6 +28,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Register caller-private cockpit streams, activity contributors, project discovery and operator escalation reads.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP operator administration refusals and caller-summary compatibility.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Register connector/channel administration refusals and caller override/link compatibility.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP workflow administration and shared publishing regressions with member-work compatibility.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -171,6 +172,8 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/protected-ticket-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-private-reads-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/operator-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/workflow-administration-http.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-publishing-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/connector-channel-administration-http.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-application-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/remote-execution-end-to-end.spec.ts' },

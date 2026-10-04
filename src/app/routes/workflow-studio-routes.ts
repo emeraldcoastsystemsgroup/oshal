@@ -1,10 +1,11 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR        | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added workflow-studio routes for design-time workflow definitions, validation, and compile previews
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Wired optional live agent-roster compatibility checks into workflow-studio validation and compile routes
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Require operator authority for shared definition administration and template creation, preserving catalog metadata and caller-owned execution routes.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -17,6 +18,7 @@ import {
   WorkflowStudioService,
 } from '@/features/workflow-studio';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'workflow-studio-routes' });
 
@@ -54,6 +56,7 @@ const SaveWorkflowSchema = z.object({
  */
 export function createWorkflowStudioRoutes(deps: { pool?: Pool } = {}): Router {
   const router = Router();
+  router.use('/definitions', requiresOperator);
   const agentRepository = deps.pool ? new AgentProfileRepository(deps.pool) : null;
   const service = new WorkflowStudioService(
     undefined,
@@ -76,7 +79,7 @@ export function createWorkflowStudioRoutes(deps: { pool?: Pool } = {}): Router {
     res.json({ templates: service.listTemplates(), success: true });
   });
 
-  router.post('/templates/:templateId/create', async (req: Request, res: Response) => {
+  router.post('/templates/:templateId/create', requiresOperator, async (req: Request, res: Response) => {
     try {
       const input = CreateWorkflowSchema.parse(req.body ?? {});
       const definition = await service.createFromTemplate(String(req.params.templateId), input);

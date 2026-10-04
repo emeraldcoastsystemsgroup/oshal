@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — POST /api/workflow-studio/assist: the talk-to-build seam (ADR-039). Hands the operator's words + the current graph to the reason-only workflow-assistant bot (agent 051), parses its single `workflow-graph` block, auto-lays-out positions, and saves the validated definition server-side so the canvas can redraw it as the operator talks.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Concierge form: renamed the route to POST /chat (the standard concierge transport, like movies/spotify) so the bot is reached the documented way; the brain runs via the orchestrator (executeBotOrInline), BYOK on the swarm default login. See docs/building-a-bot.md.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Talk-to-build now fires the surface dock: `message` strips the workflow-graph (and any other) fence but PRESERVES the reply's optional oshal:surface fence (stripBotFencesExceptSurface), so the studio's talk-to-build client can relay those bridge ops to its own co-resident surface dock and then strip the fence before display. Previously message stripped ALL fences, so the V3 persona's oshal:surface ops were silently discarded (dock never fired) — the surface fence is a control channel the client, not the server, consumes here (the shell relay refuses a to_surface from a non-chat-rail frame).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Refuse nonoperator shared workflow authoring before reading definitions, creating drafts or invoking the builder bot.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -17,6 +18,7 @@ import {
   type WorkflowStudioEdge,
 } from '@/features/workflow-studio';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 import { executeBotOrInline } from './inline-bot-execution';
 
 const logger = createChildLogger({ module: 'workflow-studio-assist-routes' });
@@ -176,7 +178,7 @@ export function createWorkflowStudioAssistRoutes(ctx: AppContext): Router {
   const router = Router();
   const service = new WorkflowStudioService();
 
-  router.post('/chat', async (req: Request, res: Response) => {
+  router.post('/chat', requiresOperator, async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) {
       res.status(401).json({ success: false, error: 'Authentication required.' });
