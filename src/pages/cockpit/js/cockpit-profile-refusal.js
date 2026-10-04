@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | One shared PROFILE_UNAVAILABLE name for the producer (RibbonNav's closed fallback) and this renderer: two separate literals let a rename on one side silently boot the default workbench for every refusal. bootInitialView is the cockpit's ribbon-ready step, moved here from app.js so it runs (and is tested) without the whole shell: a refusal renders and stops; otherwise the initial view opens, and a ?ticket= deep link is honoured only when Tickets is a registered view.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Boot only registered openable views after caller filtering; empty rails retain dynamic discovery without opening a native workbench.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Explain an empty account rail with actionable access guidance while keeping admission, retry and navigation unchanged.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Style the empty and refused shell Reload control with the existing primary button while preserving keyboard retry behavior.
  */
 
 /** The name of the closed profile every refused, unreadable or timed-out profile answer becomes. */
@@ -28,7 +29,7 @@ export function renderProfileRefusal(container, profile) {
 function renderShellMessage(container, title, message) {
   if (container) {
     container.innerHTML = `<section role="status" style="padding:24px"><h1>${title}</h1><p>${message}</p>`
-      + '<button type="button" data-profile-retry>Reload</button></section>';
+      + '<button type="button" class="btn-primary" data-profile-retry>Reload</button></section>';
     container.querySelector('[data-profile-retry]')?.addEventListener('click', () => window.location.reload());
   }
 }
