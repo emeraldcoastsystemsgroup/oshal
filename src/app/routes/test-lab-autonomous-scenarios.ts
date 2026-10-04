@@ -34,6 +34,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Register ticket filing integrity over the real ticket router: pinned-agent entitlement, unreadable-parent refusal and the privileged-type filer check, on create and on PATCH.
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Register global project registry administration: non-operator create/rename/archive refused, operator allowed, own-ticket project assignment unaffected.
  * 30 | maintainer@emeraldcoastsystemsgroup.com | Register protected parent selection: a parent GET refuses (the owner after a result-rights revocation, the exact-principal twin, an operator without result access) is refused on POST and PATCH with the missing-parent 404, writing nothing; the owner with current rights still files under it.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com | Register controller ticket chat retirement: every caller (own, foreign, bare task id, unknown id, operator) naming a privileged bot gets 410 legacy_execution_route_retired, the orchestrator is never reached, and nothing is linked or created.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -197,6 +198,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ticket-isolation-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-filing-integrity.spec.ts' },
     { level: 'integration', path: 'tests/unit/ticket-filing-protected-parent.spec.ts' },
+    { level: 'integration', path: 'tests/unit/ticket-chat-retired.spec.ts' },
     { level: 'integration', path: 'tests/unit/task-message-isolation-routes.spec.ts' },
     { level: 'unit', path: 'tests/unit/jarvis-task-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/specialist-context-dispatch.spec.ts' },

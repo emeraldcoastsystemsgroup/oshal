@@ -17,6 +17,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Record the authenticated caller on resume transitions so graph-gate approvals have a decision actor instead of a misleading system actor.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Ticket filing integrity (ticket-filing-guard.ts) on POST / and PATCH /:ticketId: a non-operator pin (metadata.targetAgentId) must pass the direct-call entitlement, a parent the caller cannot read is refused 404 like a missing one (BACKLOG "POST /api/tickets accepts any parentTicketId", decided: refuse), and a privileged ticket type needs a super-admin filer. An operator can no longer set another owner on a privileged ticket, because the queue gate checks the owner. PATCH checks only fields whose value changes.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | requireTicketAccess decides through the shared canReadTicket predicate (owner or operator, AND current protected-result rights), the same verdict the filing guard now applies to a parent. Behavior-preserving here; it closes the drift where parent selection checked ownership alone.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Retired POST /:ticketId/chat (ADR-161 Tier-C register): 410 legacy_execution_route_retired, replacement POST /api/tasks/:taskId/messages. It ran a bot turn on the task orchestrator directly, past the one admission decision (entitlement, specialist and credential refusals, budget), ran unattributed, and posted into an existing task id with no ownership check. No product caller; the cockpit chats through the canonical message door.
  */
 
 import { Router } from 'express';
@@ -380,68 +381,14 @@ export function createTicketRoutes(ctx: AppContext): Router {
     }
   });
 
-  router.post('/:ticketId/chat', async (req: Request, res: Response) => {
-    const { ticketId } = req.params;
-    const message = readOptionalString(req.body?.message);
-    const requestedAgentId = readOptionalString(req.body?.targetAgent) || readOptionalString(req.body?.agentId);
-    logger.info({ ticketId, hasMessage: Boolean(message), requestedAgentId }, 'Ticket chat requested');
-
-    if (!message) {
-      res.status(400).json({ error: 'message is required' });
-      return;
-    }
-
-    try {
-      let resolvedTaskId = ticketId as string;
-      let resolvedAgentId = requestedAgentId;
-
-      const existingTask = await ctx.taskStore.get(ticketId as string);
-      if (existingTask) {
-        resolvedAgentId = resolvedAgentId || readOptionalString(existingTask.agentId);
-      } else {
-        const internalTicket = await ctx.ticketService.getTicket(ticketId as string);
-        if (!internalTicket) {
-          res.status(404).json({ error: 'Ticket not found' });
-          return;
-        }
-        if (!canAccessResource(req, (internalTicket as { ownerSub?: string | null }).ownerSub ?? null)) {
-          res.status(404).json({ error: 'Ticket not found' });
-          return;
-        }
-
-        const links = await ctx.ticketService.getTasksForTicket(ticketId as string).catch(() => []);
-        const primaryTaskId = selectPrimaryTaskId(links as Array<{ taskId?: string; role?: string }>);
-        resolvedTaskId = primaryTaskId || (ticketId as string);
-        resolvedAgentId = resolvedAgentId || readOptionalString(internalTicket.assignedAgentId);
-
-        if (!primaryTaskId) {
-          await ctx.ticketService.linkTask(ticketId as string, resolvedTaskId, 'primary').catch((linkError) => {
-            logger.warn({ err: linkError, ticketId, resolvedTaskId }, 'Failed to persist auto-created ticket-task link');
-          });
-        }
-      }
-
-      const result = await ctx.orchestrator.processMessage(resolvedTaskId, message, {
-        agenticMode: true,
-        autoApprove: false,
-        source: 'cockpit-ticket',
-        agentId: resolvedAgentId,
-        ticketId: ticketId as string,
-      });
-
-      res.json({
-        success: result.success,
-        ticketId,
-        taskId: resolvedTaskId,
-        botResponse: result.response || '',
-        agentId: resolvedAgentId || null,
-        completionType: result.completionType || null,
-        error: result.error,
-      });
-    } catch (error) {
-      logger.error({ err: error, ticketId }, 'Ticket chat failed');
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Ticket chat failed' });
-    }
+  /* ── POST /:ticketId/chat (retired) ─────────────────────────────── */
+  // ADR-161 Tier C, retired 2026-10-04. This route ran a bot turn on the task orchestrator directly, past the
+  // one bot admission decision (execute entitlement, specialist and credential refusals, budget), with no
+  // owner attribution, and it posted into an existing task id without checking who owned it. Nothing in the
+  // product calls it: the cockpit chats through POST /api/tasks/:taskId/messages, which clears every gate.
+  // Same answer as the retired any-bot ticket chat.
+  router.post('/:ticketId/chat', (_req: Request, res: Response) => {
+    res.status(410).json({ error: 'legacy_execution_route_retired', replacement: 'POST /api/tasks/:taskId/messages' });
   });
 
   /* ── POST /:ticketId/tasks ───────────────────────────────────────── */
@@ -594,20 +541,6 @@ function mapCockpitStateToTaskStatus(state: string): TaskStatus {
     return 'processing';
   }
   return 'created';
-}
-
-function selectPrimaryTaskId(links: Array<{ taskId?: string; role?: string }>): string | null {
-  if (!Array.isArray(links) || links.length === 0) {
-    return null;
-  }
-
-  const primary = links.find((link) => link?.taskId && link.role === 'primary');
-  if (primary?.taskId) {
-    return primary.taskId;
-  }
-
-  const first = links.find((link) => link?.taskId);
-  return first?.taskId ?? null;
 }
 
 function readOptionalString(value: unknown): string | undefined {

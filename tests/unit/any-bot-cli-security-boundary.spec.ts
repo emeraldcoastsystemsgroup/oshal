@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove both startup compatibility writers stay plan-only/credential-free and retired ticket chat contains no unreachable auto-approved execution source.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Guard active Token Chase and cockpit ticket paths against reintroducing blanket automatic tool approval.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Prove every direct CLI execution entry denies before workspace/spawn and live diagnostic children receive only an OS/profile allowlist.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Follow the code to where it now lives. Token Chase replay moved out of bot-node-server.ts into bot-node-token-chase-replay-route.ts (4b4a7f50), so the positive autoApprove: false check reads that file, and both files still forbid autoApprove: true. Controller ticket chat is retired (ADR-161 Tier C), so ticket-routes.ts must carry the retirement marker and no direct orchestrator turn instead of an autoApprove: false call.
  */
 
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -281,6 +282,7 @@ describe('persistent startup and retired-route containment', () => {
       'utf8',
     );
     const botNodeSource = readFileSync(join(process.cwd(), 'src/app/bot-node-server.ts'), 'utf8');
+    const replayRouteSource = readFileSync(join(process.cwd(), 'src/app/bot-node-token-chase-replay-route.ts'), 'utf8');
     const ticketRouteSource = readFileSync(join(process.cwd(), 'src/app/routes/ticket-routes.ts'), 'utf8');
 
     expect(setupScript).toContain('"mode": "plan"');
@@ -294,8 +296,12 @@ describe('persistent startup and retired-route containment', () => {
     expect(ticketSource).not.toContain("autoApprove: { 'use_mcp_tool': true }");
     expect(ticketSource).toContain("error: 'legacy_execution_route_retired'");
     expect(botNodeSource).not.toContain('autoApprove: true');
+    expect(replayRouteSource).not.toContain('autoApprove: true');
     expect(ticketRouteSource).not.toContain('autoApprove: true');
-    expect(botNodeSource).toContain('autoApprove: false');
-    expect(ticketRouteSource).toContain('autoApprove: false');
+    // Token Chase replay lives in its own route module; its turn still never auto-approves.
+    expect(replayRouteSource).toContain('autoApprove: false');
+    // Controller ticket chat is retired (ADR-161): no execution source remains to approve anything.
+    expect(ticketRouteSource).toContain("error: 'legacy_execution_route_retired'");
+    expect(ticketRouteSource).not.toMatch(/orchestrator\.processMessage/);
   });
 });
