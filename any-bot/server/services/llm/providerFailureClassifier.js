@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Centralized CLI/provider failure classification for failover and ticket status.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Add narrow isProviderRuntimeBanner (stall + CLI-error banners only) for classifying SUCCESSFUL output; the broad throttle/auth keyword patterns must only classify the error/failure channel, never a valid answer.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Recognize a logged-out CLI ("Not logged in · Please run /login") as an auth failure, and the providers' own "<vendor> CLI task failed" banner as a runtime failure. Both were unclassified, so an expired CLI login was handed to the user AS THE ANSWER instead of failing over.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A missing Antigravity login ("Antigravity credential file is unavailable: antigravity-oauth-token") is an auth failure. Unclassified, it stopped 35 of 36 bots on the DGX Spark move (2026-10-05) instead of failing over from the antigravity-cli fleet default to its openai-codex fallback.
  */
 
 'use strict';
@@ -15,7 +16,9 @@ const THROTTLE_PATTERN = /\b(?:429|too many requests|rate[-\s]?limit(?:ed)?|retr
 // "not logged in" / "please run /login" / "logged out" are how the Claude Code and Codex CLIs report
 // an expired or absent OAuth login. Without them an auth failure reads as ordinary prose and escapes
 // every classifier here, which is exactly how a logged-out CLI became a user-visible "answer".
-const AUTH_PATTERN = /\b(?:401 Unauthorized|403 Forbidden|unauthorized|not authenticated|not logged in|logged out|login required|please run \/login|run \/login|authentication (?:issue|failed|required)|invalid api key|invalid_api_key|ANTHROPIC_API_KEY|OPENAI_API_KEY|OAuth (?:file|token|login|credentials)|oauth (?:token|login|credentials|expired|required|failed))\b/i;
+// "credential file is unavailable" is AntigravityCLIWrapper's error for a missing login file; unmatched,
+// every Antigravity bot failed instead of failing over to its fallback lane (DGX Spark, 2026-10-05).
+const AUTH_PATTERN = /\b(?:credential file is unavailable|401 Unauthorized|403 Forbidden|unauthorized|not authenticated|not logged in|logged out|login required|please run \/login|run \/login|authentication (?:issue|failed|required)|invalid api key|invalid_api_key|ANTHROPIC_API_KEY|OPENAI_API_KEY|OAuth (?:file|token|login|credentials)|oauth (?:token|login|credentials|expired|required|failed))\b/i;
 // `task failed` is the banner ClaudeCodeProvider/ClineProvider build themselves for a non-zero exit
 // ("Claude Code CLI task failed: ..."). It belongs here for the same reason `encountered an error`
 // does: a provider must be able to recognize its OWN failure text when it comes back as a response.
