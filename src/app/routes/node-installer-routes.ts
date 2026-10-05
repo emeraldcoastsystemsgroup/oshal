@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Register the node to start with Windows. The download installed and launched a node that never came back after a reboot: nothing wrote a startup entry, and the app's own login item is tied to background wake (a microphone feature) rather than to being a worker. A per-user Startup shortcut needs no elevation and no scheduled task, is removable like any other startup item, and is verified by reading the .lnk back rather than trusted because Save() returned. A failure to write it is reported as what it is instead of being swallowed into a success message.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Same correction on this side: the per-user Startup folder brings the node back at the next LOGON, not unattended after a boot. It is not a service, and the comment no longer implies one.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Give the POSIX renderers the login item the Windows one got in SEQ 6. The macOS/Linux script installed a node, launched it once and left nothing behind, so the first restart ended the node and a person had to find a launcher they never chose - the same defect SEQ 6 fixed for Windows, shipped on the two platforms whose bare-machine run has not happened yet. macOS gets a per-user LaunchAgent, Linux an XDG autostart entry; both are read back rather than trusted, both carry the launcher path and no credential, and a failure to write one is reported instead of being swallowed into the success message.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The POSIX installer warns (without refusing) when Node is below 22: @oshal/chat and its Electron tooling declare 22.12+, and on the first Linux bare-metal run (DGX Spark, Node 20.20, 2026-10-05) npm printed EBADENGINE warnings the script never explained. Node 20 stays the hard floor because it installs and runs.
  */
 
 /**
@@ -376,6 +377,12 @@ const POSIX_NODE_CHECK = [
   '  echo "Node.js 20 or newer is required (found $NODE_VERSION)."',
   '  echo "  Install the LTS build from https://nodejs.org, then run this again."',
   '  exit 1',
+  'fi',
+  '# The node app (and the Electron download tooling it pulls) declares Node 22.12 or newer. Node 20',
+  '# installs and runs it with npm engine warnings, so this is a warning, not a refusal.',
+  'if [ "$NODE_MAJOR" -lt 22 ]; then',
+  '  echo "  note: Node.js $NODE_VERSION works, but the node app expects 22.12 or newer;"',
+  '  echo "        npm will print engine warnings. Install the current LTS when convenient."',
   'fi',
   'echo "  node: $NODE_VERSION"',
   '',

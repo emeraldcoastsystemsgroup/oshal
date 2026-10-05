@@ -19,11 +19,13 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | The print service starts BEFORE the mesh handshake, not after it. Proven on the operator's box 2026-09-06: with printServiceEnabled=true the node restarted and spawned NO print-drop child at all, because register() throws on a non-2xx (a swarm with REMOTE_CLIENT_REQUIRE_NODE_TOKEN refuses a shared-secret node with 401), client.start() rejects, and connect() returned before the printer was ever reached. The printer is a LOCAL service - it advertises on this machine's own segment and needs the swarm only to DELIVER - so an unreachable or not-yet-enrolled swarm must not remove it from everyone's print dialog. print-drop KEEPS an undeliverable document and names the reason, so nothing is lost meanwhile.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | espn:connect / espn:status / espn:forget — the Sports Edge fantasy connector's credential is a pair of ESPN account session cookies, not a token, so it is captured from a real ESPN sign-in window on this machine instead of asking the user to open DevTools and copy two values by hand. The window runs in its own partition (a swarm sign-out clears defaultSession, which would otherwise wipe the ESPN jar as a side effect).
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) is now one of the swarm-adoptable logins, so the comments naming the account list and the pushable subset say so. No handler changed: loginAndPush, auth:push and auth:swarm-status are all generic over isPushableLogin/LOGIN_TARGETS, which is exactly why the third vendor needed no code here.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | The user agent comes from presentableUserAgent (user-agent.ts), which removes the app's own name token whatever it is. The hard-coded `oshal-chat/` scrub missed `@oshal/chat/0.5.2`, the name an npm install reports, so Google refused the swarm sign-in window on Linux (DGX Spark, 2026-10-05).
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
 import { join } from 'path';
 import { parseLaunchAppArg, parseMakeShortcutsArg, prettifyAppTitle } from './app-launch';
+import { presentableUserAgent } from './user-agent';
 import { ConfigStore, type OshalChatConfig } from './config';
 import { MeshChatClient, type ChatReply, type MeshStatus } from './mesh-client';
 import { resolveEnrollmentIdentity } from './enrollment';
@@ -92,9 +94,7 @@ const wakeService = new BackgroundWakeService({
 // Google's OAuth page refuses user agents that advertise an embedded shell
 // ("disallowed_useragent"). Present the underlying Chrome UA instead — strip the
 // Electron and app tokens — so the swarm's OIDC sign-in completes in our windows.
-app.userAgentFallback = app.userAgentFallback
-  .replace(/\sElectron\/\S+/i, '')
-  .replace(/\soshal-chat\/\S+/i, '');
+app.userAgentFallback = presentableUserAgent(app.userAgentFallback, app.getName());
 
 // ── Launch mode ───────────────────────────────────────────────────────────────
 // --app=<name>            open that cockpit app as its own window (per-app shortcut)

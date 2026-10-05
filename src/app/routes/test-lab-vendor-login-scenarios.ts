@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Register the vendor-login seeding rail with the Test Lab. The runnable half is deliberately refusal-only: an anonymous caller must not reach the import, the sign-out, or the status probe on any of the three vendor auth mounts. Nothing here pushes a credential, signs anyone in, or contacts a vendor endpoint — the success path needs the operator's own browser login, which the Lab must never attempt. regressionTests carry the guards that ship with the rail so a test file on disk is not mistaken for Lab registration.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The description now says what the Google half actually is - DORMANT, because Google retired Code Assist sign-in for individuals on 2026-09-22 and the file the push rail adopts can no longer be produced - and the executability guards join regressionTests. A seeding rail that ends in a brain option nobody can run is not a seeded rail, so the spec proving the option is refused belongs to this scenario as much as the one proving the import is gated. The refusal steps are unchanged: a closed door stays worth checking whether or not anyone is coming through it.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register tests/unit/node-linux-login.spec.ts, the guards for the node's first Linux desktop install.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -60,6 +61,9 @@ export const VENDOR_LOGIN_SCENARIOS: Scenario[] = [{
     // The satellite half — what may leave the operator's machine, and where it is sent.
     { level: 'unit', path: 'tests/unit/node-login-push.spec.ts' },
     { level: 'unit', path: 'tests/unit/node-login-launch.spec.ts' },
+    // The satellite on a Linux desktop: sign-in user agent, keyring-free Antigravity login, the Codex
+    // callback port, the launcher environment and the adopted token's owner (DGX Spark, 2026-10-05).
+    { level: 'unit', path: 'tests/unit/node-linux-login.spec.ts' },
   ],
   steps: [
     { id: 'gemini-import', app: 'config-admin', label: 'Google import refuses an anonymous caller', run: () => anonymousRefusal('POST', '/api/gemini/auth/import', 'Gemini import requires sign-in') },
