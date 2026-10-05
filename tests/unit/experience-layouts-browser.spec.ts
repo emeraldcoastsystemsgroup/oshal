@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Verify authorized package cards and package chooser values instead of retired static portal entries.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The paint-timing case waits for the CONNECTING placeholder to be replaced, a marker every preset shares. Since #1042 the classroom placeholder reads "Reading your classroom", so waiting for "Reading your home" to vanish was true on first paint and timed nothing.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com | Keep directory Escape focus on its visible opener after delayed Commons history reads on desktop and phone and pin-triggered close repaint across all four full layouts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -186,6 +187,59 @@ describe('experience shells over the real routes', () => {
     await page.fill('#message-input', 'Room question'); await page.press('#message-input', 'Enter');
     await page.waitForSelector('.room-messages .message-content p strong');
     expect(fixture.state.asks[0].sessionId).toBe('jarvis-room-ai-finance-synthetic-user');
+  });
+
+  it.each([1440, 390])('Commons directory Escape restores its opener after late history at %ipx', async width => {
+    await page.setViewportSize({ width, height: 1000 });
+    let release!: () => void, held = 0;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/jarvis/history*', async route => { held++; await pending; await route.fallback(); });
+    fixture.state.history = [{ role: 'assistant', text: 'Synthetic delayed room history' }];
+    try {
+      await open('/commons', '.full-commons');
+      await expect.poll(() => held).toBe(2);
+      await page.locator('.commons-search').click();
+      const opener = await page.locator('.commons-search').elementHandle();
+      release();
+      await page.waitForFunction(() => document.querySelector('.room-messages')?.textContent?.includes('Synthetic delayed room history'));
+      expect(await opener?.evaluate(node => node.isConnected)).toBe(false);
+      expect(await page.locator('#full-dialog').isVisible()).toBe(true);
+      expect(await page.evaluate(() => Boolean(document.activeElement?.closest('#full-dialog')))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.evaluate(() => document.activeElement?.matches('.commons-search'))).toBe(true);
+      expect(await page.locator('#full-dialog').count()).toBe(0);
+      expect(errors).toEqual([]);
+    } finally { release(); }
+  });
+
+  it.each([1440, 390])('Commons directory Escape restores its opener after dirty close repaint at %ipx', async width => {
+    await page.setViewportSize({ width, height: 1000 });
+    await open('/commons', '.full-commons');
+    await page.waitForLoadState('networkidle');
+    await page.locator('.commons-search').click();
+    const opener = await page.locator('.commons-search').elementHandle();
+    await page.locator('.catalog-card [data-action="pin"]').first().click();
+    expect(await opener?.evaluate(node => node.isConnected)).toBe(true);
+    await page.keyboard.press('Escape');
+    expect(await opener?.evaluate(node => node.isConnected)).toBe(false);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.matches('.commons-search'))).toBe(true);
+    expect(await page.locator('#full-dialog').count()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
+  it.each(['studio', 'jarvis', 'orbit'])('%s directory Escape restores its opener after dirty close repaint', async layout => {
+    await open(`/${layout}`, `.full-${layout}`);
+    await page.waitForLoadState('networkidle');
+    const selector = `.${layout}-top [data-action="directory"]`;
+    await page.locator(selector).click();
+    const opener = await page.locator(selector).elementHandle();
+    await page.locator('.catalog-card [data-action="pin"]').first().click();
+    expect(await opener?.evaluate(node => node.isConnected)).toBe(true);
+    await page.keyboard.press('Escape');
+    expect(await opener?.evaluate(node => node.isConnected)).toBe(false);
+    await expect.poll(() => page.evaluate(s => document.activeElement?.matches(s), selector)).toBe(true);
+    expect(await page.locator('#full-dialog').count()).toBe(0);
+    expect(errors).toEqual([]);
   });
 
   it('Home preset: the real shopping list, money picture, class calendar and honest people', async () => {

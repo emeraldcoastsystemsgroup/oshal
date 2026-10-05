@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Qualify the Jarvis agenda from its own overview calendar field while global assistant status remains private or unknown.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Send selected admitted member context, scope saved drafts/tool references by principal, recheck reopened tools, and preserve foreground frames and backward draft selection during asynchronous updates.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Preserve the visible semantic modal opener across late and after-close repaint so Escape returns keyboard focus to the same control.
  */
 (() => {
   'use strict';
@@ -245,6 +246,17 @@
   }
 
   /* ── render + events ───────────────────────────────────────────── */
+  /** Replace a detached modal opener with its visible equivalent; the shell restores focus when the panel closes. */
+  function preserveModalOpener(opener) {
+    if (!opener || opener.isConnected) return;
+    const attributes = ['id', 'data-action', 'data-app', 'data-suite', 'data-room', 'data-work', 'data-tab', 'data-tool', 'data-view', 'aria-label']
+      .filter(name => opener.hasAttribute(name));
+    const candidates = attributes.length ? Array.from(root.querySelectorAll(opener.tagName)).filter(node =>
+      attributes.every(name => node.getAttribute(name) === opener.getAttribute(name)) &&
+      !node.disabled && !node.closest('[hidden], [inert]') && node.getClientRects().length && getComputedStyle(node).visibility === 'visible') : [];
+    const sameClass = node => node.className === opener.className, sameText = node => node.textContent === opener.textContent;
+    shell.state.returnFocus = candidates.find(node => sameClass(node) && sameText(node)) || candidates.find(sameClass) || candidates.find(sameText) || candidates[0] || null;
+  }
   function render(force = false) {
     const frame = shell.activeMemberFrame() || root.querySelector('.full-context iframe[data-hosted-app]');
     if (force !== true && frame && (shell.state.modal?.kind === 'embed' || (state.embed && frame.dataset.hostedApp === state.selected))) { dirty = true; return; }
@@ -252,7 +264,9 @@
       ? { id: editing.id, value: editing.value, start: editing.selectionStart, end: editing.selectionEnd, direction: editing.selectionDirection } : null;
     // A notice survives the re-render an async read triggers right after it (the shell clears it on its own timer).
     const notice = (document.getElementById('toast') || {}).textContent || '';
+    const opener = shell.state.returnFocus;
     root.innerHTML = shell.studyBar() + shell.workNotice() + ({ studio, jarvis, orbit, commons }[layout])() + `<div class="toast" id="toast" role="status" aria-live="polite">${esc(notice)}</div><div id="modal-host"></div>`;
+    preserveModalOpener(opener);
     if (shell.state.modal) shell.renderModal();
     const app = selected(); if (app && !state.embed) shell.fillSummary(app);
     if (app && (layout === 'studio' || layout === 'orbit')) shell.fillDetail(app);
