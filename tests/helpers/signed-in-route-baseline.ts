@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, second slice: /api/logs, /api/process-lab, /api/bot/restart|rebuild|rollback, /api/proxy-health, /api/redis-visibility and /api/swarm/ops are operator mounts now (entries removed); /api/checkpoints is reviewed (owner-scoped). Admin-only routes inside still-LEGACY mounts: /api/governance/posture, Plane ticket sync (/api/tickets/sync/*), /api/swarm/bots/proxy-health. LEGACY_CEILING 104 -> 95.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, intake: /api/intake/fast and /api/v1/intake are reviewed (tickets filed as the caller's own; intake sessions bound to their starter). LEGACY_CEILING 95 -> 93.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, cockpit: /api/v1 is reviewed (by-id ticket routes owner-checked, the explorer's unscoped copies removed). LEGACY_CEILING 93 -> 92.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, tenants: /api/tenants is reviewed (adding a person is portal-admin only). LEGACY_CEILING 92 -> 91.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -17,7 +18,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 92;
+export const LEGACY_CEILING = 91;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -114,7 +115,7 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/swarm/roles', reason: LEGACY },
   { path: '/api/takeout', reason: LEGACY },
   { path: '/api/tasks', reason: LEGACY },
-  { path: '/api/tenants', reason: LEGACY },
+  { path: '/api/tenants', reason: 'Every user may create a tenant and list the tenants they belong to; member and connection reads require membership, adding a person requires the portal admin, and removing or re-roling requires a tenant admin (tenant-routes.ts, reviewed 2026-10-05)' },
   { path: '/api/test-lab', reason: LEGACY },
   { path: '/api/tickets', reason: LEGACY },
   { path: '/api/tickets/active', reason: LEGACY },

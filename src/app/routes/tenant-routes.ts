@@ -14,12 +14,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — GET/POST /api/tenants (list mine / create household), POST /:id/members (admin add), GET /:id/connections (member-visible shared connections). Backs the /utilities household selector.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | POST /:id/members is portal-admin only (and still requires a tenant admin). Any user could create a tenant and add any other user as member or admin without consent, which pulled that tenant's shared connections and knowledge grants into the other user's resolution. The only page that adds members, the admin console, is already admin-only. Removing members and changing roles stay with tenant admins (route review 2026-10-05).
  *
  * @module tenant-routes
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { isOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '@/app/composition/app-context';
 import {
   createTenant, addMember, listUserTenants, isTenantMember, accessibleConnections,
@@ -72,10 +74,15 @@ export function createTenantRoutes(ctx: AppContext): Router {
     }
   });
 
-  /** POST /api/tenants/:id/members { memberSub, role? } — add a member (caller must be admin). */
+  /**
+   * POST /api/tenants/:id/members { memberSub, role? } — add a member. Portal admin only (and a tenant
+   * admin): membership pulls the tenant's shared connections and knowledge into the member's own
+   * resolution, so nobody else may put a person into a tenant without that person's say.
+   */
   router.post('/:id/members', async (req: Request, res: Response) => {
     const sub = callerSub(req);
     if (!sub) { res.status(401).json({ error: 'not authenticated' }); return; }
+    if (!isOperator(req)) { res.status(403).json({ error: 'Only the portal admin can add people to a household' }); return; }
     const memberSub = String((req.body && req.body.memberSub) || '').trim();
     if (!memberSub) { res.status(400).json({ error: 'memberSub is required' }); return; }
     const role = String((req.body && req.body.role) || 'member');
