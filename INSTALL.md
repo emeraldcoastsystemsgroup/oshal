@@ -117,6 +117,13 @@ docker exec oshal-local-api node scripts/oshal-admin-link.mjs \
   --origin http://localhost:35457 --email you@example.com
 ```
 
+You do not have to remember that command. On a box with no mail rail (SMTP or a connected
+Google sender), the login page's **Forgot your password?** screen shows it, filled in for that
+box, instead of a form whose email could never arrive. An **unattended** install (no terminal
+attached) does not print the first link; it saves it to an owner-only `FIRST-SIGN-IN.txt` in the
+install directory. The set-password page has a **Show passwords** toggle and says live whether
+the two boxes match, so a browser-prefilled box or a typo is visible before you submit.
+
 Headless automation that must know the credential up front can pass `OSHAL_ADMIN_PASSWORD`
 (at least 10 characters); the installer then skips the link and you sign in at `/login`.
 
@@ -143,6 +150,13 @@ instead — the first visit to `/login` then runs the first-admin ceremony. See
 
 **Docker Desktop** with Compose v2 — macOS, Windows, or Linux. [Get Docker](https://docs.docker.com/get-docker/).
 That's it. No Node, no Postgres, no API keys, no identity provider for the default install.
+
+**On an arm64 Linux host** (for example an NVIDIA DGX Spark or another ARM server), install
+**from source**: `bash oshal-install.sh --mode 2`. The published registry image is built for
+`linux/amd64` today, so mode 1 stops and says so instead of starting containers that cannot run.
+The source build selects every downloaded tool for the host CPU. One fallback harness, the
+Cline CLI, ships a binary that does not start on arm64 musl; the build warns, and the other
+harnesses (Codex, Claude Code, Gemini, Antigravity) work.
 
 **On Windows, Docker Desktop runs on WSL2**, and enabling WSL2 is a separate step that
 `winget install Docker.DockerDesktop` does not perform. Installing Docker on a machine without
@@ -219,6 +233,27 @@ Copy the template, then edit only what you need:
 ```bash
 cp .env.example .env
 ```
+
+### Bring an existing `.env` (moving from another machine)
+
+A clean install can take the `.env` you already run elsewhere:
+
+```bash
+bash oshal-install.sh --mode 2 --env-file /path/to/old/.env --auth-mode basic --admin-email you@example.com
+```
+
+- The file is **kept as-is**. A UTF-8 BOM and Windows CRLF line endings are cleaned (a BOM
+  silently renames the first key). It is written owner-only.
+- Only install facts are added: the image this run built or pulled, the package owner, and any
+  **missing** install secrets (`SWARM_SERVICE_SECRET`, `SESSION_SECRET`, `REMOTE_CLIENT_SHARED_SECRET`,
+  `JWT_SECRET`, `ENCRYPTION_KEY`). An existing `ENCRYPTION_KEY` is **never rotated**: data stored
+  with it must stay readable. Placeholder values from `.env.example` count as missing.
+- It never overwrites a **different** `.env` already at the target. Move that one aside first.
+- Sign-in follows the file unless you pass `--auth-mode`. A file that signs in through an identity
+  provider returns people to its `APP_URL`. If that address does not reach the new machine yet,
+  pass `--auth-mode basic` to sign in with a local account until you cut over.
+- Everything else in the file is live on first boot: schedulers, trading, tunnels and outbound
+  connectors run as configured. **Review those switches before you insert a production file.**
 
 ### Kubernetes mode installs its own prerequisites
 
@@ -437,6 +472,7 @@ bash scripts/install.sh --down         # stop and remove the stack
 | Flag | PowerShell | What it does |
 |---|---|---|
 | `--allow-stale-image` | `-AllowStaleImage` | Install the published image even when it is far behind this repository. |
+| `--env-file F` | *(n/a)* | Clean install with an existing `.env` (another machine's). See [Bring an existing `.env`](#bring-an-existing-env-moving-from-another-machine). |
 | *(n/a)* | `-SkipWslCheck` | Skip the Windows WSL2 preflight (Hyper-V backend, or a machine you have already prepared). |
 
 **About the freshness check.** Images are published to GHCR only by the manual-only CI

@@ -5,6 +5,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — build the SWARM SNAPSHOT: one offline-installable archive holding the three OSHAL images (docker save) plus the installers. The compose + config seeds are already BAKED IN the oshal-bot image, so images + installer IS the whole swarm; the installers' --from-archive / -FromArchive mode docker-loads it with zero registry or network dependency. Too big for a GitHub release asset (2 GB cap) — host on R2 or any file host.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Bundle scripts/lib/installer-env.sh beside the bash installer: it sources its .env helpers from there, and an offline box cannot fetch them.
 # =============================================================================
 #
 # Usage:  bash scripts/build-offline-bundle.sh [output-dir]
@@ -36,6 +37,8 @@ docker save "${IMAGES[@]}" -o "$OUT/oshal-images.tar"
 
 cp Install-OSHAL.bat "$OUT/"
 cp scripts/oshal-install.ps1 scripts/oshal-install.sh "$OUT/scripts/"
+# The bash installer sources its .env helpers from beside itself; offline there is no repo fetch.
+mkdir -p "$OUT/scripts/lib" && cp scripts/lib/installer-env.sh "$OUT/scripts/lib/"
 
 # ── Version-match the snapshot to its CODE (operator ask 2026-07-23) ─────────
 # The oshal-bot image is stamped with oshal.git.commit at build; that label is the

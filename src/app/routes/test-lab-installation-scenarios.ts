@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Attach compose-yaml-merge-key-budget to the deploy/build-contract family. #869 pushed docker-compose.oshal-local.yml past js-yaml's default merge-key limit and the image build died at gen-dist-compose.js; the guard runs that build step on the real file from the files the image has at that point, pins every compose parse to the shared loader, and fails at 80% of the loader's budget.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Attach app-scope-contract: a package whose scope: the swarm_applications CHECK refuses (dev-workspace-index 0.2.0, scope: deployment) passed oshal-app validate and failed mid-install; the guard proves validate and the loader now refuse it by name before any database call.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Register installer naming, real PowerShell upgrade-failure and rendered node/channel copy guards without running an installer from a browser.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | Attach the clean-install guards from a real arm64 Linux run to the install-contract family: installer-env-insertion (env insertion, owner-only .env, minted secrets, project root, user-owned bind sources, foreign-CPU image refusal; real bash + filesystem), dockerfile-arch-portability (the arm64 build), and local-auth-reset-delivery (no fake "reset link on its way" without a mail rail; visible password mismatch).
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -103,6 +104,9 @@ export const INSTALLATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/core-release-drill.spec.ts' },
     { level: 'integration', path: 'tests/unit/compose-yaml-merge-key-budget.spec.ts' },
     { level: 'integration', path: 'tests/unit/app-scope-contract.spec.ts' },
+    { level: 'integration', path: 'tests/unit/installer-env-insertion.spec.ts' },
+    { level: 'unit', path: 'tests/unit/dockerfile-arch-portability.spec.ts' },
+    { level: 'integration', path: 'tests/unit/local-auth-reset-delivery.spec.ts' },
   ],
   steps: [{ id: 'catalog', app: 'test-lab', label: 'Installed package cases', run: installedCatalog }],
 }];

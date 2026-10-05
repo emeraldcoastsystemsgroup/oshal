@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Pin the opt-in combined login surface: the state API advertises Microsoft only for the hybrid composition, the first-party page is hidden by default and reveals the SSO link only on bare /login, and the same-origin returnTo is encoded into the exact /login/microsoft entry point.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The state API now also reports resetEmail (mail-rail availability, guarded in local-auth-reset-delivery.spec.ts); the exact-shape assertions accept it.
  */
 
 import express from 'express';
@@ -36,10 +37,11 @@ async function readState(microsoftLogin: boolean): Promise<Record<string, unknow
 
 describe('hybrid local/Microsoft login page', () => {
   it('does not advertise Microsoft unless the server explicitly enables the hybrid surface', async () => {
-    expect(await readState(false)).toEqual({ localAuth: true, bootstrapRequired: false });
+    expect(await readState(false)).toEqual({ localAuth: true, bootstrapRequired: false, resetEmail: expect.any(Boolean) });
     expect(await readState(true)).toEqual({
       localAuth: true,
       bootstrapRequired: false,
+      resetEmail: expect.any(Boolean),
       microsoftLogin: true,
     });
   });

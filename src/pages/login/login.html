@@ -60,6 +60,9 @@
   .hidden { display: none; }
   .foot { color: var(--dim); font-size: 11.5px; margin-top: 18px; }
   .foot a { color: var(--accent); }
+  /* Reset command for a server with no mail rail: copyable, wraps instead of overflowing. */
+  .cmd { white-space: pre-wrap; word-break: break-all; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 8px; padding: 10px; font-size: 13px; user-select: all; }
 </style>
 </head>
 <body>
@@ -108,6 +111,7 @@
       <p class="sub" id="codeHint">From your authenticator app. No app to hand? Enter one of your recovery codes.</p>
     </div>
 
+    <pre id="resetCommand" class="cmd hidden"></pre>
     <button id="submit" type="submit">Sign in</button>
     <p class="error" id="error"></p>
     <p class="foot" id="foot">Forgot your password? <a href="#" id="forgot">Email me a reset link</a>.</p>
@@ -119,6 +123,8 @@
   var bootstrapMode = false;
   var secondFactorNeeded = false;
   var forgotMode = false;
+  // Older servers do not report resetEmail; assume their form can deliver, as before.
+  var resetEmail = true;
   var $ = function (id) { return document.getElementById(id); };
 
   function returnTo() {
@@ -144,11 +150,32 @@
     $('error').textContent = '';
     $('microsoftLoginPanel').classList.add('hidden');
     $('foot').innerHTML = '<a href="/login">Back to sign in</a>. No email set up on this box? Ask your administrator for a new invitation link.';
+    if (!resetEmail) showServerResetCommand();
     $('email').focus();
+  }
+
+  // No mail rail on this server (a fresh install): an emailed link can never arrive, so show the
+  // one command that issues it on the machine running OSHAL instead of a form that pretends.
+  function showServerResetCommand() {
+    $('subtitle').textContent = "This server can't send email yet, so reset links come from the computer running it. "
+      + 'On that computer, open a terminal, run this command, and open the link it prints:';
+    $('submit').classList.add('hidden');
+    $('resetCommand').classList.remove('hidden');
+    renderResetCommand();
+    $('email').addEventListener('input', renderResetCommand);
+  }
+  function renderResetCommand() {
+    var email = $('email').value.trim() || 'you@example.com';
+    $('resetCommand').textContent = 'docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin '
+      + location.origin + " --email '" + email.replace(/'/g, "'\\''") + "'";
   }
   $('forgot').addEventListener('click', enterForgotMode);
 
   fetch('/api/local-auth/state').then(function (r) { return r.json(); }).then(function (s) {
+    if (s && s.resetEmail === false) {
+      resetEmail = false;
+      if (forgotMode) showServerResetCommand(); // the state answer can land after the click
+    }
     if (s && s.microsoftLogin === true && !s.bootstrapRequired && !forgotMode && location.pathname === '/login') {
       $('microsoftLogin').setAttribute('href', '/login/microsoft?returnTo=' + encodeURIComponent(returnTo()));
       $('microsoftLoginPanel').classList.remove('hidden');

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | --from-archive selected the REGISTRY default image and never consulted what `docker load` produced, so an archive built with any other tag loaded fine and then every later step pointed at an image that was never on the box: `docker create "$IMAGE"` to extract compose.dist.yml, and OSHAL_BOT_IMAGE in the generated .env. Offline there is no pull to paper over it. EXECUTED in a real bash with a stub `docker` first on PATH, because the whole defect is what a shell does with command output and no reading of the script shows it - the branch looks correct until you notice IMAGE was assigned two hundred lines earlier. The stub is outside the boundary: what docker does with a tar is not the claim, only what the installer does with the line docker prints.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The archive branch now ends with check_image_arch (a foreign-CPU archive stops with the --mode 2 fix); the harness sources the real scripts/lib/installer-env.sh so the lifted branch runs unchanged.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -73,6 +74,9 @@ function imageAfterLoad(loadOutput: string): { image: string; stderr: string } {
       'set -euo pipefail',
       `export PATH="${toMsysPath(binDir)}:$PATH"`,
       'say() { echo "say: $*"; }',
+      // The branch now ends with check_image_arch (scripts/lib/installer-env.sh); source the REAL
+      // helper. The stub docker answers nothing for version/inspect, so the check stays silent.
+      `. "${toMsysPath(join(process.cwd(), 'scripts/lib/installer-env.sh'))}"`,
       `FROM_ARCHIVE="${toMsysPath(archive)}"`,
       // What the script had already decided before the branch runs — the registry default.
       'IMAGE="ghcr.io/emeraldcoastsystemsgroup/oshal-bot:latest"',

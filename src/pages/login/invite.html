@@ -44,6 +44,12 @@
   .error { color: var(--bad); font-size: 13px; margin: 12px 0 0; min-height: 1.4em; }
   .hidden { display: none; }
   a { color: var(--accent); }
+  /* Hidden characters made a mismatch (or a browser-prefilled value) impossible to see. */
+  .show { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: var(--dim, #5b6472); }
+  .show input { width: auto; margin: 0; }
+  .match { font-size: 12.5px; margin: 6px 0 0; min-height: 1.2em; }
+  .match.ok { color: #1f7a3a; }
+  .match.bad { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -57,6 +63,8 @@
       <input id="password" type="password" required autocomplete="new-password" minlength="10" autofocus>
       <label for="confirm">Confirm password</label>
       <input id="confirm" type="password" required autocomplete="new-password">
+      <p class="match" id="match" aria-live="polite"></p>
+      <label class="show"><input id="showPw" type="checkbox"> Show passwords</label>
       <button id="submit" type="submit">Set password and sign in</button>
       <p class="error" id="error"></p>
     </form>
@@ -96,12 +104,30 @@
       .catch(showDead);
   }
 
+  // Live feedback: the boxes are dots, so a typo or a browser-prefilled first box was invisible
+  // until submit said "do not match" with no way to see why.
+  function renderMatch() {
+    var a = $('password').value, b = $('confirm').value, m = $('match');
+    if (!b) { m.textContent = ''; m.className = 'match'; return; }
+    var same = a === b;
+    m.textContent = same ? 'Passwords match.' : 'Passwords do not match yet.';
+    m.className = 'match ' + (same ? 'ok' : 'bad');
+  }
+  $('password').addEventListener('input', renderMatch);
+  $('confirm').addEventListener('input', renderMatch);
+  $('showPw').addEventListener('change', function () {
+    var type = $('showPw').checked ? 'text' : 'password';
+    $('password').type = type; $('confirm').type = type;
+  });
+
   $('form').addEventListener('submit', function (ev) {
     ev.preventDefault();
     $('error').textContent = '';
     var password = $('password').value;
     if (password.length < 10) { $('error').textContent = 'Passwords need at least 10 characters.'; return; }
-    if (password !== $('confirm').value) { $('error').textContent = 'The passwords do not match.'; return; }
+    if (password !== $('confirm').value) {
+      $('error').textContent = 'The passwords do not match. Tick "Show passwords" to see both boxes.'; return;
+    }
     $('submit').disabled = true;
     fetch('/api/local-auth/accept', {
       method: 'POST',

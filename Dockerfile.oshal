@@ -76,6 +76,7 @@
 #                      |                          | advertises the prerequisite.
 # 12 | maintainer@emeraldcoastsystemsgroup.com  | Release identity (ADR-167): ARG/ENV OSHAL_RELEASE and the oshal.release label, declared at the tail beside GIT_SHA so a release cut reuses every heavy layer. A production box can now say which named core release it runs (/api/version `release`) instead of only a commit. IMAGE_VERSION is left alone: it is declared before the heavy RUN layers, so a per-release value there would rebuild the image from the apk layer up.
 # 13 | maintainer@emeraldcoastsystemsgroup.com  | Take the published fixes behind the 2026-10-02 nightly trivy red instead of budgeting them (operator decision 2026-09-21: fix first, budget last). (1) Version floors `pcre2>=10.49-r0` and `python3>=3.12.15-r0` in the runtime `apk add`: both fixes were in Alpine v3.23/main, but the nightly's `apk upgrade` and `apk add` layers were CACHED, so a rebuild kept pcre2 10.48-r0 and python3 3.12.14-r0; the floor re-runs the layer and fails the build if the index cannot satisfy it. The comment above `apk upgrade` no longer claims the nightly rebuild self-heals OS CVEs. (2) A layer after `npm install -g npm@11` swaps npm's own bundled brace-expansion 5.0.9 and undici 6.28.0 for the fixed in-range releases (>=5.0.11, >=6.28.1): no npm release that runs on node 20 carries them, and both satisfy the ranges npm's tree declares. It fails the build if a copy stays below its floor or npm's minimatch stops expanding braces, and it is a no-op once npm ships the fixes.
+# 14 | maintainer@emeraldcoastsystemsgroup.com  | Arch-aware Antigravity stage (drop the ARG TARGETARCH=amd64 default that masked BuildKit's value) plus yq / kubectl / argocd downloads plus an arch-aware gcompat confinement step (cline probe warns on aarch64, where the Bun binary aborts), so the image builds on arm64 hosts (DGX Spark); amd64 builds behave as before.
 # =============================================================================
 #
 # Why this image exists:
@@ -88,7 +89,7 @@
 # =============================================================================
 
 FROM debian:bookworm-slim AS antigravity-cli
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 ARG AGY_VERSION=1.2.8
 ARG AGY_AMD64_URL=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.8-4907747922280448/linux-x64/cli_linux_x64.tar.gz
 ARG AGY_AMD64_SHA512=28d0f8661316850d1e1ff541dc5f7727e5df6ea9f2d28a0c9b5567aa638a778b21d9229123c65ee5b5c646d4390b589245b1fdc0004e98f0cd1774aa38147762
@@ -216,8 +217,9 @@ RUN npm_dir="$(npm root -g)/npm"; \
     npm --version
 
 # yq for persona YAML parsing and config work
-RUN wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && \
-    chmod +x /usr/local/bin/yq
+ARG TARGETARCH
+RUN wget -q "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${TARGETARCH:-amd64}" -O /usr/local/bin/yq && \
+    chmod +x /usr/local/bin/yq && yq --version
 
 # Core runtime CLIs
 # Bump CLI_CACHE_BUST at build time to force a fresh npm fetch of @latest
@@ -248,12 +250,23 @@ RUN echo "cli-cache-bust=${CLI_CACHE_BUST}" && \
 # exist at this layer (npm ci runs later). The built artifact is probed instead:
 # scripts/check-cline-entrypoint.mjs (run by the deploy's image verification) fails when any
 # glibc alias is back in musl's search path, which is the condition that lets an addon load.
+# arm64: glibc's aarch64 PT_INTERP is /lib/ld-linux-aarch64.so.1 (gcompat installs its stub there
+# and links /lib64 to it), so the stub stays put and only the libc aliases are removed. cline 3.x's
+# Bun-compiled aarch64 executable aborts under gcompat even unconfined (measured 2026-10-04 on a
+# DGX Spark), so on arm64 the probe warns instead of failing and the cline fallback is unavailable.
 RUN apk add --no-cache gcompat && \
     for alias in libc.so.6 libm.so.6 libpthread.so.0 libresolv.so.2 librt.so.1 libutil.so.1 libcrypt.so.1; do rm -f "/lib/$alias"; done && \
-    rm -f /lib64/ld-linux-x86-64.so.2 && mv /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2 && \
+    arch="$(apk --print-arch)" && \
+    case "$arch" in \
+      x86_64) rm -f /lib64/ld-linux-x86-64.so.2 && mv /lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2 ;; \
+      aarch64) test -e /lib/ld-linux-aarch64.so.1 ;; \
+      *) echo "Unsupported gcompat architecture: $arch" >&2; exit 1 ;; \
+    esac && \
     for alias in libc.so.6 libm.so.6 libpthread.so.0 libresolv.so.2 librt.so.1 libutil.so.1 libcrypt.so.1 ld-linux-x86-64.so.2; do [ ! -e "/lib/$alias" ] || { echo "glibc alias /lib/$alias survived"; exit 1; }; done && \
-    v="$(cline --version)" && [ "$v" = "${CLINE_VERSION}" ] || { echo "cline entrypoint did not start or reported '$v' (expected ${CLINE_VERSION})"; exit 1; } && \
-    echo "cline ${v} starts on musl through the confined gcompat loader"
+    v="$(cline --version 2>/dev/null | tail -n 1)"; \
+    if [ "$v" = "${CLINE_VERSION}" ]; then echo "cline ${v} starts on musl through the confined gcompat loader"; \
+    elif [ "$arch" = "aarch64" ]; then echo "WARNING: cline ${CLINE_VERSION} does not start on aarch64 musl (reported '$v'); the cline fallback harness is unavailable on this image" >&2; \
+    else echo "cline entrypoint did not start or reported '$v' (expected ${CLINE_VERSION})"; exit 1; fi
 
 # cline@latest still bundles fast-uri 3.1.3 (CVE-2026-16221, HIGH — fixed in 3.1.4), which redded
 # the trivy gate on the first trunk ci-local run (2026-07-23). Until upstream bumps it, replace the
@@ -290,11 +303,11 @@ RUN pip3 install --break-system-packages --no-cache-dir tenacity beautifulsoup4 
 ENV PLAYWRIGHT_CHROMIUM_PATH=/usr/bin/chromium-browser
 
 # Kubernetes / GitOps CLIs expected by the incident workflows
-RUN curl -L "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl && \
-    chmod +x /usr/local/bin/kubectl
+RUN curl -L "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH:-amd64}/kubectl" -o /usr/local/bin/kubectl && \
+    chmod +x /usr/local/bin/kubectl && kubectl version --client
 
-RUN curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64 && \
-    chmod +x /usr/local/bin/argocd
+RUN curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-${TARGETARCH:-amd64} && \
+    chmod +x /usr/local/bin/argocd && argocd version --client --short
 
 RUN curl -sSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
