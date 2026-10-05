@@ -214,6 +214,7 @@
  * 197 | maintainer@emeraldcoastsystemsgroup.com   | The storyboard CLI image wiring is handed the swarm's canonical runtime-params resolver (read per call): a render runs on the render bot's own effective harness and is stamped with that bot's own provider record, never switched onto an image harness (ADR-130 amendment 2026-10-02, the bot-level rule).
  * 199 | maintainer@emeraldcoastsystemsgroup.com   | Root and shared shell/profile landings use ingress Host through one helper, so caller-supplied forwarded-host values cannot remove focused-host admission.
  * 200 | maintainer@emeraldcoastsystemsgroup.com | Wire update status to current scoped application discovery while preserving operator refresh and apply.
+ * 201 | maintainer@emeraldcoastsystemsgroup.com   | /api/personal-graph and /api/personal-graph/ingest (off unless PERSONAL_GRAPH_ROUTES=on) are operator-only: they share one in-memory store across every caller, so any signed-in user could read all users' ingested data, and ingest falls back to the deployment's connector credential (route review 2026-10-05).
  */
 
 require('dotenv').config();
@@ -1383,8 +1384,11 @@ function createApp(): express.Application {
   // via migration 057 is the persistence upgrade). OFF by default — set PERSONAL_GRAPH_ROUTES=on.
   if (process.env.PERSONAL_GRAPH_ROUTES === 'on') {
     const personalGraphStore = new InMemoryGraphStore();
-    app.use('/api/personal-graph/ingest', requiresAuth, createPersonalGraphIngestRoutes({ pool: ctx.pool, store: personalGraphStore }));
-    app.use('/api/personal-graph', requiresAuth, createPersonalGraphRoutes({ store: personalGraphStore }));
+    // Operator-only until the store is per-owner: this one in-memory store is shared by every caller,
+    // so a signed-in user could read everyone's ingested data, and ingest falls back to the
+    // deployment's own connector credential (route review 2026-10-05).
+    app.use('/api/personal-graph/ingest', requiresAuth, requiresOperator, createPersonalGraphIngestRoutes({ pool: ctx.pool, store: personalGraphStore }));
+    app.use('/api/personal-graph', requiresAuth, requiresOperator, createPersonalGraphRoutes({ store: personalGraphStore }));
   }
   // (/api/travel is no longer hard-mounted: the Travel surface carved to the
   // oshal-applications store (ADR-085 Wave 3) — its route dynamic-mounts from the

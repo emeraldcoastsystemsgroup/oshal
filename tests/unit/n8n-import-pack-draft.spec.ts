@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Private Packs review draft over the real router and a headless browser: authentication before buffering, 512 KiB and multipart limits, slug and collision refusals, redacted files on disk, no source export retained, and the deploy route refusing an n8n-analysis draft.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Typecheck-clean under tsconfig.tests.json: a Buffer source is copied into a Uint8Array before it becomes a Blob part, and the fake session is attached through an unknown-typed cast like the other route specs, so the gate sees no new unquarantined errors.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The draft owner is an operator so the deploy attempt reaches the draft refusal: pack deploy is portal-admin only (ADR-174).
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -20,6 +21,10 @@ const priorRoot = process.env.OSHAL_WORKSPACE_ROOT;
 process.env.OSHAL_WORKSPACE_ROOT = root;
 const ownerSub = 'auth0|n8n-draft-owner';
 let currentSub: string | undefined = ownerSub;
+// Pack deploy is portal-admin only (ADR-174). The owner is an operator here so the deploy attempt
+// reaches the draft refusal this suite pins: an n8n review draft is never deployable, by anyone.
+const priorOperators = process.env.OSHAL_OPERATOR_SUBS;
+process.env.OSHAL_OPERATOR_SUBS = ownerSub;
 
 function packDir(name: string): string {
   const key = crypto.createHash('sha256').update(ownerSub).digest('hex').slice(0, 32);
@@ -76,6 +81,8 @@ describe('n8n → private Packs review draft', () => {
     fs.rmSync(root, { recursive: true, force: true });
     if (priorRoot === undefined) delete process.env.OSHAL_WORKSPACE_ROOT;
     else process.env.OSHAL_WORKSPACE_ROOT = priorRoot;
+    if (priorOperators === undefined) delete process.env.OSHAL_OPERATOR_SUBS;
+    else process.env.OSHAL_OPERATOR_SUBS = priorOperators;
   });
 
   it('saves a redacted graph with local IDs and exact ports, with no deploy path', async () => {

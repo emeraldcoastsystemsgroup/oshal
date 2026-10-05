@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Baseline for the signed-in route ratchet (tests/unit/operator-route-ratchet.spec.ts): every controller /api mount that ANY signed-in user reaches (requiresAuth or delegated-user auth at the mount, no operator gate), as of 2026-10-05. Pre-existing mounts are recorded as LEGACY, not approved: many gate operator actions per route inside their modules, and each is reviewed module by module during convergence (operator gate at the mount, or a written reason). New mounts cannot be LEGACY.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, first slice: /api/personal-graph and /api/personal-graph/ingest are operator mounts now (entries removed); /api/swarm/packs is reviewed (deploy is admin-only). LEGACY_CEILING 107 -> 104.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -13,7 +14,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 107;
+export const LEGACY_CEILING = 104;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -93,8 +94,6 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/ops/refusals', reason: LEGACY },
   { path: '/api/optimize', reason: LEGACY },
   { path: '/api/personal', reason: LEGACY },
-  { path: '/api/personal-graph', reason: LEGACY },
-  { path: '/api/personal-graph/ingest', reason: LEGACY },
   { path: '/api/privacy', reason: LEGACY },
   { path: '/api/process-lab', reason: LEGACY },
   { path: '/api/providers', reason: LEGACY },
@@ -115,7 +114,7 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/swarm/config', reason: LEGACY },
   { path: '/api/swarm/memory', reason: LEGACY },
   { path: '/api/swarm/ops', reason: LEGACY },
-  { path: '/api/swarm/packs', reason: LEGACY },
+  { path: '/api/swarm/packs', reason: 'Packs are per-user (each caller lists, reads and downloads only their own pack directory); deploying a pack registers swarm-wide bots, so POST /:name/deploy requires the portal admin (swarm-pack-routes.ts requireOperator, reviewed 2026-10-05)' },
   { path: '/api/swarm/registries', reason: LEGACY },
   { path: '/api/swarm/roles', reason: LEGACY },
   { path: '/api/takeout', reason: LEGACY },

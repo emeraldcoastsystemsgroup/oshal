@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A pack slug belongs to whoever deployed it. The pack tree is per-user but the emitted manifest path is not, so a second authenticated user deploying the same slug inherited the incumbent agent ids and ticket queue and overwrote their manifest - loadApp then registered the newcomer persona under the row the incumbent tickets point at. The emission now records packOwnerKey and a deploy that would take over another owner slug is refused 409. A manifest written before owners were stamped carries none and is adopted, because breaking the packs already deployed here would cost more than it saves.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Asserts the deploy loads the manifest AS THE CALLER. It called loadApp with no scope, so withInstallOwner stamped OSHAL_INSTALL_OWNER_SUB and any authenticated user's own pack became the install owner's, with that owner made its administrator. The fake loader now captures the scope, which is the boundary that failed - the pure adoption rule was correct all along and a test of it would have stayed green.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The "same path reloaded" check compares the edit test's OWN two loads. It read loaded[0] and loaded[1], which were the edit's two deploys until entry 3 put a test that loads before it; since then it compared that earlier load with the edit's first one, and an edit reloaded from a second manifest path stayed green. Both loads must now be the one manifest path deployed-apps/<slug>.yaml.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Pack deploy is portal-admin only (ADR-174): the suite's owners are operators, and a new case proves an ordinary signed-in user gets 403 with no manifest written and no app loaded.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -29,6 +30,11 @@ const PERSONA_DIR = path.resolve(process.cwd(), 'ai-lab/bot-personas');
 
 const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-forge-edit-'));
 const originalWorkspaceRoot = process.env.CLINE_WORKSPACE_ROOT;
+// Deploying a pack is a portal-admin action (ADR-174), so both owners this suite deploys as are
+// operators; NON_OPERATOR proves an ordinary user is refused before anything is written.
+const NON_OPERATOR = 'an-ordinary-signed-in-user';
+const originalOperatorSubs = process.env.OSHAL_OPERATOR_SUBS;
+process.env.OSHAL_OPERATOR_SUBS = `${SUB},a-different-authenticated-person`;
 // PACKS_ROOT is resolved when the route module loads, so the env must be set BEFORE the import.
 process.env.CLINE_WORKSPACE_ROOT = workspaceRoot;
 
@@ -103,12 +109,33 @@ describe('Bot Forge edit-in-place — an edited pack re-emits the SAME pack', ()
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
     if (originalWorkspaceRoot === undefined) delete process.env.CLINE_WORKSPACE_ROOT;
     else process.env.CLINE_WORKSPACE_ROOT = originalWorkspaceRoot;
+    if (originalOperatorSubs === undefined) delete process.env.OSHAL_OPERATOR_SUBS;
+    else process.env.OSHAL_OPERATOR_SUBS = originalOperatorSubs;
   });
 
   afterEach(() => {
     // The deploy writes personas into the tracked persona directory; leave no residue behind.
     for (const file of fs.existsSync(PERSONA_DIR) ? fs.readdirSync(PERSONA_DIR) : []) {
       if (file.startsWith(`${SLUG}-`)) fs.rmSync(path.join(PERSONA_DIR, file), { force: true });
+    }
+  });
+
+  it('refuses an ordinary signed-in user before writing a manifest or loading an app', async () => {
+    const before = loaded.length;
+    const nonOperatorPack = path.join(workspaceRoot, 'packs', userKey(NON_OPERATOR), SLUG);
+    fs.mkdirSync(path.join(nonOperatorPack, 'bots'), { recursive: true });
+    fs.writeFileSync(path.join(nonOperatorPack, 'pack.json'), JSON.stringify({ name: SLUG, mode: 'bundle' }), 'utf8');
+    fs.writeFileSync(path.join(nonOperatorPack, 'bots', 'worker.yml'), yaml.dump({ name: `${SLUG}-worker`, role: 'Worker' }), 'utf8');
+    const manifestBefore = fs.existsSync(path.join(deployedDir, `${SLUG}.yaml`));
+    currentSub = NON_OPERATOR;
+    try {
+      const res = await deploy();
+      expect(res.status).toBe(403);
+      expect(loaded.length, 'an ordinary user reached loadApp').toBe(before);
+      expect(fs.existsSync(path.join(deployedDir, `${SLUG}.yaml`))).toBe(manifestBefore);
+    } finally {
+      currentSub = SUB;
+      fs.rmSync(path.join(workspaceRoot, 'packs', userKey(NON_OPERATOR)), { recursive: true, force: true });
     }
   });
 
