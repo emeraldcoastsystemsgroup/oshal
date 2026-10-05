@@ -19,6 +19,7 @@
 # 13 | maintainer@emeraldcoastsystemsgroup.com  | Two review findings. valid_email constrained only the LOCAL part, so `me@example.com&whoami` passed; harmless in this script, which hands argv to docker exec, but oshal-install.ps1 interpolates the same value into a `cmd /c` string and lockstep is why both validators exist. The character is rejected anywhere now, and a second @ with it. And the one-time set-password link - swarm root for an hour - is no longer printed when stdout is not a terminal, because an unattended run is one whose output something is capturing. The reissue command is how it is obtained deliberately.
 # 14 | maintainer@emeraldcoastsystemsgroup.com  | --from-archive uses the image the archive ACTUALLY contains. IMAGE was still the registry default when that branch ran, so an archive built with any other tag loaded fine and then every later step pointed at something that was never pulled: docker create to extract compose.dist.yml, and OSHAL_BOT_IMAGE in the generated .env. Offline there is no pull to paper over it. The tag is read from docker load output, preferring the oshal-bot image when an archive carries several, and an untagged load says so instead of proceeding silently.
 # 15 | maintainer@emeraldcoastsystemsgroup.com  | A re-run reuses the administrator email the existing .env already names. oshal-install.ps1 gates its whole env-generation block on the file being absent, so it never re-asks; this script asked unconditionally, which is not the lockstep both Change Logs claim - and it is a question whose answer is already written down. --admin-email still wins, and an unattended run is unchanged.
+# 16 | maintainer@emeraldcoastsystemsgroup.com  | Clean-install fixes from a real arm64 Linux run, plus env insertion. --env-file brings an existing .env (another machine's) to a clean install. .env helpers moved to scripts/lib/installer-env.sh (800-line rule): every .env is owner-only (was 0664 with the DB and session secrets), JWT_SECRET/ENCRYPTION_KEY are minted like the ps1 (fill-if-missing, never rotate; the Codex login refused with ENCRYPTION_KEY_REQUIRED without one), OSHAL_DOCKER_PROJECT_ROOT is the real path on Linux/macOS, and bind-mount sources are created as the user so Docker never makes a root-owned ~/.claude.json directory. An explicit --auth-mode is no longer re-asked. A registry/archive image built for another CPU stops with the source-install fix instead of a raw docker error. Unattended runs save the set-password link to an owner-only file. The closing re-check path is the verify script actually used.
 # =============================================================================
 #
 # One-click:
@@ -39,6 +40,8 @@
 #   --k8s-context CTX   (mode 4) kubeconfig context              (default: current)
 #   --nodeport N        (mode 4) cockpit NodePort 30000-32767    (default 30500)
 #   --chart REF         (mode 4) chart dir/OCI ref override      (default: published OCI, repo fallback)
+#   --env-file F        clean install with an existing .env (e.g. from another machine): kept
+#                       as-is (BOM/CRLF cleaned), missing install secrets added, never overwrites
 #   --no-ai             EXPLICITLY install without a connected model (recorded;
 #                       AI features stay disabled until a model is connected)
 #   --yes, -y           accept prerequisite installs (kubectl/helm/kind/k3s) without prompting
@@ -55,6 +58,7 @@ PACKAGE_AUDIT_MODE="${OSHAL_PACKAGE_AUDIT_MODE:-compatible}"
 REGISTRY="ghcr.io/emeraldcoastsystemsgroup"; ADMIN_EMAIL=""; DRY=0; FROM_ARCHIVE=""
 CONTROL_PLANE=""; JOIN_CODE=""; ENROLL_TOKEN=""; ASSUME_YES=0
 ALLOW_STALE_IMAGE=0
+ENV_SOURCE=""; AUTH_MODE_EXPLICIT=0; [ -n "${OSHAL_AUTH_MODE:-}" ] && AUTH_MODE_EXPLICIT=1
 SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 K8S_NAMESPACE="oshal"; K8S_CONTEXT=""; K8S_NODEPORT="30500"; K8S_CHART=""; BUNDLE_EXPLICIT=0
 REPO_URL="https://github.com/emeraldcoastsystemsgroup/oshal"
@@ -76,7 +80,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --registry) REGISTRY="$2"; shift 2 ;;
   --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
   --store-repo) STORE_REPO="$2"; STORE_REPO_NAMED=1; shift 2 ;;
-  --auth-mode) AUTH_MODE="$2"; shift 2 ;;
+  --auth-mode) AUTH_MODE="$2"; AUTH_MODE_EXPLICIT=1; shift 2 ;;
   --control-plane) CONTROL_PLANE="$2"; shift 2 ;;
   --join-code) JOIN_CODE="$2"; shift 2 ;;
   --enrollment-token) ENROLL_TOKEN="$2"; shift 2 ;;
@@ -86,6 +90,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --chart) K8S_CHART="$2"; shift 2 ;;
   --from-archive) FROM_ARCHIVE="$2"; shift 2 ;;
   --allow-stale-image) ALLOW_STALE_IMAGE=1; shift ;;
+  --env-file) ENV_SOURCE="$2"; shift 2 ;;
   --no-ai) NO_AI=1; shift ;;
   --yes|-y) ASSUME_YES=1; shift ;;
   --dry-run) DRY=1; shift ;;
@@ -94,9 +99,27 @@ esac; done
 
 case "$PACKAGE_AUDIT_MODE" in compatible|enforce) ;; *) echo "--audit-mode must be compatible or enforce" >&2; exit 2 ;; esac
 case "$AUTH_MODE" in basic|mock) ;; *) echo "--auth-mode must be basic or mock" >&2; exit 2 ;; esac
+if [ -n "$ENV_SOURCE" ]; then
+  [ -f "$ENV_SOURCE" ] && [ -r "$ENV_SOURCE" ] || { echo "--env-file: cannot read $ENV_SOURCE" >&2; exit 2; }
+  ENV_SOURCE="$(cd "$(dirname "$ENV_SOURCE")" && pwd -P)/$(basename "$ENV_SOURCE")"
+fi
 
 say()  { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
+
+# .env + host-preparation helpers. Beside this script in a checkout or offline bundle; fetched from
+# the repo when the installer was downloaded on its own (the verify trio already works this way).
+load_installer_env_lib() {
+  local lib="$SELF_DIR/lib/installer-env.sh"
+  if [ ! -f "$lib" ]; then
+    lib="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/emeraldcoastsystemsgroup/oshal/main/scripts/lib/installer-env.sh" -o "$lib" \
+      || { echo "could not fetch scripts/lib/installer-env.sh (offline?) - run this from a checkout or bundle" >&2; exit 1; }
+  fi
+  # shellcheck source=lib/installer-env.sh
+  . "$lib"
+}
+load_installer_env_lib
 
 # -- Windows: WSL2 is Docker Desktop's engine, and nothing here used to check it -----
 # `winget install Docker.DockerDesktop` succeeds on a box whose WSL2 features are off;
@@ -243,10 +266,11 @@ valid_email() {
 # existing, so a re-run there never re-asks; this script asked every time, which is not lockstep
 # and is a question with a right answer already written down two lines from where it is asked.
 existing_admin_email() {
-  for _envf in "$DIR/.env" "$DIR/src/.env"; do
-    [ -f "$_envf" ] || continue
-    _prev=$(sed -n 's/^OSHAL_OPERATOR_EMAILS=//p' "$_envf" | head -1)
-    [ -z "$_prev" ] && _prev=$(sed -n 's/^MOCK_OIDC_EMAIL=//p' "$_envf" | head -1)
+  for _envf in "$ENV_SOURCE" "$DIR/.env" "$DIR/src/.env"; do
+    [ -n "$_envf" ] && [ -f "$_envf" ] || continue
+    # A migrated .env lists several operators; the first is the one who owns this box.
+    _prev=$(env_get OSHAL_OPERATOR_EMAILS "$_envf" | cut -d, -f1 | tr -d ' ')
+    [ -z "$_prev" ] && _prev=$(env_get MOCK_OIDC_EMAIL "$_envf")
     if [ -n "$_prev" ]; then printf '%s' "$_prev"; return 0; fi
   done
   return 1
@@ -290,7 +314,8 @@ require_admin_email
 # throws at boot if both are set — so this is a choice, never a layer.
 require_auth_mode() {
   [ "$MODE" = "3" ] && return 0
-  if [ -z "${OSHAL_AUTH_MODE:-}" ] && [ -t 0 ] && [ "$ASSUME_YES" -ne 1 ]; then
+  # An explicit --auth-mode/OSHAL_AUTH_MODE is never re-asked; an inserted .env decides its own.
+  if [ "$AUTH_MODE_EXPLICIT" -eq 0 ] && [ -z "$ENV_SOURCE" ] && [ -t 0 ] && [ "$ASSUME_YES" -ne 1 ]; then
     echo "   how should people sign in?"
     echo "     1) basic  — a real login: you choose your password in the browser   [recommended]"
     echo "     2) mock   — NO login page; every caller is treated as the operator (demo only)"
@@ -708,13 +733,16 @@ elif [ -n "$FROM_ARCHIVE" ]; then
     # against a tag the archive may not contain.
     echo "warning: docker load reported no tagged image; continuing with $IMAGE" >&2
   fi
+  check_image_arch "$IMAGE"
   COMPOSE_SRC=""
 else
   say "pulling $IMAGE (first pull is a few GB — one-time)"
   if [ -n "${GHCR_TOKEN:-}" ]; then
     printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USER:-emeraldcoastsystemsgroup}" --password-stdin
   fi
-  docker pull "$IMAGE"
+  docker pull "$IMAGE" || { echo "could not pull $IMAGE for this machine ($(uname -m)). If the image has no" \
+    "build for this CPU, install from source instead: --mode 2" >&2; exit 1; }
+  check_image_arch "$IMAGE"
   check_image_freshness "$IMAGE"
   COMPOSE_SRC=""
 fi
@@ -742,8 +770,12 @@ rand() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 # shared by this .env path and the k8s helm-values path.)
 
 ENV_FILE="$DIR/.env"; [ "$MODE" = "2" ] && ENV_FILE="$DIR/src/.env"
-if [ ! -f "$ENV_FILE" ]; then
+if [ -n "$ENV_SOURCE" ]; then
+  say "inserting $ENV_SOURCE as $ENV_FILE (kept as-is; missing install secrets are added)"
+  install_inserted_env "$ENV_SOURCE" "$ENV_FILE" || exit 1
+elif [ ! -f "$ENV_FILE" ]; then
   say "generating $ENV_FILE (fresh secrets; sign-in stack from --auth-mode, default basic)"
+  ( umask 077; : > "$ENV_FILE" )   # owner-only BEFORE any secret is written into it
   {
     echo "# Generated by oshal-install.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) — operator-local, never commit."
     echo "OSHAL_REGISTRY=$REGISTRY"
@@ -839,6 +871,9 @@ if [ ! -f "$ENV_FILE" ]; then
 else
   note ".env already exists — keeping yours"
 fi
+# Every path: fill missing install secrets (never rotate), the real project root, owner-only perms.
+finalize_install_env "$ENV_FILE" "$COMPOSE_FILE"
+prepare_bind_sources "$(dirname "$COMPOSE_FILE")" "$ENV_FILE"
 
 DC=(docker compose -f "$COMPOSE_FILE" --project-directory "$(dirname "$ENV_FILE")")
 
@@ -894,6 +929,8 @@ done
 # the thing (ADR-148 names this exact failure). Both modes end with a real identity.
 seed_first_admin() {
   [ "$MODE" = "3" ] && return 0
+  # An inserted .env that signs in through its own identity provider has no local account to seed.
+  [ "$AUTH_MODE" = idp ] && return 0
   [ -n "$ADMIN_EMAIL" ] || return 0
   _origin="http://localhost:$COCKPIT_PORT"
   if [ "$AUTH_MODE" = "mock" ]; then
@@ -1034,9 +1071,9 @@ if [ "$AUTH_MODE" = "basic" ]; then
     note "  $SET_PASSWORD_LINK"
   elif [ -n "$SET_PASSWORD_LINK" ]; then
     # Unattended: stdout is being captured by something. That link confers swarm root for an
-    # hour, so it is not printed - the reissue command below is how it is obtained deliberately.
-    note "A one-time set-password link was issued. It is NOT printed on an unattended run;"
-    note "reissue it below when you are at a terminal."
+    # hour, so it is not printed. It goes to an owner-only file (the same protection as .env, which
+    # already holds SESSION_SECRET), so a box installed by automation is never left with no way in.
+    save_first_signin_link "$DIR/FIRST-SIGN-IN.txt" "$SET_PASSWORD_LINK" "$SET_PASSWORD_EXPIRES"
   elif [ "$PASSWORD_SUPPLIED" -eq 1 ]; then
     note "Sign in at http://localhost:$COCKPIT_PORT/login with the password this install was given."
   fi
@@ -1047,6 +1084,8 @@ if [ "$AUTH_MODE" = "basic" ]; then
   note "Real identity provider instead (Google, Microsoft/Entra, any OIDC)? Set LOCAL_AUTH=false and"
   note "MOCK_OIDC=false plus OIDC_ISSUER_URL / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / APP_URL in"
   note "$ENV_FILE, then restart the api. See INSTALL.md and docs/adr/117-local-auth-invited-users.md."
+elif [ "$AUTH_MODE" = "idp" ]; then
+  idp_signin_note "$ENV_FILE" "$COCKPIT_PORT" "$ADMIN_EMAIL"
 else
   note "MOCK auth: there is NO sign-in page. Every request to this api is treated as"
   note "$ADMIN_EMAIL — and the api publishes on 0.0.0.0, so anyone who can reach port"
@@ -1067,5 +1106,5 @@ else
   note "change), and that login is reused as-is (BYOK). NEVER copy a credential file between"
   note "machines — one OAuth grant serves one machine; log in on this box instead (INSTALL.md)."
 fi
-note "Re-check the box any time: bash $DIR/oshal-verify.sh   (or GET /api/readiness)"
+note "Re-check the box any time: bash ${VERIFY:-$DIR/oshal-verify.sh} --env-file $ENV_FILE   (or GET /api/readiness)"
 note "Add more apps any time: cockpit -> Explore Apps, or re-run with --apps name1,name2"
