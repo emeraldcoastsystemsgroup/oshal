@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards from the signed-in route review (2026-10-05): the cockpit's ticket delete, status history and reply, and the explorer's status history, answer only the ticket's owner (or the operator); another user's ticket reads as missing and is left unchanged.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The task explorer no longer registers /tickets/hierarchy, /tickets/:ticketId/activity or /metrics/summary: the cockpit serves them with owner scoping, and the explorer's copies listed every user's tasks. Proven on the fixture's explorer-only mount.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { privateReadsFixture } from '../fixtures/cockpit-private-reads';
@@ -46,5 +47,15 @@ describe('the owner keeps every route', () => {
     expect(interactions()).toHaveBeenCalledWith(expect.objectContaining({ ticketId, text: 'an update' }));
     expect((await send(`/api/v1/tickets/${ticketId}`, 'alice', 'DELETE')).status).toBe(200);
     expect(await f.ctx.ticketService.getTicket(ticketId)).toBeNull();
+  });
+});
+
+describe('the task explorer leaves ticket hierarchy, activity and metrics to the cockpit', () => {
+  it('does not answer those paths on its own', async () => {
+    const { ticketId } = await f.ticket('alice');
+    for (const route of ['/fallback/tickets/hierarchy', `/fallback/tickets/${ticketId}/activity`, '/fallback/metrics/summary']) {
+      expect((await send(route, 'bob')).status, route).toBe(404);
+    }
+    expect((await send('/api/v1/metrics/summary', 'alice')).status).toBe(200);
   });
 });
