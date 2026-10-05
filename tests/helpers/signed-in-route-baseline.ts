@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, tenants: /api/tenants is reviewed (adding a person is portal-admin only). LEGACY_CEILING 92 -> 91.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, RAG: /api/rag is reviewed (ingest grants limited to the caller's own tenants). LEGACY_CEILING 91 -> 90.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, BYO LLM: /api/connect/any-llm is reviewed (stored keys reused only for their own endpoint). LEGACY_CEILING 90 -> 89.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, connector specs: /api/connectors/:provider/:resource (writes on the shared deployment account admin-only) and /_resources (static catalog) are reviewed. LEGACY_CEILING 89 -> 87.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -20,7 +21,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 89;
+export const LEGACY_CEILING = 87;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -58,8 +59,8 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/connect/free-tier', reason: LEGACY },
   { path: '/api/connectors', reason: LEGACY },
   { path: '/api/connectors/:id/actions/:action', reason: LEGACY },
-  { path: '/api/connectors/:provider/:resource', reason: LEGACY },
-  { path: '/api/connectors/:provider/_resources', reason: LEGACY },
+  { path: '/api/connectors/:provider/:resource', reason: 'Off unless CONNECTOR_SPEC_ROUTES=on; calls run on the caller\'s own connection, the deployment account serves reads only as the swarm default, and writes on it need the portal admin; every call is audited (connector-spec-routes.ts, reviewed 2026-10-05)' },
+  { path: '/api/connectors/:provider/_resources', reason: 'Returns only the static resource catalog of a provider the caller is allowed to use; no credential is read and the provider is never called (connector-spec-routes.ts, reviewed 2026-10-05)' },
   { path: '/api/content', reason: LEGACY },
   { path: '/api/dev-console', reason: LEGACY },
   { path: '/api/devops', reason: LEGACY },
