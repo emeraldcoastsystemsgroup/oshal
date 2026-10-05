@@ -33,7 +33,7 @@ async function serve(router: Router) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as Request & { oidc: { user: { sub: string } } }).oidc = { user: { sub: String(req.headers['x-test-sub'] ?? '') } };
+    Object.assign(req, { oidc: { user: { sub: String(req.headers['x-test-sub'] ?? '') } } });
     next();
   });
   app.use(router);
