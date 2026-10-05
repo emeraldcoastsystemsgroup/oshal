@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 swarm root: the bootstrap route now CLAIMS SWARM ROOT for the first account. This is the fix for "default passwords are confusing" — the first account and the operator allowlist were two unconnected systems, so whoever set the very first password got no privilege from it and every operator-gated page 403d at them. Safe here specifically because bootstrapFirstAdmin is race-guarded to an empty user store. Non-fatal: a swarm whose root is already held by a break-glass operator still creates and signs in the account.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Require installer proof and commit first account/root together before creating a session.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Respect established external identities in setup and serialize root status and credential recovery guards with role changes.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | GET /api/local-auth/state reports resetEmail: whether a reset email has a configured rail (SMTP or a connector sender). A fresh install has neither, and the login page's "Email me a reset link" then answered "a reset link is on its way" for a mail that could never be sent; the page now shows the server-side link command instead.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -309,6 +310,18 @@ function inviteSenderSub(): string {
 }
 
 /**
+ * @description Whether a password-reset email has a configured delivery rail: SMTP, or a sender
+ * identity for the Gmail connector rail. A fresh install has neither, so the login page must not
+ * offer a form whose email can never arrive. This is server capability, not account state, so
+ * reporting it leaks nothing about who has an account.
+ *
+ * @returns True when SMTP or a connector sending identity is configured.
+ */
+export function resetEmailConfigured(): boolean {
+  return smtpConfigured() || inviteSenderSub() !== '';
+}
+
+/**
  * @description Sends an invitation through the platform's EXISTING Gmail connector rail — the
  * same path every other outbound mail in the swarm uses. This is why a deployment needs no SMTP
  * password: an operator connects their Google account once (OAuth, gmail.send scope, revocable
@@ -504,6 +517,7 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
       res.json({
         localAuth: true,
         bootstrapRequired,
+        resetEmail: resetEmailConfigured(),
         ...(options.microsoftLogin === true ? { microsoftLogin: true } : {}),
       });
     } catch (err) {
