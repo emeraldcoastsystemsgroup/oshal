@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Adopt the operator node's Antigravity credential into the CLI's headless file store. Windows Credential Manager and Linux file storage contain the same vendor JSON; this service validates that shape, writes it atomically at 0600, and exposes token-free status/removal operations.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | An adopted credential keeps the owner of the directory it lands in when the api runs as root, so the host user's bind-mounted ~/.gemini never gains a root-owned 0600 token their own agy cannot refresh.
  */
 
 import crypto from 'crypto';
@@ -80,6 +81,19 @@ function parseCredential(raw: unknown): Record<string, unknown> {
   return credential;
 }
 
+/**
+ * @description When the api runs as root, hands the adopted file to the owner of the directory it
+ * lands in. The directory is the host user's bind-mounted vendor home (~/.gemini), and a root-owned
+ * 0600 file there could no longer be refreshed or read by that user's own agy (DGX Spark, 2026-10-05).
+ * @param file - The adopted credential file.
+ * @param directory - The directory it was written into.
+ */
+export function keepDirectoryOwner(file: string, directory: string): void {
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return;
+  const owner = fs.statSync(directory);
+  if (owner.uid !== 0) fs.chownSync(file, owner.uid, owner.gid);
+}
+
 function writeAtomically(credentialsPath: string, credential: Record<string, unknown>): void {
   const directory = path.dirname(credentialsPath);
   const temporaryPath = path.join(directory, `.${ANTIGRAVITY_TOKEN_FILENAME}.adopt-${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.tmp`);
@@ -93,6 +107,7 @@ function writeAtomically(credentialsPath: string, credential: Record<string, unk
     descriptor = null;
     fs.renameSync(temporaryPath, credentialsPath);
     fs.chmodSync(credentialsPath, 0o600);
+    keepDirectoryOwner(credentialsPath, directory);
   } finally {
     if (descriptor !== null) { try { fs.closeSync(descriptor); } catch { /* best effort */ } }
     if (fs.existsSync(temporaryPath)) { try { fs.unlinkSync(temporaryPath); } catch { /* best effort */ } }

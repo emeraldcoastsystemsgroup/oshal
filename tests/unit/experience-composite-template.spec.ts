@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Refuse implicit composite mappings, missing required members, unsupported role shapes and ambiguous versions before installation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Permit native application composites while refusing ambiguous owners and unsupported lifecycle floors.
  */
 import { describe, expect, it } from 'vitest';
 import { validateExperienceDeclaration } from '@/shared/experience-contract';
@@ -35,5 +36,38 @@ describe('experience composite role declarations', () => {
     expect(() => validateExperienceDeclaration(input)).toThrow(/repeat/);
     input.experience.roleTemplates[0].members.pop(); input.experience.roleTemplates.push(input.experience.roleTemplates[0]);
     expect(() => validateExperienceDeclaration(input)).toThrow(/unique/);
+  });
+});
+
+describe('native application composite declarations', () => {
+  const native = () => {
+    const experience = manifest();
+    return { name: 'little-monsters', uses: ['application-authorization', 'experience-roles', 'app-dependencies'],
+      dependencies: experience.dependencies, authorization: { version: 1, catalog: 'authorization.yaml', roleTemplates: [{
+        id: 'student', version: 1, label: 'Student', members: [{ app: 'little-monsters', role: 'student' },
+          { app: 'household', role: 'adult' }, { app: 'shopping', role: '@app-admin' }],
+      }] } };
+  };
+  it('accepts a complete native bundle without an experience shell and changes no declaration', () => {
+    const input = native(), before = JSON.stringify(input);
+    expect(() => validateExperienceDeclaration(input)).not.toThrow(); expect(JSON.stringify(input)).toBe(before);
+  });
+  it.each(['experience-roles', 'application-authorization'])('requires the compatibility floor %s', skill => {
+    const input = native(); input.uses = input.uses.filter(value => value !== skill);
+    expect(() => validateExperienceDeclaration(input)).toThrow(/require uses/);
+  });
+  it('refuses two competing native and experience template owners', () => {
+    expect(() => validateExperienceDeclaration({ ...native(), experience: manifest().experience })).toThrow(/one declaration owner/);
+  });
+  it('refuses a native template missing a required component or granting a management role', () => {
+    const input = native(); input.authorization.roleTemplates[0].members = [{ app: input.name, role: 'student' }];
+    expect(() => validateExperienceDeclaration(input)).toThrow(/every required member/);
+    input.authorization.roleTemplates[0].members.push({ app: 'household', role: '@access-admin' });
+    expect(() => validateExperienceDeclaration(input)).toThrow(/exact catalog role/);
+  });
+  it('refuses a group or unsupported catalog declaration instead of ignoring its native templates', () => {
+    expect(() => validateExperienceDeclaration({ ...native(), kind: 'group' })).toThrow(/ordinary application/);
+    const input = native(); input.authorization.version = 2;
+    expect(() => validateExperienceDeclaration(input)).toThrow(/version 1/);
   });
 });

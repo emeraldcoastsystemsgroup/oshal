@@ -273,3 +273,9 @@ committed wiring rather than a CLI flag: `OSHAL_COVERAGE_FLOOR_OVERRIDE` raises 
 and the runner to reach a non-zero exit. One run then proves four things - the figure is produced,
 the scope is printed beside it, a breached threshold exits non-zero, and the floors this repo
 actually commits to are met by that same measurement. Nothing outside the guard sets that variable.
+
+### Seven experience UX
+
+Run `npm run test:experience-ux` for the shared Home, Business and Classroom navigation/draft checks, Studio/Jarvis/Orbit/Commons selected-member context and hosted navigation, and the policy-backed complete composite assignment flow, including native application declarations and refusal of missing transitive component roles. These use isolated loopback fixtures and never grant installed accounts access, send to a live provider, or change member records. Auth-state coverage requires the verified issuer to remain authoritative even when the presentation user omits it. The same cases are registered in the Experience Test Lab scenario.
+
+Source browser proofs are separate from signed-in installed acceptance. Installed checks assign one reviewed application composite role, which includes its required component roles automatically. The seven experience products and native Little Monsters publish complete required bundles; no component checkbox is needed. Existing school/household relationships and independently assigned access remain under their own applications.

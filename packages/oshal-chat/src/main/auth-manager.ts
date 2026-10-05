@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added the Antigravity account row and made the retired Gemini account-login row local-only.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Corrected the Antigravity boundary after inspecting the real vendor credential: Windows Credential Manager contains the same JSON agy's headless file-storage mode consumes. The row is pushable through the existing authenticated rail, reports real credential presence, and launches the absolute vendor install path even though the installer does not add it to PATH.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Import path follows the rename of antigravity-credential.ts to antigravity-login.ts; no behaviour change.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Linux: the login runs the command linux-login.ts chooses (Antigravity with the session bus disabled so agy writes the file the node pushes; Codex by device code when a local swarm holds port 1455), and a terminal that cannot be spawned is logged instead of crashing the main process.
  */
 
 import { spawn } from 'child_process';
@@ -18,6 +19,7 @@ import { homedir, platform } from 'os';
 import { join } from 'path';
 import { isPushableLogin } from './login-push-core';
 import { antigravityCredentialPresent } from './antigravity-login';
+import { linuxLoginCommand, readProcTcpTables } from './linux-login';
 
 /** One local provider the user can sign into on this machine. */
 interface LocalAccount {
@@ -161,8 +163,14 @@ export function launchLogin(id: string): { ok: boolean; command?: string; error?
         stdio: 'ignore',
       }).unref();
     } else {
-      // Best-effort on Linux: try a common terminal, else run headless (CLI prints a URL).
-      spawn('x-terminal-emulator', ['-e', account.loginCmd], { detached: true, stdio: 'ignore' }).unref();
+      // Linux: the distribution's terminal. Some logins need a Linux-specific command line so they
+      // end in a login the node can push (linux-login.ts). A missing terminal is an async spawn
+      // error; without a listener it would crash the main process instead of failing this login.
+      const command = linuxLoginCommand(account.id, readProcTcpTables()) ?? account.loginCmd;
+      const child = spawn('x-terminal-emulator', ['-e', command], { detached: true, stdio: 'ignore' });
+      child.on('error', (error) => console.error(`[oshal-chat] could not open a terminal for ${account.id} login:`, error.message));
+      child.unref();
+      return { ok: true, command };
     }
     return { ok: true, command: account.loginCmd };
   } catch (err) {

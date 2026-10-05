@@ -17,6 +17,8 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Adapters for the full-swarm build over existing routes: one ticket's workflow read model (GET /api/v1/tickets/:id/workflow) and its owner-checked cancel, the caller's schedules with pause/resume (GET /api/v1/agent/schedules, POST /:id/pause|resume), Workflow Studio definitions, household/team membership (GET /api/tenants, /:id/members) and the caller's own location overview (GET /api/location/state). The catalog keeps the listing's package status for the package-facts panel.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Keep readable personal overview fields when the global roster is intentionally omitted; qualify calendar readiness separately without inventing assistant totals.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Retain the verified issuer in display identity so saved experience context is keyed by the exact signed-in principal.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com | Forward advisory selected-app context to the existing Jarvis ask contract and honor the authoritative principal issuer field.
  */
 (function attach(root, factory) {
   'use strict';
@@ -82,12 +84,13 @@
   function deriveIdentity(payload) {
     var user = payload && payload.user ? payload.user : null;
     if (!payload || !payload.authenticated || !user) {
-      return { authenticated: false, name: 'Guest', initials: '?', sub: '', email: '', mode: payload && payload.mode ? String(payload.mode) : '', guest: Boolean(payload && payload.guestMode) };
+      return { authenticated: false, name: 'Guest', initials: '?', sub: '', issuer: '', email: '', mode: payload && payload.mode ? String(payload.mode) : '', guest: Boolean(payload && payload.guestMode) };
     }
     var email = String(user.email || '');
     var handle = function (v) { v = String(v || '').trim(); return v.indexOf('@') > 0 ? v.split('@')[0] : v; };
     var name = String(user.name || user.given_name || handle(user.preferred_username) || user.nickname || handle(email) || 'You').trim();
-    return { authenticated: true, name: name, initials: initials(name), sub: String(user.sub || ''), email: email, mode: String(payload.mode || ''), guest: Boolean(payload.guestMode), picture: user.picture || null };
+    var issuer = Object.prototype.hasOwnProperty.call(payload, 'principalIssuer') ? String(payload.principalIssuer || '') : String(user.iss || user.issuer || '');
+    return { authenticated: true, name: name, initials: initials(name), sub: String(user.sub || ''), issuer: issuer, email: email, mode: String(payload.mode || ''), guest: Boolean(payload.guestMode), picture: user.picture || null };
   }
 
   /**
@@ -606,6 +609,7 @@
       var session = c.sessionId || sessionId();
       onPhase({ phase: 'sending', sessionId: session });
       var payload = { message: text, sessionId: session };
+      if (c.context) payload.context = c.context;
       var r = await sendJson('/api/jarvis/ask', 'POST', payload, { signal: signal });
       if (r.status === 404 && r.body && r.body.error === 'session_not_found' && !c.sessionId && !(signal && signal.aborted)) {
         session = rollSession(); payload.sessionId = session; onPhase({ phase: 'rolled', sessionId: session });

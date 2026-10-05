@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Record the approval reference a verified apply named: on the audit event of an access change that required approval, and on a catalog-migration approval (which the activation audit event then carries). Before this no approval could be verified at all, so there was nothing to record.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Read effective policy after the asynchronous tier resolver so revocation during that await cannot return stale grants and revision.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com | Require complete installed dependency coverage for native and experience composites while retaining exact catalog role mappings.
  */
 /** ADR-149 authoritative management and execution service. No swarm-admin business bypass. */
 import { randomUUID } from 'node:crypto';
@@ -64,7 +65,7 @@ export interface ApplicationAuthorizationServiceOptions {
   /** Provider must scope directory inventory to actor.managementScopes; this is not a business-data read. */
   inventory?: (actor: AuthorizationActor) => Promise<AuthorizationInventory>;
   /** The installed package's declared dependency tiers, or null when nothing is installed under
-   *  that name. Read for the package grant plan only; a declaration never grants anything. */
+   *  that name. Read for package and composite planning; a declaration never grants anything. */
   resolvePackage?: (app: string) => Promise<PackageDependencyFacts | null>;
 }
 export class ApplicationAuthorizationService implements ApplicationAuthorizationManagementService {
@@ -78,10 +79,19 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     return new CompositeRoleEngine({ store: this.store, now: this.now,
       current: actor => this.currentActor(actor), withState: (actor, state) => this.managementActor(actor, state),
       names: () => [...this.apps.keys()], app: name => this.apps.get(name) ?? null,
+      package: name => this.compositePackage(name),
       subject: (actor, target) => this.targetActor(actor, target), effective: (actor, target) => this.effective(actor, target),
       preview: (actor, change, context) => this.previewConstituent(actor, change, context),
       prepare: (actor, input, id) => this.prepareApply(actor, input, id),
       apply: (actor, input, transaction, context) => this.applyPrepared(actor, input, transaction, context) });
+  }
+  /** Current installed declarations, with registered facts for trusted non-package composition. */
+  private async compositePackage(name: string): Promise<PackageDependencyFacts | null> {
+    const installed = await this.options.resolvePackage?.(name);
+    if (installed) return installed;
+    const app = this.apps.get(name);
+    return app ? { required: { apps: app.requiredApps ?? app.compositeRoles?.requiredApps ?? [], tools: [], connectors: [] },
+      optional: { apps: app.compositeRoles?.optionalApps ?? [] } } : null;
   }
   /** @description List current readable experience role metadata through this authority.
    * @param actor Verified caller. @param input App and tenant filters. @returns Redacted catalog and assignment views. */
@@ -146,6 +156,9 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
     if (input.app === EXTERNAL_TENANT_MEMBERSHIP_AUDIT_APP) throw new ApplicationAuthorizationError(400, 'authorization_app_name_reserved');
     if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(input.app) || !input.source || !input.version || !['legacy','enforce'].includes(input.mode)) throw new ApplicationAuthorizationError(400, 'invalid_authorization_registration');
     const catalog = input.catalog === null ? null : validateAuthorizationCatalog(input.catalog);
+    if (input.requiredApps !== undefined && (!Array.isArray(input.requiredApps) || input.requiredApps.length > 128
+      || input.requiredApps.some(name => !/^[a-z0-9][a-z0-9-]{1,63}$/.test(name))
+      || new Set(input.requiredApps).size !== input.requiredApps.length)) throw new ApplicationAuthorizationError(400, 'invalid_authorization_registration');
     if (input.compositeRoles) {
       const { templates, requiredApps, optionalApps } = input.compositeRoles;
       if (![requiredApps, optionalApps].every(rows => Array.isArray(rows) && rows.length <= 128 && rows.every(name => /^[a-z0-9][a-z0-9-]{1,63}$/.test(name)))
@@ -154,6 +167,7 @@ export class ApplicationAuthorizationService implements ApplicationAuthorization
       catch { throw new ApplicationAuthorizationError(400, 'invalid_composite_registration'); }
     }
     return { ...input, access: input.access ? structuredClone(input.access) : undefined,
+      requiredApps: input.requiredApps ? [...input.requiredApps] : undefined,
       compositeRoles: input.compositeRoles ? structuredClone(input.compositeRoles) : undefined,
       mountPaths: [...(input.mountPaths ?? [])], adapters: { ...input.adapters }, catalog,
       mode: catalog ? 'enforce' : input.mode, catalogRevision: catalogRevision({ ...input, catalog }) };

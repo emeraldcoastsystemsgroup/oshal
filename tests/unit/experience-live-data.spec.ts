@@ -10,6 +10,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Fix round 1: dot-segment links that normalise to a '//' pathname ('/..//outside.example/x', '/.//…', '/%2e%2e//…', '/api/..//…') are refused, a same-origin dot segment is kept normalised and every kept path re-resolves to the page origin; an admitted workspace href that would leave the origin (dot-segment, absolute, non-string) falls back to the cockpit link.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove malformed successful overview cannot supply derived facts and its unavailable provenance agrees with visible source refusal.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prove admitted personal overview fields survive intentional roster omission while malformed and failed reads retain unknown readiness and valid companion work.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve the auth-state issuer independently of display claims, including explicit unknown provenance and guest namespaces.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -48,6 +49,30 @@ describe('experience adapter: pure joins', () => {
     expect(LIVE.deriveIdentity({ authenticated: true, user: { sub: 's', name: 'Pat Lee', email: 'x@y.z' } }).name).toBe('Pat Lee');
     expect(LIVE.deriveIdentity({ authenticated: false, mode: 'oidc', user: null })).toMatchObject({ authenticated: false, name: 'Guest' });
     expect(LIVE.deriveIdentity(null).authenticated).toBe(false);
+  });
+
+  it('uses the authoritative auth-state issuer before conflicting display claims and keeps issuer twins distinct', () => {
+    const payload = { authenticated: true, mode: 'oidc', user: { sub: 'same-subject', name: 'Fixture display', iss: 'https://display.fixture.test', issuer: 'https://alternate.fixture.test' } };
+    const first = LIVE.deriveIdentity({ ...payload, principalIssuer: 'https://first.fixture.test' });
+    const second = LIVE.deriveIdentity({ ...payload, principalIssuer: 'https://second.fixture.test' });
+    expect(first).toMatchObject({ authenticated: true, sub: 'same-subject', name: 'Fixture display', issuer: 'https://first.fixture.test' });
+    expect(second).toMatchObject({ authenticated: true, sub: 'same-subject', issuer: 'https://second.fixture.test' });
+    expect(first.issuer).not.toBe(second.issuer);
+    expect(LIVE.deriveIdentity({ authenticated: true, principalIssuer: 'https://first.fixture.test', user: { sub: 'same-subject' } }).issuer).toBe('https://first.fixture.test');
+  });
+
+  it('keeps an explicitly unknown server issuer empty while retaining older responses without that field', () => {
+    const payload = { authenticated: true, user: { sub: 'same-subject', iss: 'https://display.fixture.test' } };
+    expect(LIVE.deriveIdentity({ ...payload, principalIssuer: null }).issuer).toBe('');
+    expect(LIVE.deriveIdentity({ ...payload, principalIssuer: '' }).issuer).toBe('');
+    expect(LIVE.deriveIdentity(payload).issuer).toBe('https://display.fixture.test');
+    expect(LIVE.deriveIdentity({ authenticated: true, user: { sub: 'same-subject', issuer: 'https://older.fixture.test' } }).issuer).toBe('https://older.fixture.test');
+  });
+
+  it('retains the exact guest namespace and does not derive an identity from an unauthenticated guest receipt', () => {
+    const guest = { authenticated: true, mode: 'guest', guestMode: true, principalIssuer: 'urn:oshal:guest', user: { sub: 'guest:fixture-one', name: 'Guest' } };
+    expect(LIVE.deriveIdentity(guest)).toMatchObject({ authenticated: true, sub: 'guest:fixture-one', issuer: 'urn:oshal:guest', guest: true });
+    expect(LIVE.deriveIdentity({ ...guest, authenticated: false })).toMatchObject({ authenticated: false, sub: '', issuer: '', guest: true });
   });
 
   it('lets the authorized plan lead the catalog, keeps unadmitted apps visible as unavailable, and derives relationships', () => {

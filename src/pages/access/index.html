@@ -124,10 +124,10 @@ SEQ | AUTHOR | DESCRIPTION
       <div><label for="application">Application for advanced details</label><select id="application"></select></div>
     </section>
     <section class="panel" id="experience-access" aria-labelledby="experience-access-title">
-      <h2 id="experience-access-title">Experience roles</h2>
-      <p class="hint">Choose a named role for the selected identity. Required member roles are reviewed together; optional members are selected explicitly. Installing an experience creates no access.</p>
+      <h2 id="experience-access-title">Application composite roles</h2>
+      <p class="hint">Assign one composite role to give the selected user access to the application and its included components. Review and save the whole bundle together.</p>
       <div id="experience-role-controls"></div>
-      <p id="experience-role-status" role="status" aria-live="polite">Loading installed experience roles…</p>
+      <p id="experience-role-status" role="status" aria-live="polite">Loading installed application roles…</p>
       <div id="experience-role-assignments"></div>
     </section>
     <section class="panel" id="applications-panel" aria-labelledby="user-applications-title">
@@ -457,7 +457,7 @@ function rowSummary(row) {
 function rowEditorMarkup(index) {
   return `<form data-role-editor class="role-editor" aria-label="Application role editor">
     <fieldset><legend data-role-heading></legend><p class="details" data-role-identity></p>
-    <p class="hint">Add or remove one direct assignment. Experience roles are managed in the Experience roles section; their grants remain until that experience assignment is revoked.</p>
+    <p class="hint">Add or remove one direct assignment. Composite roles are managed in the Application composite roles section; their grants remain until that composite assignment is revoked.</p>
     <div class="selectors">
       <div><label for="row-${index}-tenant">Business tenant (optional)</label><input id="row-${index}-tenant" name="tenant" maxlength="512" autocomplete="off" /></div>
       <div><label for="row-${index}-action">Change</label><select id="row-${index}-action" name="action"><option value="grant">Add role</option><option value="revoke">Remove direct role</option></select></div>
@@ -1276,7 +1276,7 @@ async function runRoleBatch(batch, request, isCurrent, onProgress) {
 <script>
 window.oshalCompositeAccess = window.installOshalCompositeAccess({ request,
   snapshot: () => !target() || !state.catalog || state.busy ? null : ({ identity: targetInput(), label: targetLabel(target()), selection: state.selection, tenantId: $('tenant').value.trim() }),
-  refresh: () => loadCatalog('Experience role change applied. Current access reloaded.'),
+  refresh: () => loadCatalog('Application role change applied. Current access reloaded.'),
 });
 </script>
 </body>

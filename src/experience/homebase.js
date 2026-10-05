@@ -23,6 +23,8 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Finish contextual sidebar and access explanation wording.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Restore freshly admitted member views and their same-surface resource across reload and return; scope temporary navigation and unsent questions to the principal and package, retaining caret and focus on repaint.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Extract shared member hosting into the existing Homebase module to keep the renderer within its size budget.
  */
 (() => {
   'use strict';
@@ -46,8 +48,8 @@
   const money = n => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
   const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  let snapshot, shell, data = {}, thread, dialogKind = null, dialogId = null, opener = null, timer, config, M, locationAsked = false;
-  const state = { page: 'home', tool: null, search: null };
+  let snapshot, shell, data = {}, thread, dialogKind = null, dialogId = null, opener = null, timer, config, M, H, navigation, locationAsked = false;
+  const state = { page: 'home', tool: null, resource: null, search: null };
   const defaultConfig = () => ({ density: 'comfortable', updates: true, week: true, lead: 'room', hide: [], bot: 'suggest', revision: 1, previous: null });
   const me = () => snapshot.me;
   const app = id => shell.byId(id);
@@ -79,6 +81,8 @@
     shell = S.createShell({ snapshot, layoutId: key, hooks: { onWorkChanged: repaint } });
     config = { ...defaultConfig(), ...(LIVE.prefs.get(`homebase:${key}`, {}) || {}) };
     thread = shell.createThread(LIVE.sessionId(), preset.assistantLabel);
+    navigation = window.HOMEBASE_MODULES.createNavigation({ identity: me(), packageName: document.body.dataset.experienceApp || key, preset: key, root, state });
+    H = window.HOMEBASE_MODULES.createHosting({ LIVE, preset, key, data, state, root, app, has, educationGate, loadEducation, esc, btn, link, render, notice, goPage, runSearch, navigation: () => navigation });
     M = window.HOMEBASE_MODULES.create(moduleContext());
     bind();
     render();
@@ -86,7 +90,7 @@
     LIVE.ready.then(repaint).catch(() => { /* a home paints without work */ });
     thread.load().then(repaint).catch(() => { /* the bubble waits for a reply in this page */ });
     await Promise.all([loadEducation().then(loadLearner), loadTools(), loadShopping(), loadFinance(), loadHome(), loadDirectory().then(loadGroup), loadLocation(), loadUpdates(), loadCards()]);
-    repaint();
+    restoreNavigation(navigation.initial());
   }
   /** Repaint unless a hosted tool is open: a repaint would reload its frame. */
   function repaint() { if (state.page !== 'tool') render(); }
@@ -98,7 +102,7 @@
   function moduleContext() {
     return {
       esc, btn, link, pill, head, avatar, LIVE, S, data, state, preset, key, dueOn,
-      config: () => config, me, displayName, snapshot: () => snapshot, isTeacher, isLearner, toolById, app, canConfigure,
+      config: () => config, me, displayName, snapshot: () => snapshot, isTeacher, isLearner, toolById, app, canConfigure, draft: id => navigation.value(id),
       thread: () => thread, shell: () => shell, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
       bubbleSeen: () => LIVE.prefs.get(`homebase:${key}:bubble`, '')
     };
@@ -231,78 +235,10 @@
     return lead.concat(fill);
   }
 
-  /** @description The hosted applications' admitted surfaces for this caller: one ribbon profile per host (the contract the cockpit renders, already filtered per caller), each tool tagged with its host and curated by the preset's hidden prefixes. */
-  async function loadTools() {
-    const hosts = (preset.hosts || []).filter(h => has(h.app));
-    if (!hosts.length) { data.tools = null; return; }
-    const results = await Promise.all(hosts.map(async h => ({ host: h, r: await hostProfile(h) })));
-    const seen = new Set(), items = [];
-    for (const { host, r } of results) {
-      const list = r.ok && r.body && r.body.profile && r.body.profile.ribbon && Array.isArray(r.body.profile.ribbon.items) ? r.body.profile.ribbon.items : [];
-      for (const i of list) {
-        if (!(i && i.id && i.toolUi && typeof i.toolUi.iframeUrl === 'string' && i.toolUi.iframeUrl.startsWith('/'))) continue;
-        if (Array.isArray(host.surfaces) && !window.OSHAL_EXPERIENCE_HOSTS?.admits(host, i)) continue;
-        const id = String(i.id); if (seen.has(id)) continue; seen.add(id);
-        items.push({ id, host: host.app, kicker: host.kicker || app(host.app).name.toUpperCase(), hidden: (host.hiddenTools || []).some(p => id.startsWith(p)), label: String(i.label || id), href: i.toolUi.iframeUrl, section: String(i.section || 'top') });
-      }
-    }
-    data.tools = { items, hosts: hosts.map(h => h.app), statuses: results.map(x => x.r.status) };
-  }
-  /**
-   * @description One host's ribbon profile. Outside the classroom, Little Monsters' profile is read only after the same
-   * probe gate as its education routes: the profile asks the package's visibility route, which can create a learner row
-   * for a caller with no school profile. A gated host lists no tools (status 0, nothing asked).
-   * @param {{app: string}} h The preset's host entry.
-   * @returns {Promise<{ok: boolean, status: number, body: object|null}>} The profile answer, or an empty one when gated.
-   */
-  async function hostProfile(h) {
-    if (h.app === 'little-monsters' && key !== 'classroom' && await educationGate(app(h.app))) return { ok: false, status: 0, body: null };
-    return LIVE.packages.profile(h.app);
-  }
-  const admittedTools = () => data.tools ? data.tools.items : [];
-  /** Tools offered in the rails: the preset's hidden prefixes stay out (per-class tools and off-audience tiles have their own place). */
-  const navTools = () => admittedTools().filter(t => !t.hidden);
-  const toolById = id => admittedTools().find(t => t.id === id) || null;
-  /** The offered tools grouped by host, in host order. */
-  const hostGroups = () => { const groups = []; navTools().forEach(t => { let g = groups.find(x => x.host === t.host); if (!g) { g = { host: t.host, kicker: t.kicker, tools: [] }; groups.push(g); } g.tools.push(t); }); return groups; };
-  /** The URL a hosted tool opens with: its own surface plus this preset's audience view, as a request (a view id is never authority). */
-  const hostedUrl = t => { const u = new URL(t.href, location.origin); if (preset.audience && !u.searchParams.has('audience')) u.searchParams.set('audience', preset.audience); return u.pathname + u.search + u.hash; };
-  /** Whether the reader asked for reduced motion: a hosted tool then jumps into place instead of gliding there. */
-  const reducedMotion = () => Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  /**
-   * @description Open an admitted tool in place. The page scrolls so the tool shell starts at the top of the viewport
-   * before the frame takes focus: opening a tool from low in a long sidebar kept the old scroll offset, which left the
-   * frame above the viewport, and focusing a frame does not reliably bring it into view. Anything not admitted for this
-   * caller is refused with a notice, never fetched.
-   * @param {string} id The admitted tool's id.
-   * @returns {void}
-   */
-  function openTool(id) {
-    const t = toolById(id);
-    if (!t) { notice('That view is not available to you here.'); return; }
-    state.page = 'tool'; state.tool = t.id; render();
-    const toolShell = root.querySelector('.tool-shell');
-    if (toolShell) toolShell.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
-    const frame = document.getElementById('tool-frame'); if (frame) frame.focus({ preventScroll: true });
-  }
-  /** @description Navigation requests from the hosted tool, in the shapes the cockpit ribbon honours. Only the frame this home opened is heard, same origin only, and only admitted tools open. */
-  function onSurfaceMessage(e) {
-    const frame = document.getElementById('tool-frame');
-    if (!frame || e.source !== frame.contentWindow || e.origin !== location.origin) return;
-    const d = e.data;
-    if (d === 'lm-classes-changed' || (d && typeof d === 'object' && d.type === 'app-tools-changed')) { Promise.all([loadEducation(), loadTools()]).then(() => { if (state.page !== 'tool') render(); }); return; }
-    if (!d || typeof d !== 'object') return;
-    let id = null;
-    if (d.type === 'app-navigate' && d.tool) id = 'tool-' + String(d.tool);
-    else if (d.type === 'lm-navigate' && d.view) { const view = String(d.view); id = view.startsWith('class-') ? 'tool-lm-class-' + view.slice('class-'.length, 'class-'.length + 8) : 'tool-lm-' + view; }
-    else if (d.type === 'lm-open-class' && d.classId) id = 'tool-lm-class-' + String(d.classId).slice(0, 8);
-    if (id) openTool(id);
-  }
-  function toolPanel() {
-    const t = toolById(state.tool), host = t ? app(t.host) : null;
-    if (!t) return `<section class="panel" data-module="tool"><h2>That tool is not available to you here.</h2>${btn('Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</section>`;
-    return `<section class="tool-shell" data-module="tool"><div class="tool-head"><div><div class="panel-kicker">${esc((host ? host.name : preset.name).toUpperCase())} / ${esc(t.label.toUpperCase())}</div><h2>${esc(t.label)}</h2></div><div class="tool-actions">${host && host.navigable ? link('Open in the cockpit ↗', host.href, 'text-button', 'target="_blank" rel="noopener"') : ''}${btn('← Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</div></div><iframe class="tool-frame" id="tool-frame" src="${esc(hostedUrl(t))}" title="${esc(t.label)}" allow="microphone; camera; fullscreen"></iframe></section>`;
-  }
+  // Hosting keeps fresh admission, member resources and frame-message checks together.
+  const loadTools = () => H.loadTools(), navTools = () => H.navTools(), toolById = id => H.toolById(id), hostGroups = () => H.hostGroups();
+  const openTool = (...args) => H.openTool(...args), toolPanel = () => H.toolPanel(), onSurfaceMessage = event => H.onSurfaceMessage(event);
+  const restoreNavigation = saved => H.restoreNavigation(saved), restoreHistory = () => H.restoreHistory(), rememberResource = () => H.rememberResource();
 
   /* ── modules ─────────────────────────────────────────────────── */
   function weekStrip() {
@@ -561,12 +497,14 @@
   /** The top bar's search box: it searches what this home read and the caller's own swarm data. */
   const searchBox = () => `<form id="home-search" class="home-search" role="search"><label class="screenreader" for="home-search-input">Search in this ${space}</label><input id="home-search-input" type="search" maxlength="100" placeholder="Search in this ${space}…" value="${esc(state.search ? state.search.query : '')}"><button class="text-button" type="submit" aria-label="Search">⌕</button></form>`;
   function render() {
+    const focus = navigation.capture();
     // A notice shown just before a repaint (an add, then the list re-read) stays: the new toast element takes its text.
     const shown = document.getElementById('toast') ? document.getElementById('toast').textContent : '';
     root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn(`Configure ${space}`, 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${state.page === 'tool' ? '' : shell.workNotice()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
     if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'); const def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
     if (shown) document.getElementById('toast').textContent = shown;
     if (dialogKind) openDialog(dialogKind, dialogId);
+    navigation.restore(focus);
   }
 
   /* ── dialogs ─────────────────────────────────────────────────── */
@@ -620,6 +558,7 @@
     dialogKind = kind; dialogId = id === undefined ? null : id;
     document.getElementById('dialog-host').innerHTML = `<dialog id="homebase-dialog" class="config-dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2>${btn('×', 'close', 'close', 'aria-label="Close panel"')}</div><div class="dialog-body">${body}</div></dialog>`;
     const d = document.getElementById('homebase-dialog'); d.showModal(); d.addEventListener('cancel', e => { e.preventDefault(); close(); }); d.addEventListener('click', e => { if (e.target === d) close(); });
+    navigation.restore();
     if (kind === 'app' && app(id)) shell.summaryFor(app(id)).then(sm => { shell.state.summaries.set(id, sm); const slot = document.getElementById('app-summary-slot'); if (slot) slot.innerHTML = shell.summaryMarkup(app(id), sm); });
     if (kind === 'project' && document.getElementById('ticket-slot')) fillTicketSlot(snapshot.work.find(x => x.id === id));
     if (kind === 'drafts') fillDrafts();
@@ -719,11 +658,15 @@
   function saveConfig(next) { config = { ...next, revision: config.revision + 1, previous: { ...config, previous: null } }; LIVE.prefs.set(`homebase:${key}`, config); }
   function bind() {
     window.addEventListener('message', onSurfaceMessage);
+    window.addEventListener('popstate', restoreHistory);
+    window.addEventListener('pagehide', () => { rememberResource(); navigation.capture(); navigation.save('replace'); });
     // Turning a check-in on happens in Settings, Location (another tab); coming back re-reads it.
     window.addEventListener('focus', () => { if (locationAsked) { locationAsked = false; loadLocation().then(repaint); } });
     root.addEventListener('click', onClick);
     root.addEventListener('change', onChange);
     root.addEventListener('submit', onSubmit);
+    root.addEventListener('input', e => navigation.remember(e.target));
+    root.addEventListener('load', e => { if (e.target.id === 'tool-frame') rememberResource(); }, true);
   }
   /** Click actions that act on a record through its own route. */
   const ACTIONS = { 'device-stop': b => stopDevice(b), 'schedule-toggle': b => toggleSchedule(b), 'notice-read': b => markNotice(b), 'bubble-dismiss': b => { LIVE.prefs.set(`homebase:${key}:bubble`, b.dataset.seen || ''); repaint(); } };
@@ -742,9 +685,10 @@
     open(a, b.dataset.app);
   }
   /** @description Show a page; Routines reads its sources the first time it opens and Files reads the caller's drafts. */
-  function goPage(page) {
+  function goPage(page, historyMode = 'push') {
+    rememberResource(); H.touch();
     if (dialogKind) close();
-    state.page = page; state.tool = null; render();
+    state.page = page; state.tool = null; state.resource = null; render(); navigation.save(historyMode);
     if (page === 'routines' && !data.routines) loadRoutines().then(repaint);
     if (page === 'files') fillDrafts();
   }
@@ -821,16 +765,17 @@
     };
   }
   /** @description Search this home's own reads at once, then the caller-scoped swarm search; a late answer for an older query is dropped. */
-  async function runSearch(q) {
+  async function runSearch(q, historyMode = 'push') {
+    rememberResource(); H.touch();
     if (dialogKind) close();
-    state.search = { query: q, local: window.HOMEBASE_DATA.localMatches(q, searchPools()), global: null }; state.page = 'search'; state.tool = null; render();
+    state.search = { query: q, local: window.HOMEBASE_DATA.localMatches(q, searchPools()), global: null }; state.page = 'search'; state.tool = null; state.resource = null; render(); navigation.save(historyMode);
     const global = await HD.search(q);
     if (state.search && state.search.query === q) { state.search.global = global; repaint(); }
   }
   /** @description Ask Jarvis for a routine in words; its answer lands in the home's thread and the schedules are re-read. */
   async function askRoutine(form) {
     const input = form.querySelector('#routine-input'), q = input.value.trim(), feedback = document.getElementById('routine-feedback'); if (!q || thread.busy) return;
-    input.value = ''; if (feedback) feedback.textContent = 'Asking Jarvis…';
+    input.value = ''; navigation.remember(input); if (feedback) feedback.textContent = 'Asking Jarvis…';
     const result = await thread.send(q, () => {});
     await loadRoutines(); repaint();
     notice(result && result.status === 'done' ? 'Jarvis answered; your schedules were read again.' : `Jarvis could not do that${result && result.error ? `: ${result.error}` : ''}.`);
@@ -846,7 +791,7 @@
   /** Submit handlers of the homebase's own forms. */
   const FORMS = { 'routine-form': f => askRoutine(f), 'household-form': f => createHousehold(f),
     'home-search': f => { const q = f.querySelector('#home-search-input').value.trim(); if (q) runSearch(q); },
-    'composer-form': f => { const input = f.querySelector('#composer-input'), q = input.value.trim(); if (!q || thread.busy) return; input.value = ''; thread.send(q, repaint); } };
+    'composer-form': f => { const input = f.querySelector('#composer-input'), q = input.value.trim(); if (!q || thread.busy) return; input.value = ''; navigation.remember(input); thread.send(q, repaint); } };
   async function onSubmit(e) {
     e.preventDefault();
     if (FORMS[e.target.id]) { await FORMS[e.target.id](e.target); return; }
@@ -870,7 +815,7 @@
     }
     if (e.target.id === 'ask-form') {
       const input = document.getElementById('ask-input'), q = input.value.trim(); if (!q) return;
-      input.value = '';
+      input.value = ''; navigation.remember(input);
       thread.send(q, () => { const host = document.getElementById('ask-answer'); if (host) host.innerHTML = thread.turns.slice(-4).map(t => t.role === 'user' ? `<p><strong>${esc(t.text)}</strong></p>` : t.pending ? `<p class="subtle">${esc(t.text)}</p>` : t.error ? `<p class="subtle">${esc(t.text)}</p>` : S.answerHtml(t.text)).join(''); });
     }
   }

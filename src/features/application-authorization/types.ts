@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Keep the approval reference a verified apply named: on the stored catalog-migration approval and on the audit event, so a self-approved change stays distinguishable from one an independent approver signed.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Document installed bindings, reserved reviews and independently revocable assignment provenance.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Retain reviewed dependency declarations so changed required components invalidate a composite before grants are applied.
  */
 import type { AuthorizationActor, AuthorizationCatalog, AuthorizationCatalogChange, AuthorizationChange, AuthorizationPreview, AuthorizationReceipt } from '@/shared/application-authorization';
 import type { CompositeRoleInput, CompositeRolePreview, CompositeRoleReceipt } from '@/shared/application-authorization';
@@ -46,6 +47,7 @@ export interface StoredCompositeRolePreview {
   assignmentId: string;
   bindings: CompositeRoleBinding[];
   childPreviewIds: string[];
+  dependencyDigest?: string;
   receipt?: CompositeRoleReceipt;
   idempotencyKey?: string;
 }

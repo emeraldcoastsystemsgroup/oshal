@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Refuse signed callback dispatch when awaited resource authorization outlives its owner or policy grants.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Use key-order-agnostic sameAnonymousPackageRoutes equality to admit anonymous package reads across YAML parsed declarations.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Register native application composites and bind every package's required dependency snapshot for reviewed complete provisioning.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -82,8 +83,10 @@ export class ApplicationAuthorizationRuntime implements ManifestAuthorizationReg
     const catalog = loadApplicationAuthorization(path.dirname(path.resolve(manifestPath)), manifest);
     const isPackage = path.basename(manifestPath) === 'oshal-app.yaml';
     const dependencies = readAppDependencies(manifest);
+    const templates = manifest.authorization?.roleTemplates ?? manifest.experience?.roleTemplates;
     return { app: manifest.name, source: installationSource(manifestPath), version: manifest.version ?? '0.0.0', catalog,
-      ...(manifest.experience?.roleTemplates ? { compositeRoles: { templates: structuredClone(manifest.experience.roleTemplates),
+      requiredApps: dependencies.required.apps,
+      ...(templates ? { compositeRoles: { templates: structuredClone(templates),
         requiredApps: dependencies.required.apps, optionalApps: dependencies.optional.apps } } : {}),
       agentIds: (manifest.bots ?? []).flatMap(bot => bot.agentId ? [bot.agentId] : []),
       toolNames: (manifest.tools ?? []).map(tool => tool.name),

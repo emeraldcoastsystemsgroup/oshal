@@ -22,11 +22,13 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Keep explicit synthetic legacy document routes for renderer regression fixtures after production entries move to installed packages; production aliases have separate acceptance.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Type the existing purchasing price as nullable and bound the synthetic document route parameter before sanitizing.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Give the synthetic authenticated principal an explicit mock issuer so positive reload proofs exercise a known identity; null-issuer isolation remains separately covered.
  */
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { registerCockpitStaticRoutes } from '@/app/routes/cockpit-static-routes';
+import { MOCK_OIDC_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 
 const ROOT = process.cwd();
 const HOUR = 3600_000;
@@ -58,7 +60,7 @@ export function experienceState() {
     syntheticApp('unadmitted', 'ai-knowledge', { inPlan: false, navigable: false }),
   ];
   return {
-    apps, authenticated: true, user: { sub: 'synthetic-user', email: 'synthetic@fixture.test', preferred_username: 'synthetic@fixture.test' },
+    apps, authenticated: true, user: { sub: 'synthetic-user', iss: MOCK_OIDC_PRINCIPAL_ISSUER, email: 'synthetic@fixture.test', preferred_username: 'synthetic@fixture.test' },
     experiences: ['studio', 'jarvis', 'orbit', 'commons', 'family', 'classroom', 'company'].map(skin => ({ app: `${skin}-experience`, skin, label: `Synthetic ${skin}`, entry: `/fixture/experience/${skin}.html`, shell: 'page' })),
     status: {} as Record<string, number>, calls: [] as string[], asks: [] as Array<{ message: string; sessionId: string }>,
     tickets: [

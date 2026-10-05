@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | Qualify the Jarvis agenda from its own overview calendar field while global assistant status remains private or unknown.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Send selected admitted member context, scope saved drafts/tool references by principal, recheck reopened tools, and preserve foreground frames and backward draft selection during asynchronous updates.
  */
 (() => {
   'use strict';
@@ -37,9 +38,9 @@
   root.innerHTML = '<div class="app-shell"><section class="loading-shell"><div class="eyebrow mono muted">Connecting to your swarm</div><h1>Reading your applications, work and assistants…</h1></section></div>';
 
   let shell, snapshot, state, thread, roomThreads = new Map(), dirty = false, agendaClass = null;
-  const storageKey = `oshal-live-${layout}`;
-  const defaults = () => ({ selected: '', orbitSuite: '', room: '', roomTab: 'conversation', navOpen: false, drafts: {}, askDraft: '', embed: false });
-  const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch (_) { /* session storage unavailable */ } };
+  let storageKey;
+  const defaults = () => ({ selected: '', orbitSuite: '', room: '', roomTab: 'conversation', navOpen: false, drafts: {}, askDrafts: {}, memberTools: {}, embed: false });
+  const save = () => { if (!storageKey) return; try { sessionStorage.setItem(storageKey, JSON.stringify(state)); } catch (_) { /* session storage unavailable */ } };
   const me = () => snapshot.me;
   const selected = () => shell.byId(state.selected);
   const gameApps = () => shell.gameApps();
@@ -47,7 +48,8 @@
   const roomName = () => state.room === 'games' ? 'Game room' : `${shell.suiteOf(state.room).name} room`;
   const roomApps = () => state.room === 'games' ? gameApps() : shell.suiteOf(state.room).apps;
   const roomWork = () => snapshot.work.filter(w => roomApps().some(a => a.id === w.app));
-  const contextKey = () => layout === 'commons' ? `room:${state.room}` : state.selected;
+  const contextKey = () => layout === 'commons' ? `room:${state.room}:app:${roomApps().some(a => a.id === state.selected) ? state.selected : ''}` : state.selected;
+  const selectedContext = () => layout === 'commons' && !roomApps().some(a => a.id === state.selected) ? undefined : shell.contextFor(selected());
   const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
   const firstName = () => me().name.split(/[\s.@_-]+/)[0] || me().name;
   const VIEWS = () => window.OSHAL_LIVE_VIEWS;
@@ -61,10 +63,11 @@
   function boot(loaded) {
     snapshot = loaded;
     if (!snapshot.me.authenticated) { root.innerHTML = `<div class="app-shell"><section class="loading-shell"><h1>Sign in to see your swarm.</h1><p class="note-line">This experience reads your own applications, tickets and conversations, so it needs your session.</p><p>${link('Sign in', '/login', 'action primary')}</p></section></div>`; return; }
-    shell = S.createShell({ snapshot, layoutId: layout, audience: AUDIENCE[layout], hooks: { allowEmbed: true, contextAction: layout === 'commons' ? 'Go to its room' : 'Use as my context', modalContent, modalTitle, afterClose: () => { if (dirty) { dirty = false; render(); } }, onPinsChanged, onEmbedViewChanged, peopleDirectory: layout === 'commons', workActions: true, onWorkChanged: () => render(), canRetryWork: () => !state || !state.embed, scenes: true, onSceneChanged } });
+    storageKey = snapshot.me.issuer && snapshot.me.sub ? `oshal-live-${layout}:${encodeURIComponent(JSON.stringify([snapshot.me.issuer, snapshot.me.sub]))}` : null;
+    shell = S.createShell({ snapshot, layoutId: layout, audience: AUDIENCE[layout], hooks: { allowEmbed: true, contextAction: layout === 'commons' ? 'Go to its room' : 'Use as my context', modalContent, modalTitle, afterClose: () => { if (dirty) { dirty = false; render(); } }, onPinsChanged, onEmbedViewChanged, memberToolFor: app => state.memberTools[app], onMemberNavigation: (app, tool) => { state.memberTools[app] = tool; save(); }, peopleDirectory: layout === 'commons', workActions: true, onWorkChanged: () => render(), canRetryWork: () => !state || !state.embed, scenes: true, onSceneChanged } });
     state = defaults();
-    try { const saved = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); if (saved && typeof saved === 'object') state = { ...state, ...saved, navOpen: false }; } catch (_) { /* fresh state */ }
-    if (!shell.byId(state.selected)) state.selected = (shell.pinned()[0] || snapshot.apps.find(a => a.navigable) || snapshot.apps[0] || { id: '' }).id;
+    try { const saved = storageKey && JSON.parse(sessionStorage.getItem(storageKey) || 'null'); if (saved && typeof saved === 'object') state = { ...state, ...saved, navOpen: false }; } catch (_) { /* fresh state */ }
+    if (!shell.contextFor(selected())) state.selected = (shell.pinned().find(a => shell.contextFor(a)) || snapshot.apps.find(a => shell.contextFor(a)) || { id: '' }).id;
     if (!roomIds().includes(state.room)) state.room = roomIds()[0] || '';
     thread = shell.createThread(LIVE.sessionId(), 'Jarvis');
     shell.bind(root); bindEvents();
@@ -101,7 +104,7 @@
   }
   function onEmbedViewChanged() {
     if (shell.state.modal) { dirty = true; return; }
-    render();
+    render(true);
     const pressed = root.querySelector(`.full-context [data-action="embed-view"][data-view="${shell.state.embedView}"]`); if (pressed) pressed.focus();
   }
 
@@ -237,12 +240,16 @@
   function modalContent(kind) {
     if (kind === 'room-details') return `${badge('Suite room', true)}<p>${esc(state.room === 'games' ? 'Games and playful applications installed on your swarm.' : shell.suiteOf(state.room).line)}</p><h3>${roomApps().length} applications in this room</h3><div class="room-detail-apps">${roomApps().map(a => shell.miniApp(a)).join('') || '<p class="note-line">None installed.</p>'}</div><hr class="rule"><h3>Shared here</h3><p>The room groups applications by their declared suite and shows your tickets and tasks from them. The room thread is answered by your own Jarvis; no other person’s accounts or conversations are read.</p>`;
     if (kind === 'private') return `${badge('Your personal space', true)}<p>Your money, career, preferences and direct conversations stay in their own applications and your own Jarvis thread.</p>${snapshot.apps.filter(a => ['ai-finance', 'ai-knowledge', 'ai-home'].includes(a.suite) && a.navigable).slice(0, 6).map(a => shell.miniApp(a)).join('') || '<p class="note-line">No personal applications are available in this workspace.</p>'}${link('Open the cockpit ↗', '/cockpit/', 'action')}`;
-    if (kind === 'ask') return `<p>Ask across your swarm. The answer comes from your Jarvis thread, the same one the cockpit uses.</p><form id="ask-form"><label class="field-label" for="ask-input">Ask Jarvis</label><input id="ask-input" type="text" value="${esc(state.askDraft || '')}" maxlength="1000" placeholder="What needs my attention today?" required><div class="drawer-actions"><button type="submit" class="action primary">Ask</button></div></form><div id="ask-response" role="status">${shell.threadHtml(thread)}</div>`;
+    if (kind === 'ask') return `<p>Ask about ${esc(selectedContext() ? selected().name : 'your swarm')}. The answer comes from your Jarvis thread, the same one the cockpit uses.</p><form id="ask-form"><label class="field-label" for="ask-input">Ask Jarvis</label><input id="ask-input" type="text" value="${esc(state.askDrafts[contextKey()] || '')}" maxlength="1000" placeholder="What needs my attention today?" required><div class="drawer-actions"><button type="submit" class="action primary">Ask</button></div></form><div id="ask-response" role="status">${shell.threadHtml(thread)}</div>`;
     return '';
   }
 
   /* ── render + events ───────────────────────────────────────────── */
-  function render() {
+  function render(force = false) {
+    const frame = shell.activeMemberFrame() || root.querySelector('.full-context iframe[data-hosted-app]');
+    if (force !== true && frame && (shell.state.modal?.kind === 'embed' || (state.embed && frame.dataset.hostedApp === state.selected))) { dirty = true; return; }
+    const editing = document.activeElement, edit = editing && ['message-input', 'ask-input'].includes(editing.id)
+      ? { id: editing.id, value: editing.value, start: editing.selectionStart, end: editing.selectionEnd, direction: editing.selectionDirection } : null;
     // A notice survives the re-render an async read triggers right after it (the shell clears it on its own timer).
     const notice = (document.getElementById('toast') || {}).textContent || '';
     root.innerHTML = shell.studyBar() + shell.workNotice() + ({ studio, jarvis, orbit, commons }[layout])() + `<div class="toast" id="toast" role="status" aria-live="polite">${esc(notice)}</div><div id="modal-host"></div>`;
@@ -251,12 +258,15 @@
     if (app && (layout === 'studio' || layout === 'orbit')) shell.fillDetail(app);
     if (layout === 'commons') shell.fillRoster();
     shell.fillVisuals();
+    const current = edit && document.getElementById(edit.id);
+    if (current && !current.disabled && current.value === edit.value) { current.focus(); current.setSelectionRange(edit.start, edit.end, edit.direction); }
+    if (state.embed && app) shell.restoreMemberTool(app, state.memberTools[app.id]);
   }
-  function chooseApp(id) { if (!shell.byId(id)) return; state.selected = id; state.navOpen = false; state.embed = false; if (layout === 'orbit') state.orbitSuite = shell.byId(id).suite; save(); render(); }
+  function chooseApp(id) { if (!shell.contextFor(shell.byId(id))) return; state.selected = id; state.navOpen = false; state.embed = false; if (layout === 'orbit') state.orbitSuite = shell.byId(id).suite; save(); render(); }
   async function send(prompt) {
     const t = activeThread(); if (t.busy) { shell.toast('Jarvis is still answering the last message.'); return; }
     state.drafts[contextKey()] = ''; save();
-    const result = await t.send(prompt, render);
+    const result = await t.send(prompt, render, selectedContext());
     if (result && result.status === 'done') { shell.toast('Jarvis answered.'); const input = document.getElementById('message-input'); if (input) input.focus(); }
   }
   function bindEvents() {
@@ -265,7 +275,7 @@
       const a = target.dataset.action, id = target.dataset.app, suite = target.dataset.suite;
       if (shell.handle(a, target)) return;
       if (a === 'select-app') return chooseApp(id);
-      if (a === 'use-context') { shell.close(); if (layout === 'commons') { const app = shell.byId(id); state.room = gameApps().some(g => g.id === id) ? 'games' : app.suite; state.roomTab = 'conversation'; } chooseApp(id); shell.toast(layout === 'commons' ? `Opened the room for ${shell.byId(id).name}.` : `${shell.byId(id).name} is now your context.`); return; }
+      if (a === 'use-context') { const app = shell.byId(id); if (!shell.contextFor(app)) { shell.toast('That application is not available as your context.'); return; } shell.close(); if (layout === 'commons') { state.room = gameApps().some(g => g.id === id) ? 'games' : app.suite; state.roomTab = 'conversation'; } chooseApp(id); shell.toast(layout === 'commons' ? `Opened the room for ${app.name}.` : `${app.name} is now your context.`); return; }
       if (a === 'toggle-embed') { state.embed = !state.embed; save(); render(); return; }
       if (a === 'orbit-suite') { state.orbitSuite = suite; const s = shell.suiteOf(suite); if (s.spotlight) state.selected = s.spotlight.id; save(); render(); return; }
       if (a === 'orbit-back') { state.orbitSuite = ''; save(); render(); return; }
@@ -279,11 +289,11 @@
       if (a === 'new') { if (layout === 'commons') { LIVE.prefs.set(`room-thread:${state.room}`, LIVE.prefs.get(`room-thread:${state.room}`, 0) + 1); roomThreads.delete(state.room); } else { thread = shell.createThread(LIVE.rollSession(), 'Jarvis'); thread.loaded = true; } state.drafts[contextKey()] = ''; save(); render(); const input = document.getElementById('message-input'); if (input) input.focus(); shell.toast('Started a fresh conversation.'); return; }
       if (a === 'home') { window.scrollTo({ top: 0, behavior: 'auto' }); }
     });
-    root.addEventListener('input', e => { if (e.target.id === 'ask-input') { state.askDraft = e.target.value; save(); } if (e.target.id === 'message-input') { state.drafts[contextKey()] = e.target.value; save(); } });
+    root.addEventListener('input', e => { if (e.target.id === 'ask-input') { state.askDrafts[contextKey()] = e.target.value; save(); } if (e.target.id === 'message-input') { state.drafts[contextKey()] = e.target.value; save(); } });
     root.addEventListener('submit', e => {
       e.preventDefault();
       if (e.target.id === 'message-form') send(document.getElementById('message-input').value);
-      if (e.target.id === 'ask-form') { const input = document.getElementById('ask-input'); const q = input.value; if (!q.trim() || thread.busy) return; input.value = ''; state.askDraft = ''; save(); thread.send(q, () => { const host = document.getElementById('ask-response'); if (host) host.innerHTML = shell.threadHtml(thread); if (!shell.state.modal) render(); }); }
+      if (e.target.id === 'ask-form') { const input = document.getElementById('ask-input'); const q = input.value; if (!q.trim() || thread.busy) return; input.value = ''; state.askDrafts[contextKey()] = ''; save(); thread.send(q, () => { const host = document.getElementById('ask-response'); if (host) host.innerHTML = shell.threadHtml(thread); if (!shell.state.modal) render(); }, selectedContext()); }
     });
     root.addEventListener('keydown', e => {
       if (e.target.id === 'message-input' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(e.target.value); }

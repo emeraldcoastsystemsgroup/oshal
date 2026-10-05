@@ -6,8 +6,15 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-164: validate experience declarations before installation.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve named member surfaces against active manifests without coupling packages to member URLs or markup.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Declare bounded versioned role templates with explicit member role identities; optional members require deliberate selection at assignment time.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Validate native application composites through the shared CLI/runtime template contract without requiring a presentation shell.
  */
 import { readAppDependencies, type AppDependencySource } from '@/shared/app-dependencies';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+const roleContract = createRequire(__filename)(resolve(__dirname, '../../../scripts/oshal-role-templates.js')) as {
+  validateRoleTemplates(name: unknown, value: unknown, required: string[], dependencies: Set<string>): void;
+  validateAuthorizationRoleTemplates(manifest: ExperienceManifestSource): void;
+};
 
 /** Compatibility floor for package discovery, shell hosting and supported member surfaces. */
 export const EXPERIENCE_SKILL = 'experience';
@@ -43,7 +50,7 @@ export interface ExperienceDeclaration {
 /** Structural input keeps this contract independent of the feature-layer manifest type. */
 export interface ExperienceManifestSource extends AppDependencySource {
   experience?: unknown;
-  authorization?: { version?: unknown; catalog?: unknown };
+  authorization?: { version?: unknown; catalog?: unknown; roleTemplates?: unknown };
   routes?: Array<{ mountPath?: unknown; auth?: unknown; allowAnonymous?: unknown }>;
 }
 
@@ -66,6 +73,18 @@ function canonicalPath(value: unknown): value is string {
     && value.split('/').every(part => part !== '.' && part !== '..');
 }
 
+/** Require a canonical experience entry under its existing session-authenticated package mounts. */
+function validateAuthenticatedEntry(manifest: ExperienceManifestSource, entry: unknown): void {
+  if (!canonicalPath(entry)) throw new Error('experience.entry must be a canonical root-relative document path');
+  const routes = Array.isArray(manifest.routes) ? manifest.routes : [];
+  const owners = routes.filter(route => typeof route.mountPath === 'string' && canonicalPath(route.mountPath)
+    && (entry === route.mountPath || entry.startsWith(`${route.mountPath}/`)));
+  // Every matching mount must refuse anonymous entry, including any earlier intercepting mount.
+  if (!owners.length || owners.some(route => !['oidc', 'service-or-oidc'].includes(String(route.auth)) || route.allowAnonymous === true)) {
+    throw new Error('experience.entry must belong to a declared session-authenticated package route');
+  }
+}
+
 /**
  * @description Validate the package declaration without granting access or resolving member catalogs.
  * Cross-package surface existence is checked at activation, against active member manifests.
@@ -74,6 +93,7 @@ function canonicalPath(value: unknown): value is string {
  * @returns Nothing; invalid declarations throw before installation.
  */
 export function validateExperienceDeclaration(manifest: ExperienceManifestSource): void {
+  roleContract.validateAuthorizationRoleTemplates(manifest);
   if (manifest.experience === undefined) return;
   const e = object(manifest.experience, ['version', 'entry', 'shell', 'skin', 'label', 'surfaces', 'roleTemplates'], 'experience');
   if (manifest.kind === 'group') throw new Error('experience must be an ordinary application, not a code-free group');
@@ -91,17 +111,7 @@ export function validateExperienceDeclaration(manifest: ExperienceManifestSource
     || !/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\.ya?ml$/.test(manifest.authorization.catalog)) {
     throw new Error('experience requires a version 1 package-local authorization catalog');
   }
-  if (!canonicalPath(e.entry)) throw new Error('experience.entry must be a canonical root-relative document path');
-  const routes = Array.isArray(manifest.routes) ? manifest.routes : [];
-  const owners = routes.filter(route => typeof route.mountPath === 'string'
-    && canonicalPath(route.mountPath)
-    && (e.entry === route.mountPath || (e.entry as string).startsWith(`${route.mountPath}/`)));
-  // Match the mounter's ordering conservatively: every matching mount must admit a session
-  // and refuse anonymous entry, so an earlier public mount cannot intercept this document.
-  if (!owners.length || owners.some(route => !['oidc', 'service-or-oidc'].includes(String(route.auth))
-    || route.allowAnonymous === true)) {
-    throw new Error('experience.entry must belong to a declared session-authenticated package route');
-  }
+  validateAuthenticatedEntry(manifest, e.entry);
   const dependencies = readAppDependencies(manifest);
   const members = new Set([...dependencies.required.apps, ...dependencies.optional.apps]);
   if (e.roleTemplates !== undefined && !manifest.uses.includes(EXPERIENCE_ROLES_SKILL)) {
@@ -130,31 +140,7 @@ export function validateExperienceDeclaration(manifest: ExperienceManifestSource
  * @param name Host package name. @param value Untrusted templates. @param required Required members.
  * @param dependencies All declared members. @returns Nothing; invalid declarations throw. */
 export function validateRoleTemplates(name: unknown, value: unknown, required: string[], dependencies: Set<string>): void {
-  if (value === undefined) return;
-  if (typeof name !== 'string' || !Array.isArray(value) || !value.length || value.length > 32) {
-    throw new Error('experience.roleTemplates must contain 1..32 named templates');
-  }
-  const allowed = new Set([name, ...dependencies]), ids = new Set<string>();
-  for (const item of value) {
-    const template = object(item, ['id', 'version', 'label', 'members'], 'experience.roleTemplates[]');
-    if (typeof template.id !== 'string' || !SLUG.test(template.id) || ids.has(template.id)) throw new Error('experience role template id must be unique');
-    ids.add(template.id);
-    if (!Number.isSafeInteger(template.version) || (template.version as number) < 1) throw new Error('experience role template version must be a positive integer');
-    if (typeof template.label !== 'string' || !template.label.trim() || template.label.length > 128 || /[\x00-\x1f\x7f]/.test(template.label)) {
-      throw new Error('experience role template label must be bounded display text');
-    }
-    if (!Array.isArray(template.members) || !template.members.length || template.members.length > 128) throw new Error('experience role template members must contain 1..128 exact roles');
-    const referenced = new Set<string>(), edges = new Set<string>();
-    for (const item of template.members) {
-      const member = object(item, ['app', 'role'], 'experience role template member');
-      if (typeof member.app !== 'string' || !allowed.has(member.app)) throw new Error('experience role template member must name this application or a declared dependency');
-      if (typeof member.role !== 'string' || !/^(?:@app-admin|[A-Za-z][A-Za-z0-9_.-]{0,127})$/.test(member.role)) throw new Error('experience role template must name an exact catalog role or explicit legacy @app-admin adapter');
-      const key = `${member.app}\0${member.role}`;
-      if (edges.has(key)) throw new Error('experience role template must not repeat a member role');
-      edges.add(key); referenced.add(member.app);
-    }
-    if ([name, ...required].some(app => !referenced.has(app))) throw new Error('experience role template must cover its own application and every required member');
-  }
+  roleContract.validateRoleTemplates(name, value, required, dependencies);
 }
 
 /**
