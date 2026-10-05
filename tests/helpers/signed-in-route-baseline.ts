@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, intake: /api/intake/fast and /api/v1/intake are reviewed (tickets filed as the caller's own; intake sessions bound to their starter). LEGACY_CEILING 95 -> 93.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, cockpit: /api/v1 is reviewed (by-id ticket routes owner-checked, the explorer's unscoped copies removed). LEGACY_CEILING 93 -> 92.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, tenants: /api/tenants is reviewed (adding a person is portal-admin only). LEGACY_CEILING 92 -> 91.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, RAG: /api/rag is reviewed (ingest grants limited to the caller's own tenants). LEGACY_CEILING 91 -> 90.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -18,7 +19,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 91;
+export const LEGACY_CEILING = 90;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -97,7 +98,7 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/privacy', reason: LEGACY },
   { path: '/api/providers', reason: LEGACY },
   { path: '/api/queue/dlq', reason: LEGACY },
-  { path: '/api/rag', reason: LEGACY },
+  { path: '/api/rag', reason: 'Search is filtered to what the caller may read; ingest is owned by the caller and may be shared only with their own tenants; kernel collections and collection delete need the admin (rag-routes.ts, reviewed 2026-10-05)' },
   { path: '/api/rca', reason: LEGACY },
   { path: '/api/search', reason: LEGACY },
   { path: '/api/settings/llm-default', reason: LEGACY },
