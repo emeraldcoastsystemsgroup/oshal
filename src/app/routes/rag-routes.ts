@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 audit: require an exact authenticated operator for every globally destructive collection deletion, including non-reserved collections.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 P0 — /upload actually extracts text. It did `f.buffer.toString('utf-8')` with no format detection while every upload surface advertises .pdf/.docx, so a PDF was embedded as mojibake: it ingested "successfully", polluted the collection with binary noise, and matched nothing a user searched for. The doc-extract slice already does this job properly (magic bytes over extension over MIME, pdf-parse, DOCX via yauzl, never throws) and had exactly one caller. Uploads now run through it with a corpus-sized character cap; a file that yields no readable text is REPORTED, not silently ingested — all files unreadable is a 422 naming each reason, a partial batch ingests the readable files and returns the rejections. The response and the knowledge-document record carry accepted/rejected/truncated so a surface can tell the user what actually landed.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | POST /upload re-enters the caller's RLS request identity after multer (preserveRequestIdentity). A body whose last bytes reach multer on a later socket chunk completed the parse with the AsyncLocalStorage identity gone, so the owner-scoped knowledge_memory_documents INSERT ran as anonymous non-operator and RLS refused it (500 "RAG ingestion failed"). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | /upload and /ingest refuse (403) grants a non-operator may not give: they may share only with tenants they belong to. Naming other users, other groups (public:anyone, which every signed-in user carries, or an email-domain group) or a foreign tenant, in the body or in metadata, put the caller's text into other users' retrieval (route review 2026-10-05).
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -198,6 +199,43 @@ function unionCsv(...values: Array<string | undefined>): string {
 }
 
 /** @description Resolve ingest ACL metadata from an Express request (owner sub + body ACL fields). */
+/**
+ * @description Refuses ingest grants this caller may not give. The operator may grant anyone. Anyone
+ * else may share a document only with tenants (households) they belong to: naming other users, other
+ * groups (including `public:anyone`, which every signed-in user carries, and email-domain groups), or a
+ * tenant they are not in would put their text into other people's retrieval without their say. Grants
+ * hidden in `metadata` count too, since ingest spreads metadata into the stored record.
+ *
+ * @param req - The ingest request (session identity).
+ * @param pool - Database pool for the caller's tenant memberships.
+ * @param body - The request body.
+ * @param metadata - The normalized request metadata, when the route accepts it.
+ * @returns A refusal message, or null when every grant is the caller's to give.
+ */
+async function refuseForeignRagGrants(
+  req: Request,
+  pool: Pool | null | undefined,
+  body: Record<string, unknown>,
+  metadata: Record<string, unknown> = {},
+): Promise<string | null> {
+  const caller = callerFromRequest(req);
+  if (resolveRole(caller) === Role.Admin) return null;
+  const refusal = 'You can share a document only with households you belong to';
+  const list = (...values: unknown[]) => values.flatMap((value) => normalizeAclList(value).split(',')).filter(Boolean);
+  const sub = caller.sub ?? '';
+  if (list(body.allowedUsers ?? body.allowed_users, metadata.allowed_users).some((user) => user !== sub)) return refusal;
+  const groups = list(body.allowedGroups ?? body.allowed_groups, metadata.allowed_groups);
+  const tenant = firstNonEmptyString(body.tenantId, body.tenant_id);
+  if (tenant) groups.push(tenantGroup(tenant));
+  if (groups.length === 0) return null;
+  try {
+    const mine = new Set(pool && sub ? (await getUserTenantIds(pool, sub)).map(tenantGroup) : []);
+    return groups.every((group) => mine.has(group)) ? null : refusal;
+  } catch {
+    return refusal;
+  }
+}
+
 function ragAclFromRequest(req: Request): Record<string, string> {
   return ragAclFromBody((req.body ?? {}) as Record<string, unknown>, ownerSubForIngest(req));
 }
@@ -384,6 +422,8 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
         res.status(422).json({ error: 'No file could be read as text', rejected });
         return;
       }
+      const uploadRefusal = await refuseForeignRagGrants(req, pool, (req.body ?? {}) as Record<string, unknown>);
+      if (uploadRefusal) { res.status(403).json({ error: uploadRefusal }); return; }
       const acl = ragAclFromRequest(req);
       const result = await ragService.ingest(texts, collection, {
         source: 'upload',
@@ -450,6 +490,8 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
     }
 
     try {
+      const refusal = await refuseForeignRagGrants(req, pool, (req.body ?? {}) as Record<string, unknown>, metadata);
+      if (refusal) { res.status(403).json({ error: refusal }); return; }
       const acl = ragAclFromRequest(req);
       const ownerSub = acl.owner_sub || metadata.owner_sub;
       const result = await ragService.ingest([content], collection, {
