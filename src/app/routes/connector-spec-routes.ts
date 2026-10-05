@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial ADR-065 connector-spec route mounting with caller-scoped credential resolution.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Replace boot-time per-provider mounts with two stable lazy routes that consult current deployment and per-user enablement before spec or credential loading, return a non-enumerating 404 while disabled, and evict disabled providers from the route cache.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Every resource call now writes a tier-'read' connector_action_audit row naming the CALLER, the connector, the resource, the credential source and the redacted outcome. Before this the only record a read left was a log line carrying provider/resource/status and no user_sub - and because read-tier resolution may fall back to a shared operator env key, a successful read did not even prove the owning user's credential went out. Best-effort by design (a read is not a provider mutation, so it is not fail-closed like the write tier), and the credential source rides the log line too.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A write (a resource that needs confirmation, not a dry run) that would run on the deployment's own provider account (credential source operator-env) is refused with 403 not_connected unless the caller is the portal admin, and the refusal is audited. Reads on that account stay available as the swarm default (ADR-174 D3); a user with no connection could otherwise send mail or file issues as the deployment (route review 2026-10-05).
  *
  * Connector spec routes (ADR-065/067).
  *
@@ -26,10 +27,13 @@ import { existsSync } from 'fs';
 import path from 'path';
 import type { Express, Request, RequestHandler, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { isOperator } from '@/shared/middleware/authz';
 import {
   describeConnectorAction,
   hashConnectorActionParams,
   invokeSpecResource,
+  isConnectorActionDryRun,
+  requiresConnectorConfirmation,
   loadConnectorSpec,
   recordConnectorActionAudit,
   type ConnectorActionAuditPool,
@@ -275,6 +279,18 @@ async function invokeAuditedRead(
   try {
     const creds = await resolveConnectorSpecCredsWithSource(access.spec, state.pool, access.userSub);
     credentialSource = creds.credentialSource;
+    // The deployment's own provider account (CONNECTOR_<PROVIDER>_* env) is the swarm default for reads
+    // (ADR-174 D3), but a write on it acts AS the deployment (sends its mail, files issues in its name),
+    // so only the portal admin may write through it; anyone else writes through their own connection.
+    if (credentialSource === 'operator-env' && !isOperator(req) && writesThroughSharedAccount(access.spec, resource, inputs)) {
+      await recordSpecReadAudit(state.pool, {
+        userSub: access.userSub, provider: access.provider, resource, inputs, credentialSource,
+        status: 'not_connected', httpStatus: 403, error: 'write on the shared deployment account by a non-admin',
+      });
+      logger.info({ provider: access.provider, userSub: access.userSub, resource, ms: Date.now() - started }, 'connector write refused on the shared deployment account');
+      res.status(403).json({ ok: false, code: 'not_connected', error: `Connect your own ${access.provider} account to make changes` });
+      return;
+    }
     const result = await invokeSpecResource(access.spec, creds.options, resource, inputs);
     const auditRecorded = await recordSpecReadAudit(state.pool, {
       userSub: access.userSub, provider: access.provider, resource, inputs, credentialSource,
@@ -295,6 +311,12 @@ async function invokeAuditedRead(
     });
     res.status(503).json({ ok: false, error: 'connector route unavailable' });
   }
+}
+
+/** @description True when this call would change something at the provider (a resource that needs confirmation, not a dry run). */
+function writesThroughSharedAccount(spec: ConnectorSpec, resource: string, inputs: Record<string, unknown>): boolean {
+  const resourceSpec = spec.resources.find((item) => item.name === resource);
+  return Boolean(resourceSpec) && requiresConnectorConfirmation(resourceSpec!) && !isConnectorActionDryRun(inputs);
 }
 
 /**
