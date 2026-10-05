@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | BF-030: Seed agent registry rows by agentId (UUID) instead of bot.name (slug) to prevent duplicate slug+UUID rows
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | A4/TD-15: Decomposed 1082-line file into types, helpers, and builders modules (governance cap compliance)
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Admit only operators to the deployment-wide queue activity snapshot before collecting records.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | Portal-admin only (route review 2026-10-05, ADR-174): /api/bot/restart, /rebuild and /rollback run the swarm bot lifecycle (container restarts and image retags); /api/proxy-health fetches a server-side URL and returns the body; /api/redis-visibility lists every user's schedules and routing decisions. Each was reachable by any signed-in user.
  */
 import { createChildLogger } from '@/shared/logger';
 import { SwarmBotLifecycleService } from '@/features/agent-management';
@@ -110,7 +111,7 @@ export function registerLegacyEngineeringCompatRoutes(
     res.json({ success: true, nodes, count: nodes.length });
   });
 
-  app.get('/api/redis-visibility', requiresAuth, async (_req, res) => {
+  app.get('/api/redis-visibility', requiresAuth, requiresOperator, async (_req, res) => {
     const snapshot = await collectRuntimeSnapshot(ctx);
     const agentRegistry = buildLegacyAgentRegistry(snapshot);
     const scheduledJobs = buildScheduledJobs(snapshot.schedules);
@@ -170,7 +171,7 @@ export function registerLegacyEngineeringCompatRoutes(
     });
   });
 
-  app.get('/api/proxy-health', requiresAuth, async (req, res) => {
+  app.get('/api/proxy-health', requiresAuth, requiresOperator, async (req, res) => {
     const target = typeof req.query.url === 'string' ? req.query.url : '';
     logger.info({ target }, 'GET /api/proxy-health');
     if (!target) {
@@ -205,7 +206,7 @@ export function registerLegacyEngineeringCompatRoutes(
     }
   });
 
-  app.post('/api/bot/restart', requiresAuth, async (req, res) => {
+  app.post('/api/bot/restart', requiresAuth, requiresOperator, async (req, res) => {
     const containerName = readLifecycleTarget(req.body);
     logger.info({ containerName }, 'POST /api/bot/restart');
     try {
@@ -220,7 +221,7 @@ export function registerLegacyEngineeringCompatRoutes(
     }
   });
 
-  app.post('/api/bot/rebuild', requiresAuth, async (req, res) => {
+  app.post('/api/bot/rebuild', requiresAuth, requiresOperator, async (req, res) => {
     const containerName = readLifecycleTarget(req.body);
     logger.info({ containerName }, 'POST /api/bot/rebuild');
     try {
@@ -235,7 +236,7 @@ export function registerLegacyEngineeringCompatRoutes(
     }
   });
 
-  app.post('/api/bot/rollback', requiresAuth, async (req, res) => {
+  app.post('/api/bot/rollback', requiresAuth, requiresOperator, async (req, res) => {
     const containerName = readLifecycleTarget(req.body);
     logger.info({ containerName }, 'POST /api/bot/rollback');
     try {

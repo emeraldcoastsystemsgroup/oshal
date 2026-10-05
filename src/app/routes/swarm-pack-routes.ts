@@ -27,6 +27,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. Both chains read ONE of the six. A module-scope const calling the resolver is NOT converged - it freezes the root at import, before any caller can set the environment - so this became a call-time function.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Bounded n8n JSON multipart upload saves a private redacted Packs review draft. Read-only topology, no source export retained, no deploy path. Auth before buffering; draft marker also blocks direct deploy. Existing swarm deploy semantics are unchanged.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | The n8n import handler moved out of createSwarmPackRoutes into named module functions (caller check, multipart parse, analysis, exclusive directory, draft write), each under 50 lines; the analyzer is imported through the workflow-studio barrel, and every refusal path logs.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | POST /:name/deploy requires the portal admin (requireOperator). Any signed-in user could deploy a pack: it writes the shared deployed-apps directory and loads an app whose bots, workflow and ticket type register for the whole swarm, while the equivalent /api/swarm/apps/load was already operator-only (route review 2026-10-05, ADR-174). Building, listing and downloading packs stay per-user.
  */
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import * as fs from 'fs';
@@ -36,6 +37,7 @@ import * as crypto from 'crypto';
 import yaml from 'js-yaml';
 import multer from 'multer';
 import { createChildLogger } from '@/shared/logger';
+import { requireOperator } from '@/shared/middleware/authz';
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import {
   analyzeN8nImport,
@@ -450,6 +452,11 @@ export function createSwarmPackRoutes(appLoader?: AppLoader): Router {
    *  re-emitted with its bots' existing agent ids and its existing ticketType, a bumped patch
    *  version, and no second manifest. Wrapper packs are downloaded, not deployed. */
   router.post('/:name/deploy', async (req: Request, res: Response) => {
+    // Deploying registers bots, a workflow and a ticket type for the whole swarm and writes the
+    // shared deployed-apps directory that reloads at boot, so it is a portal-admin action
+    // (ADR-174; /api/swarm/apps/load is already operator-only). Building and downloading a pack
+    // stay open to every user.
+    if (!requireOperator(req, res)) return;
     const root = userPacksRoot(req);
     if (!root) { res.status(401).json({ error: 'not authenticated' }); return; }
     const name = safeName(String(req.params.name));

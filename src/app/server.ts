@@ -214,6 +214,8 @@
  * 197 | maintainer@emeraldcoastsystemsgroup.com   | The storyboard CLI image wiring is handed the swarm's canonical runtime-params resolver (read per call): a render runs on the render bot's own effective harness and is stamped with that bot's own provider record, never switched onto an image harness (ADR-130 amendment 2026-10-02, the bot-level rule).
  * 199 | maintainer@emeraldcoastsystemsgroup.com   | Root and shared shell/profile landings use ingress Host through one helper, so caller-supplied forwarded-host values cannot remove focused-host admission.
  * 200 | maintainer@emeraldcoastsystemsgroup.com | Wire update status to current scoped application discovery while preserving operator refresh and apply.
+ * 201 | maintainer@emeraldcoastsystemsgroup.com   | /api/personal-graph and /api/personal-graph/ingest (off unless PERSONAL_GRAPH_ROUTES=on) are operator-only: they share one in-memory store across every caller, so any signed-in user could read all users' ingested data, and ingest falls back to the deployment's connector credential (route review 2026-10-05).
+ * 202 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-066 personal-graph mounts moved to server-auxiliary-routes.ts (mountPersonalGraphRoutes), unchanged and still operator-only, so server.ts is back under the 800-code-line decomposition threshold (BACKLOG #1788) it had crossed on main.
  */
 
 require('dotenv').config();
@@ -282,9 +284,6 @@ import { createConnectorMarketplaceRoutes } from './routes/connector-marketplace
 import { mountConnectorSpecRoutes } from './routes/connector-spec-routes';
 import { mountConnectorActionRoutes } from './routes/connector-action-routes';
 import { connectorWebhookIngressEnabled, mountConnectorWebhookRoutes } from './routes/connector-webhook-routes';
-import { createGraphRoutes as createPersonalGraphRoutes } from './routes/personal-graph-routes';
-import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-routes';
-import { InMemoryGraphStore } from '@/features/personal-graph';
 import { startTravelFareWatchCron } from './routes/travel-farewatch';
 import { createTestLabRoutes } from './routes/test-lab-routes';
 import { createServiceSmokeFetch, createTestLabWiring } from './composition/test-lab-wiring';
@@ -367,6 +366,7 @@ import {
   mountCoreTicketingRoutes,
   mountOpsTelemetryRoutes,
   mountSystemAuxiliaryRoutes,
+  mountPersonalGraphRoutes,
 } from './server-auxiliary-routes';
 import { createScheduleController } from './schedule-runtime';
 import { ensureWorldClassifyRail } from './world-classify-provider';
@@ -1377,15 +1377,8 @@ function createApp(): express.Application {
   if (connectorWebhookIngressEnabled()) {
     mountConnectorWebhookRoutes(app, ctx);
   }
-  // ADR-066 personal knowledge graph (end-to-end): ingest a connector's data into a user-owned graph
-  // then query it. POST /api/personal-graph/ingest/:provider -> pull+ingest+reverberate; GET
-  // /api/personal-graph/* -> stats/nodes/neighbors. In-memory store (process-lifetime; Postgres store
-  // via migration 057 is the persistence upgrade). OFF by default — set PERSONAL_GRAPH_ROUTES=on.
-  if (process.env.PERSONAL_GRAPH_ROUTES === 'on') {
-    const personalGraphStore = new InMemoryGraphStore();
-    app.use('/api/personal-graph/ingest', requiresAuth, createPersonalGraphIngestRoutes({ pool: ctx.pool, store: personalGraphStore }));
-    app.use('/api/personal-graph', requiresAuth, createPersonalGraphRoutes({ store: personalGraphStore }));
-  }
+  // ADR-066 personal knowledge graph; OFF unless PERSONAL_GRAPH_ROUTES=on, operator-only (server-auxiliary-routes.ts).
+  mountPersonalGraphRoutes(app, ctx, requiresAuth);
   // (/api/travel is no longer hard-mounted: the Travel surface carved to the
   // oshal-applications store (ADR-085 Wave 3) — its route dynamic-mounts from the
   // installed package via ManifestRouteMounter. The swarm-shared price engine + the

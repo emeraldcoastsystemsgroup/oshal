@@ -20,6 +20,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Retired POST /:ticketId/chat (ADR-161 Tier-C register): 410 legacy_execution_route_retired, replacement POST /api/tasks/:taskId/messages. It ran a bot turn on the task orchestrator directly, past the one admission decision (entitlement, specialist and credential refusals, budget), ran unattributed, and posted into an existing task id with no ownership check. No product caller; the cockpit chats through the canonical message door.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | PUT /:ticketId/state (cockpit compatibility) decides like its sibling /status: a ticket through canReadTicket, a bare task through callerCanReadTaskResult (the canonical task verdict), refused and missing both 404. The bare-task branch had no ownership check at all, so any signed-in user could set another user's task status wherever RLS was not enforcing. Removed a stale chat section header left above pause/resume.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | LIST filters candidates with the full canonical ticket verdict (createTicketReadCheck: exact-principal ownership, or guest-own for a signed guest, AND result rights) instead of the result leg alone, with one verified-actor lookup per request. The owner-scoped query is unchanged; it now drops other-issuer and inactive-actor rows the by-id verdict already refused. A guest's LIST keeps only its own stamped, non-protected tickets.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Plane sync (/sync/pull, /sync/push, /sync/state) is portal-admin only (requiresOperator): it runs on the server's Plane credentials and takes any ticket id, so an ordinary user could rewrite another user's ticket in Plane. No page calls these routes (route review 2026-10-05).
  */
 
 import { Router } from 'express';
@@ -33,7 +34,7 @@ import {
   normalizeOshalTicketState,
 } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
-import { isOperator, getCaller } from '@/shared/middleware/authz';
+import { isOperator, getCaller, requiresOperator } from '@/shared/middleware/authz';
 import { isPrivilegedTicketType } from '@/shared/middleware/superadmin';
 import { canReadTicket, createTicketReadCheck } from './ticket-application-access';
 import { refuseTicketAuthorityFields } from './ticket-filing-guard';
@@ -465,7 +466,7 @@ export function createTicketRoutes(ctx: AppContext): Router {
    * @description Pull tickets from Plane into the internal ticket store.
    * POST /api/tickets/sync/pull
    */
-  router.post('/sync/pull', async (_req: Request, res: Response) => {
+  router.post('/sync/pull', requiresOperator, async (_req: Request, res: Response) => {
     try {
       logger.info('POST /api/tickets/sync/pull');
       const result = await ctx.planeSyncService.pullTickets();
@@ -481,7 +482,7 @@ export function createTicketRoutes(ctx: AppContext): Router {
    * @description Push a ticket's state to Plane.
    * POST /api/tickets/sync/push
    */
-  router.post('/sync/push', async (req: Request, res: Response) => {
+  router.post('/sync/push', requiresOperator, async (req: Request, res: Response) => {
     try {
       const ticketId = typeof req.body?.ticketId === 'string' ? req.body.ticketId : '';
       if (!ticketId) {
@@ -504,7 +505,7 @@ export function createTicketRoutes(ctx: AppContext): Router {
    * @description Full bidirectional reconciliation with Plane for a project.
    * POST /api/tickets/sync/reconcile
    */
-  router.post('/sync/state', async (req: Request, res: Response) => {
+  router.post('/sync/state', requiresOperator, async (req: Request, res: Response) => {
     try {
       const ticketId = typeof req.body?.ticketId === 'string' ? req.body.ticketId : '';
       if (!ticketId) {

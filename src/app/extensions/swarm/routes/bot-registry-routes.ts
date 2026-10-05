@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added runtime-registry overlay so cockpit bot registry reflects live agent heartbeats and canonical IDs
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added Postgres agent status overlay so disabled bots reflect their DB status in registry responses
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | /registry online now uses resolveDisplayOnline(heartbeat, container) for static-registry bots: inline/api-hosted bots (container oshal-api) never heartbeat, so they showed offline in swarm-control + the Ops fleet even while working. staticDefinitions is SwarmBotRegistry.listDefinitions() = getActiveRegistry() (dynamic-inclusive), so app bots + container are present. Dynamic heartbeat-only bots (unregistered runtime rows) keep the heartbeat check.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | GET /proxy-health is portal-admin only: it fetches a server-side URL and returns the body, and its prefix allowlist was the only guard (route review 2026-10-05).
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -15,6 +16,7 @@ import http from 'http';
 import { Pool } from 'pg';
 import { AgentRuntimeRegistryService, resolveDisplayOnline } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
+import { requiresOperator } from '@/shared/middleware/authz';
 import type { ModelUsageStats } from '@/shared/types';
 import { SwarmBotRegistry, getActiveRegistry } from '../swarm-bot-registry';
 
@@ -161,7 +163,8 @@ export function createBotRegistryRoutes(runtimeRegistryService?: AgentRuntimeReg
    * Allows the cockpit on one bot to check other bots' health without CORS issues.
    * GET /api/swarm/bots/proxy-health?url=http://localhost:3010/health
    */
-  router.get('/proxy-health', (req: Request, res: Response) => {
+  // Fetches a server-side URL and returns the body, so it is portal-admin only (route review 2026-10-05).
+  router.get('/proxy-health', requiresOperator, (req: Request, res: Response) => {
     const targetUrl = req.query.url as string;
 
     if (!targetUrl) {

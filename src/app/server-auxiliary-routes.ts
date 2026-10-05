@@ -10,6 +10,8 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Mount /api/capability-providers behind requiresAuth beside /api/voice (ADR-173 S1): the operator surface that reads and writes the capability swarm rows; every route inside refuses anyone but an operator session.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | The /api/capability-providers mount also gets the provider-offer store (ADR-173 S1b: unit prices and quota labels).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Mount personal cockpit display choices outside the installed Smart Home application namespace.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | /api/logs and /api/process-lab are portal-admin only (requiresOperator): the debug feed lists every user's tasks and messages, and a process-lab run starts a real swarm ticket run (route review 2026-10-05).
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | mountPersonalGraphRoutes: the ADR-066 personal-graph mounts, moved here unchanged from server.ts (decomposition threshold); still operator-only and off unless PERSONAL_GRAPH_ROUTES=on.
  * -----------------------------------------------------------------------------
  */
 
@@ -66,6 +68,10 @@ import { createCalendarRoutes } from './routes/calendar-routes';
 import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-routes';
 import { createConfigRoutes } from './routes/config-routes';
 import { createLogsRoutes } from './routes/logs-routes';
+import { requiresOperator } from '@/shared/middleware/authz';
+import { createGraphRoutes as createPersonalGraphRoutes } from './routes/personal-graph-routes';
+import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-routes';
+import { InMemoryGraphStore } from '@/features/personal-graph';
 import { registerSwarmExtensionRoutes } from '@/app/extensions';
 import { createTaskRoutes } from './routes/task-routes';
 import { createStreamRoutes } from './routes/stream-routes';
@@ -278,7 +284,7 @@ export function mountCoreObservabilityAndVoiceRoutes(
   requiresAuth: express.RequestHandler,
 ): void {
   app.use('/api/config', requiresAuth, createConfigRoutes());
-  app.use('/api/logs', requiresAuth, createLogsRoutes(ctx));
+  app.use('/api/logs', requiresAuth, requiresOperator, createLogsRoutes(ctx));
   registerSwarmExtensionRoutes(app, requiresAuth, ctx.swarm);
   app.use('/api/tasks', requiresAuth, createTaskRoutes(ctx));
   app.use('/api/stream', requiresAuth, createStreamRoutes(ctx));
@@ -331,7 +337,7 @@ export function mountWorkflowStudioRoutes(
   apiDir: string,
 ): void {
   app.use('/api/rca', requiresAuth, createRcaRoutes(ctx));
-  app.use('/api/process-lab', requiresAuth, createProcessLabRoutes(ctx));
+  app.use('/api/process-lab', requiresAuth, requiresOperator, createProcessLabRoutes(ctx));
   app.use('/api/workflow-studio', requiresAuth, createWorkflowStudioRoutes({ pool: ctx.pool }));
   app.use('/api/workflow-studio', requiresAuth, createWorkflowStudioAssistRoutes(ctx));
   app.use('/api/workflow-studio', requiresAuth, createWorkflowRunRoutes({ pool: ctx.pool }));
@@ -436,4 +442,24 @@ export function mountSystemAuxiliaryRoutes(
 
   const { createHavenRoutes } = require('./routes/haven-routes');
   app.use('/api', requiresAuth, createHavenRoutes(ctx));
+}
+
+/**
+ * @description Mounts the ADR-066 personal knowledge graph: POST /api/personal-graph/ingest/:provider
+ * pulls a connector's data and ingests it; GET /api/personal-graph/* reads stats, nodes and neighbours.
+ * OFF unless PERSONAL_GRAPH_ROUTES=on. The store is in memory for the process lifetime (migration 057
+ * is the Postgres upgrade).
+ */
+export function mountPersonalGraphRoutes(
+  app: express.Application,
+  ctx: AppContext,
+  requiresAuth: express.RequestHandler,
+): void {
+  if (process.env.PERSONAL_GRAPH_ROUTES !== 'on') return;
+  const personalGraphStore = new InMemoryGraphStore();
+  // Operator-only until the store is per-owner: this one in-memory store is shared by every caller,
+  // so a signed-in user could read everyone's ingested data, and ingest falls back to the
+  // deployment's own connector credential (route review 2026-10-05).
+  app.use('/api/personal-graph/ingest', requiresAuth, requiresOperator, createPersonalGraphIngestRoutes({ pool: ctx.pool, store: personalGraphStore }));
+  app.use('/api/personal-graph', requiresAuth, requiresOperator, createPersonalGraphRoutes({ store: personalGraphStore }));
 }

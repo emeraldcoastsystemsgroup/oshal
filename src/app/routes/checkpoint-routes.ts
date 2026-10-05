@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added checkpoint lookup, restore, and delete API routes for non-swarm memory layers
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Read, restore and delete act only on a checkpoint whose task the caller may read (callerCanReadStoredTaskResult: owner or operator), answering 404 otherwise. Any signed-in user could read, overwrite or delete another user's task checkpoint by id (route review 2026-10-05).
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import type { AppContext } from '../composition-root';
+import { callerCanReadStoredTaskResult } from './protected-result-access';
 
 const logger = createChildLogger({ module: 'checkpoint-routes' });
 
@@ -27,13 +29,23 @@ export function createCheckpointRoutes(ctx: AppContext): Router {
   return router;
 }
 
+/**
+ * @description Whether the caller may act on a checkpoint: only the owner of its task, or the operator
+ * (the same check the task routes apply). Answers false for a missing checkpoint too, so a refusal and
+ * a miss look the same and checkpoint ids cannot be probed.
+ */
+async function callerMayUseCheckpoint(ctx: AppContext, req: Request, checkpointId: string): Promise<boolean> {
+  const checkpoint = await ctx.memoryService.getCheckpoint(checkpointId);
+  return Boolean(checkpoint) && callerCanReadStoredTaskResult(ctx, req, checkpoint!.taskId);
+}
+
 function handleGetCheckpoint(ctx: AppContext) {
   return async (req: Request, res: Response): Promise<void> => {
     const checkpointId = String(req.params.checkpointId);
     logger.info({ checkpointId }, 'GET /api/checkpoints/:checkpointId');
     try {
       const checkpoint = await ctx.memoryService.getCheckpoint(checkpointId);
-      if (!checkpoint) {
+      if (!checkpoint || !await callerCanReadStoredTaskResult(ctx, req, checkpoint.taskId)) {
         res.status(404).json({ error: 'Checkpoint not found' });
         return;
       }
@@ -50,6 +62,10 @@ function handleRestoreCheckpoint(ctx: AppContext) {
     const checkpointId = String(req.params.checkpointId);
     logger.info({ checkpointId }, 'POST /api/checkpoints/:checkpointId/restore');
     try {
+      if (!await callerMayUseCheckpoint(ctx, req, checkpointId)) {
+        res.status(404).json({ error: 'Checkpoint not found' });
+        return;
+      }
       const task = await ctx.memoryService.restoreCheckpoint(checkpointId);
       res.json({ success: true, task, checkpointId, message: 'Task restored from checkpoint' });
     } catch (error) {
@@ -64,6 +80,10 @@ function handleDeleteCheckpoint(ctx: AppContext) {
     const checkpointId = String(req.params.checkpointId);
     logger.info({ checkpointId }, 'DELETE /api/checkpoints/:checkpointId');
     try {
+      if (!await callerMayUseCheckpoint(ctx, req, checkpointId)) {
+        res.status(404).json({ error: 'Checkpoint not found' });
+        return;
+      }
       const deleted = await ctx.memoryService.deleteCheckpoint(checkpointId);
       if (!deleted) {
         res.status(404).json({ error: 'Checkpoint not found' });

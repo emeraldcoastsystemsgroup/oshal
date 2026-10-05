@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial - the Bot Forge edit-in-place live case (scripts/lib/live-acceptance-forge-edit.js). Doubled half: an in-memory deploy route, swarm and Packs panel drive the verdicts - an edit in place passes, and each broken fact fails by name (a re-identified bot, a ticket type that follows the drifted descriptor, a version that does not move exactly one patch, a second manifest, a panel that does not say "Updated in place", a panel that never offers the button or posts the edit and shows no result); the Lab without Chromium is degraded, a non-operator or an unmounted Forge writes nothing, a refused first deploy and every cleanup miss are red, and cleanup removes files first, then the app, then the agents. Real half: the fixture-pack port (host runner forge port -> the container helper's three ops, the docker hop replaced by an in-process call) writes real files the REAL swarm-pack router deploys over loopback HTTP; the case's route-level facts hold there, it goes red when the edit loses its prior emission, its cleanup leaves no pack, manifest, persona, app or agent, and the Lab adapter's forge port writes into the signed-in caller's own packs directory. The live companion is `node scripts/operations/live-acceptance.js forge-edit` on the box.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | A tag the case did not mint fresh is refused before anything is written. Doubled: a pack, a manifest, a persona or an app already under the minted tag each make the case unavailable with no write, deploy, browser session or non-GET call. Real: with the minter's random draw pinned to a tag that already holds a markerless pack, a manifest, a persona and an app with two agents, the real router sees only GETs and every one of them survives byte for byte. Removal refuses a pack folder with another run's marker, no marker or an unreadable pack.json, and leaves the tag's manifest and persona in place each time.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The live case's caller is an operator: pack deploy is portal-admin only (ADR-174).
  */
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -424,6 +425,7 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
   const TOKEN = 'oshal_pat_fixture_forge_edit_0000';
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oshal-forge-live-'));
   const saved = process.env.OSHAL_WORKSPACE_ROOT;
+  const savedOperators = process.env.OSHAL_OPERATOR_SUBS;
   const swarm: SwarmDouble = { apps: new Map(), agents: new Set(), scopes: [] };
   /** Every request the server received, as `METHOD /path`. */
   const requests: string[] = [];
@@ -433,6 +435,8 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
   beforeAll(async () => {
     // The highest-priority workspace variable, so the route resolves this root whatever else is set.
     process.env.OSHAL_WORKSPACE_ROOT = root;
+    // Pack deploy is portal-admin only (ADR-174); the live case runs as the operator, as it does on a box.
+    process.env.OSHAL_OPERATOR_SUBS = OWNER;
     const { createSwarmPackRoutes } = await import('../../src/app/routes/swarm-pack-routes');
     const app = express();
     app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -452,6 +456,7 @@ describe('the fixture-pack port against real files and the REAL swarm-pack route
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(root, { recursive: true, force: true });
     if (saved === undefined) delete process.env.OSHAL_WORKSPACE_ROOT; else process.env.OSHAL_WORKSPACE_ROOT = saved;
+    if (savedOperators === undefined) delete process.env.OSHAL_OPERATOR_SUBS; else process.env.OSHAL_OPERATOR_SUBS = savedOperators;
   });
 
   afterEach(() => {
