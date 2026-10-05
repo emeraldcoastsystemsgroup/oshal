@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Passed exact authenticated identity and explicit operator authority into workspace browse, tree, and preview handlers before filesystem resolution.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Scope fallback project discovery to current readable caller tasks.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | GET /explorer/tickets/:ticketId/status-history answers 404 unless the caller may use that ticket (canReadCockpitTicketOrTask), like the cockpit's own history route (route review 2026-10-05).
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Removed the /tickets/hierarchy, /tickets/:ticketId/activity and /metrics/summary handlers. The cockpit router answers those paths first at /api/v1 and never passes them on, so these could not run; they listed every user's tasks with no owner filter and would have leaked if the mount order ever changed (route review 2026-10-05).
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -31,9 +32,8 @@ export function createTaskExplorerRoutes(ctx: AppContext): Router {
   const service = new TaskExplorerService(ctx.taskStore, ctx.messageStore, ctx.workspaceService);
 
   router.get('/projects', createProjectsHandler(service, ctx));
-  router.get('/tickets/hierarchy', createHierarchyHandler(service));
-  router.get('/tickets/:ticketId/activity', createActivityHandler(service));
-  router.get('/metrics/summary', createMetricsHandler(service));
+  // /tickets/hierarchy, /tickets/:ticketId/activity and /metrics/summary are served by the cockpit
+  // router, mounted first at /api/v1 with owner scoping.
   router.get('/workspace/browse', createBrowseHandler(service));
   router.get('/workspace/:ticketId/files/*filePath', createWorkspaceFileHandler(service));
   router.get('/workspace/:ticketId/files', createWorkspaceTreeHandler(service));
@@ -62,69 +62,6 @@ function createProjectsHandler(service: TaskExplorerService, ctx: AppContext) {
     } catch (error) {
       logger.error({ err: error, durationMs: Date.now() - startedAt }, 'GET /api/v1/projects failed');
       res.status(500).json({ success: false, error: 'Failed to load projects' });
-    }
-  };
-}
-
-function createHierarchyHandler(service: TaskExplorerService) {
-  return async (req: Request, res: Response): Promise<void> => {
-    const startedAt = Date.now();
-    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
-    logger.info({ projectId: projectId ?? null }, 'GET /api/v1/tickets/hierarchy');
-
-    try {
-      const result = await service.getHierarchy(projectId);
-      logger.info({ projectId: projectId ?? null, total: result.total, durationMs: Date.now() - startedAt }, 'GET /api/v1/tickets/hierarchy complete');
-      res.json({
-        success: true,
-        data: result.tickets,
-        total: result.total,
-        projectIdentifier: result.project.identifier,
-        projectId: result.project.projectId,
-        workspaceSlug: result.project.workspaceSlug,
-      });
-    } catch (error) {
-      logger.error({ err: error, projectId: projectId ?? null, durationMs: Date.now() - startedAt }, 'GET /api/v1/tickets/hierarchy failed');
-      res.status(500).json({ success: false, error: 'Failed to load ticket hierarchy' });
-    }
-  };
-}
-
-function createActivityHandler(service: TaskExplorerService) {
-  return async (req: Request, res: Response): Promise<void> => {
-    const startedAt = Date.now();
-    const { ticketId } = req.params;
-    logger.info({ ticketId }, 'GET /api/v1/tickets/:ticketId/activity');
-
-    try {
-      const data = await service.getTicketActivity(ticketId as string);
-      if (!data) {
-        res.status(404).json({ success: false, error: 'Ticket not found' });
-        return;
-      }
-
-      logger.info({ ticketId, durationMs: Date.now() - startedAt }, 'GET /api/v1/tickets/:ticketId/activity complete');
-      res.json({ success: true, data });
-    } catch (error) {
-      logger.error({ err: error, ticketId, durationMs: Date.now() - startedAt }, 'GET /api/v1/tickets/:ticketId/activity failed');
-      res.status(500).json({ success: false, error: 'Failed to load ticket activity' });
-    }
-  };
-}
-
-function createMetricsHandler(service: TaskExplorerService) {
-  return async (req: Request, res: Response): Promise<void> => {
-    const startedAt = Date.now();
-    const projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
-    logger.info({ projectId: projectId ?? null }, 'GET /api/v1/metrics/summary');
-
-    try {
-      const data = await service.getMetricsSummary(projectId);
-      logger.info({ projectId: projectId ?? null, durationMs: Date.now() - startedAt }, 'GET /api/v1/metrics/summary complete');
-      res.json({ success: true, data });
-    } catch (error) {
-      logger.error({ err: error, projectId: projectId ?? null, durationMs: Date.now() - startedAt }, 'GET /api/v1/metrics/summary failed');
-      res.status(500).json({ success: false, error: 'Failed to load metrics summary' });
     }
   };
 }
