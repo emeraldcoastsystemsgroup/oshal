@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com  | Tail replay delegated to the bot node (BACKLOG "Workspace-bound checkpoint and tail replay"): POST /runs/:runId/tail-replay no longer restages anything on the controller; TokenChaseTailReplayService asks the producing bot for the hermetic no-edit tail and relays its artifact/store verdict. Body gains optional refire:true for the token-spending prompt re-fire pass; default off.
  * 12 | maintainer@emeraldcoastsystemsgroup.com  | GET /runs/:runId/final — the run's end-of-run checkpoint (final.json: outcome, tree digest, checkpoint completeness, store binding) through the read service's existing getFinal, owner-scoped like the frames. Read-only. The live-acceptance case token-chase-replay compares a tail replay's replayTreeSha with final.checkpoint.treeSha read HERE, independently of the node's own baseline field, and selects store-bound runs by storeBound.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Bind all replay spending to the verified caller independently of optional DB identity middleware.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | The portal admin (isOperator) is a Token Chase admin, so one admin identity governs frame visibility; TOKEN_CHASE_ADMIN_SUBS keeps working. Ordinary callers see only their own frames: ownerless system frames are admin-only (operator decision 2026-10-05).
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -57,13 +58,14 @@ const ADMIN_SUBS = new Set((process.env.TOKEN_CHASE_ADMIN_SUBS ?? '').split(',')
 
 /**
  * @description Builds the owner-scoping access context from the authenticated request. A caller sees
- * their own frames plus system frames (no recorded owner); admins (TOKEN_CHASE_ADMIN_SUBS) see all.
+ * only their own frames; the portal admin (the swarm operator) sees all, including system frames with
+ * no recorded owner. TOKEN_CHASE_ADMIN_SUBS still grants the same view, so existing setups keep it.
  * @param req - The authenticated Express request.
  * @returns The access context for the read service.
  */
 function accessOf(req: Request): TokenChaseAccess {
   const callerSub = getCaller(req).sub;
-  return { callerSub, isAdmin: callerSub !== null && ADMIN_SUBS.has(callerSub) };
+  return { callerSub, isAdmin: callerSub !== null && (isOperator(req) || ADMIN_SUBS.has(callerSub)) };
 }
 
 /**

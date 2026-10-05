@@ -11,18 +11,14 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Split parser-liveness assertions from allowlist integrity so governance-counted describe callbacks remain below fifty physical lines.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Recognize the SEC-01 delegated-user route middleware as an authenticated mount posture so Graph and Jarvis cannot be misclassified as anonymous.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | SCOPE RESTORED TO THE WHOLE CONTROLLER. This guard parsed server.ts alone, and the 2026-09-24 server decomposition (708768f5) moved most /api mounts into server-auxiliary-routes.ts and registrar modules, so the inventory fell below its floors and the allowlist went stale — red for ten days with nothing blocking. It now scans every controller registrar discovered from server.ts's src/app import graph (discoverControllerRegistrars, shared with the Security Center), reports offenders as file:line, and pins that the discovery itself stays alive (entry and auxiliary registrar present, registrar count floor) so the next split cannot blind it the same way. The classifier and the allowlist semantics are unchanged.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | The mount extraction and classifier moved verbatim to tests/helpers/controller-api-mounts.ts, shared with the signed-in route ratchet (tests/unit/operator-route-ratchet.spec.ts). Every assertion here is unchanged.
  */
 
 import { describe, expect, it } from 'vitest';
 import * as path from 'path';
 import { UNGUARDED_ALLOWLIST } from '../helpers/unguarded-route-allowlist';
-import {
-  balancedCallArgs,
-  discoverControllerRegistrars,
-  isLimiterOnlyMiddleware,
-  stripRouteSourceComments,
-  type RegistrarSource,
-} from '@/features/security';
+import { discoverControllerRegistrars } from '@/features/security';
+import { classifyMount, extractApiMounts } from '../helpers/controller-api-mounts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Controller source-scanning helpers. The existing single-line idiom
@@ -36,84 +32,6 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ROOT = path.resolve(__dirname, '..', '..');
-
-/**
- * @description Parse the mount's leading path argument(s): a string literal or an array of
- * string literals. Non-literal first args (e.g. the commented-out express.static mount) yield [].
- * @param args - The mount's full argument text.
- * @returns Every literal path the mount claims.
- */
-function mountPaths(args: string): string[] {
-  const lead = args.trimStart();
-  const single = lead.match(/^(['"`])([^'"`]*)\1/);
-  if (single) return [single[2]];
-  if (lead.startsWith('[')) {
-    const arr = lead.slice(0, lead.indexOf(']') + 1);
-    return [...arr.matchAll(/(['"`])([^'"`]*)\1/g)].map((m) => m[2]);
-  }
-  return [];
-}
-
-/** One extracted mount from a controller registrar. */
-interface Mount {
-  file: string;
-  method: string;
-  paths: string[];
-  args: string;
-  line: number;
-  mode: 'delegated-or-oidc' | 'service-or-oidc' | 'operator' | 'oidc' | 'limiter-only' | 'unguarded';
-}
-
-/**
- * @description Classify a mount's auth posture from its argument text (the manifest-route-auth
- * classifyMount idiom, widened): serviceSecretOr → service-or-oidc; requiresOperator → operator;
- * any requiresAuth (direct middleware OR passed into the route factory, which applies it
- * per-route — the /api/notify / claude-code-auth-routes pattern) → oidc; else unguarded.
- * @param args - The mount's full argument text.
- * @returns The posture.
- */
-function classifyMount(args: string): Mount['mode'] {
-  if (isLimiterOnlyMiddleware(middlewareArgs(args))) return 'limiter-only';
-  if (args.includes('delegatedUserRouteAuth')) return 'delegated-or-oidc';
-  if (args.includes('serviceSecretOr')) return 'service-or-oidc';
-  if (args.includes('requiresOperator')) return 'operator';
-  if (args.includes('requiresAuth')) return 'oidc';
-  return 'unguarded';
-}
-
-/** @description Return the registration text after its string/array path argument. */
-function middlewareArgs(args: string): string {
-  const lead = args.trimStart();
-  const single = lead.match(/^(['"`])([^'"`]*)\1/);
-  if (single) return lead.slice(single[0].length).replace(/^\s*,/, '');
-  if (!lead.startsWith('[')) return '';
-  const close = lead.indexOf(']');
-  if (close === -1) return '';
-  return lead.slice(close + 1).replace(/^\s*,/, '');
-}
-
-/**
- * @description Extract every app.<method>(…) mount whose path starts with /api/ from one
- * controller registrar.
- * @param registrar - The registrar's repository-relative path and raw source.
- * @returns The classified /api mount inventory for that file.
- */
-function extractApiMounts(registrar: RegistrarSource): Mount[] {
-  const stripped = stripRouteSourceComments(registrar.text);
-  const mounts: Mount[] = [];
-  const starts = /\bapp\.(use|get|post|put|patch|delete|all)\s*\(/g;
-  let m: RegExpExecArray | null;
-  while ((m = starts.exec(stripped)) !== null) {
-    const openIdx = m.index + m[0].length - 1;
-    const args = balancedCallArgs(stripped, openIdx);
-    if (args === null) continue;
-    const paths = mountPaths(args).filter((p) => p.startsWith('/api/'));
-    if (!paths.length) continue;
-    const line = stripped.slice(0, m.index).split('\n').length;
-    mounts.push({ file: registrar.file, method: m[1], paths, args, line, mode: classifyMount(args) });
-  }
-  return mounts;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
