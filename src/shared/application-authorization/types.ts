@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Add the read-only "configure by package" grant plan: one application plus the applications it declares it cannot run without, each classified into the ONE change /access would make for it. A plan is a description, never a grant — it creates no assignment, bumps no revision and writes no audit entry.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: the management service may list reviewable catalog migrations and approve one through the same previewId + idempotencyKey apply shape as an access change; applied-change history gains the `catalog-migration` action an installation records when it re-stamps assignments onto a new catalog revision.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Allow native applications to publish exact component role bundles and retain required dependency metadata at registration.
  */
 import type { AuthorizationCatalogMigrationPreview, AuthorizationCatalogMigrationReceipt } from './catalog-migration';
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
@@ -24,7 +25,11 @@ export interface AuthorizationCatalog {
   roles: Record<string, { tier: AuthorizationTier; grants: AuthorizationGrant[]; sensitive?: boolean }>;
   bindings: Partial<Record<AuthorizationBindingKind, Array<{ id: string; allOf: string[]; method?: string; path?: string }>>>;
 }
-export interface ApplicationAuthorizationDeclaration { version: 1; catalog: string }
+export interface ApplicationAuthorizationDeclaration {
+  version: 1;
+  catalog: string;
+  roleTemplates?: import('@/shared/experience-contract').ExperienceRoleTemplate[];
+}
 export interface AuthorizationManagementScope {
   app: string; tenantId?: string; permissions: Array<'read' | 'assign' | 'directory'>;
 }
@@ -62,6 +67,8 @@ export interface AuthorizationResourceAdapter {
   authorize(input: { actor: AuthorizationActor; operation: AuthorizationOperation; grant: AuthorizationGrant; fields: string[] }): Promise<boolean>;
 }
 export interface AuthorizationAppRegistration {
+  /** Validated installed prerequisites, retained for synchronous reviewed dependency bindings. */
+  requiredApps?: string[];
   /** Installer-built declarations only. They neither assign roles nor replace member catalogs. */
   compositeRoles?: {
     templates: import('@/shared/experience-contract').ExperienceRoleTemplate[];

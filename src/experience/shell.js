@@ -22,6 +22,7 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Select the current package identity in the chooser before interpreting legacy layout names.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Describe caller-bound communications and calendar separately from intentionally omitted global assistant status using the same overview receipt.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Carry read-only selected-app context, revalidate foreground member navigation and every reopened tool frame before loading, and retain backward draft selection during retry.
  */
 (() => {
   'use strict';
@@ -144,14 +145,14 @@
     const active = document.activeElement && document.activeElement.id;
     const drafts = ['composer-input', 'shopping-input', 'home-search-input', 'message-input', 'ask-input'].flatMap(id => {
       const input = document.getElementById(id);
-      return input ? [{ id, value: input.value, start: input.selectionStart, end: input.selectionEnd }] : [];
+      return input ? [{ id, value: input.value, start: input.selectionStart, end: input.selectionEnd, direction: input.selectionDirection }] : [];
     });
     repaint();
     let editing = false;
     drafts.forEach(draft => {
       const input = document.getElementById(draft.id); if (!input) return;
       input.value = draft.value;
-      if (draft.id === active && !input.disabled) { input.focus(); input.setSelectionRange(draft.start, draft.end); editing = true; }
+      if (draft.id === active && !input.disabled) { input.focus(); input.setSelectionRange(draft.start, draft.end, draft.direction); editing = true; }
     });
     return editing;
   }
@@ -267,15 +268,127 @@
       });
     }
 
-    /** In-place hosting: the layout's audience is requested unless the viewer chose the full application (device-local). */
-    const hostedUrl = app => state.embedView === 'full' ? app.surface : withAudience(app.surface, options.audience);
+    const memberViews = new Map(), memberReferences = new Map();
+    let memberNavigation = 0;
+    const admittedApp = id => { const app = byId(id); return app && app.inPlan && app.navigable ? app : null; };
+    const memberReference = app => memberReferences.has(app.id)
+      ? memberReferences.get(app.id)
+      : hooks.memberToolFor ? hooks.memberToolFor(app.id) : undefined;
+    const retainMemberView = (app, view) => {
+      memberViews.set(app.id, view); memberReferences.set(app.id, { id: view.id, query: view.query });
+    };
+    /** In-place hosting keeps the admitted tool's owned query and fragment across view changes. */
+    const hostedUrl = app => {
+      const url = LIVE.localHref((memberViews.get(app.id) || {}).url || app.surface);
+      return state.embedView === 'full' ? url : withAudience(url, options.audience);
+    };
+    /** Read-only, bounded ContextSchema snapshot; member ownership and execution grants stay with their APIs. */
+    function contextFor(app) {
+      if (!app || !admittedApp(app.id)) return undefined;
+      const view = memberViews.get(app.id);
+      return { channel: 'oshal-surface-bridge', v: 1, op: 'context', app: app.id,
+        surface: String(view ? view.id.replace(/^tool-/, '') : app.surfaceName || 'experience-context').slice(0, 80),
+        title: String(view ? view.label : app.name).slice(0, 200), can: [],
+        fields: { experience: layoutId, view: view ? 'member-page' : 'application-summary' },
+        digest: ('Selected application: ' + app.name + '. ' + app.description).slice(0, 4000),
+        ...(view && view.recordId ? { recordId: view.recordId } : {}) };
+    }
+    /** The foreground frame alone may request another currently admitted named member tool. */
+    function activeMemberFrame() {
+      if (state.modal) return state.modal.kind === 'embed' ? document.querySelector('#full-dialog iframe[data-hosted-app]') : null;
+      return document.querySelector('iframe[data-hosted-app]');
+    }
+    /** A WindowProxy survives navigation; current document and safe URL must remain the requesting ones. */
+    function memberDocumentState(frame) {
+      try {
+        const url = frame.contentWindow.location.href, parsed = new URL(url), document = frame.contentDocument;
+        return document && parsed.origin === location.origin && LIVE.localHref(parsed.pathname + parsed.search + parsed.hash) ? { document, url } : null;
+      } catch (_) { return null; }
+    }
+    const pendingMemberFrame = frame => {
+      try { return frame.getAttribute('src') === 'about:blank' && frame.contentWindow.location.href === 'about:blank'; }
+      catch (_) { return false; }
+    };
+    /** Resolve navigation through a fresh caller-scoped profile, never an event-supplied URL. */
+    async function readMemberTool(app, id, query) {
+      const r = await LIVE.packages.profile(app.id), p = r.ok && r.body && r.body.profile;
+      const item = p && p.name === app.id && p.ribbon && Array.isArray(p.ribbon.items) && p.ribbon.items.find(t => t.id === id);
+      const url = item && item.toolUi && LIVE.localHref(item.toolUi.iframeUrl);
+      if (!url) return null;
+      const parsed = new URL(url, location.origin), extra = new URLSearchParams();
+      if (typeof query === 'string' && query.length <= 1200) {
+        const params = [...new URLSearchParams(query)];
+        if (params.length > 16 || params.some(([k, v]) => !/^[\w.-]{1,80}$/.test(k) || v.length > 400)) return null;
+        params.forEach(([k, v]) => { if (!parsed.searchParams.has(k) && k !== 'audience') { parsed.searchParams.append(k, v); extra.append(k, v); } });
+      } else if (query !== undefined) return null;
+      if (extra.toString().length > 1200) return null;
+      return { id: item.id, query: extra.toString(), label: String(item.label || app.name), url: LIVE.localHref(parsed.pathname + parsed.search + parsed.hash),
+        recordId: String(parsed.searchParams.get('classId') || parsed.searchParams.get('class') || '').slice(0, 120) };
+    }
+    /** Mark this exact pending frame, with no refused member document loaded. */
+    function memberFrameUnavailable(frame, app, message) {
+      frame.dataset.memberPending = 'denied'; frame.hidden = true; frame.style.display = 'none'; memberViews.delete(app.id);
+      const notice = frame.previousElementSibling;
+      if (notice && notice.dataset.memberState === app.id) { notice.hidden = false; notice.style.removeProperty('display'); notice.textContent = message; }
+    }
+    /** Revalidate saved and in-memory tool references for every new foreground frame before loading its URL. */
+    async function restoreMemberTool(app, reference) {
+      const frame = activeMemberFrame();
+      if (!app || !frame || frame.dataset.hostedApp !== app.id || frame.dataset.memberPending !== 'true') return;
+      reference = reference || memberReference(app);
+      const id = typeof reference === 'string' ? reference : reference && reference.id;
+      if (!admittedApp(app.id) || typeof id !== 'string' || !/^tool-[\w.-]{1,160}$/.test(id)) {
+        memberFrameUnavailable(frame, app, 'That saved application view is no longer available to you.'); return;
+      }
+      const sequence = ++memberNavigation; frame.dataset.memberPending = 'loading';
+      try {
+        const view = await readMemberTool(app, id, typeof reference === 'string' ? undefined : reference.query);
+        if (sequence !== memberNavigation || frame !== activeMemberFrame() || !frame.isConnected || frame.dataset.hostedApp !== app.id || !pendingMemberFrame(frame)) return;
+        if (!view || !admittedApp(app.id)) { memberFrameUnavailable(frame, app, 'That saved application view is no longer available to you.'); return; }
+        retainMemberView(app, view); frame.dataset.memberPending = 'ready'; frame.src = hostedUrl(app); frame.title = view.label;
+        const notice = frame.previousElementSibling;
+        if (notice && notice.dataset.memberState === app.id) { notice.hidden = true; notice.style.display = 'none'; }
+      } catch (_) {
+        if (sequence === memberNavigation && frame === activeMemberFrame() && frame.isConnected && pendingMemberFrame(frame)) {
+          memberFrameUnavailable(frame, app, 'That saved application view could not be checked. Close and reopen it to try again.');
+        }
+      }
+    }
+    /** Legacy Little Monsters and generic app requests share the same exact-frame/current-profile check. */
+    async function onMemberMessage(e) {
+      const frame = activeMemberFrame(), d = e.data;
+      if (!frame || e.source !== frame.contentWindow || e.origin !== location.origin || !d || typeof d !== 'object') return;
+      if (frame.dataset.memberPending && frame.dataset.memberPending !== 'ready') return;
+      const app = admittedApp(frame.dataset.hostedApp); if (!app) return;
+      const requesting = memberDocumentState(frame); if (!requesting) return;
+      let id = '';
+      if (d.type === 'app-navigate' && typeof d.tool === 'string') id = 'tool-' + d.tool;
+      else if (app.id === 'little-monsters' && d.type === 'lm-navigate' && typeof d.view === 'string') id = d.view.startsWith('class-') ? 'tool-lm-class-' + d.view.slice(6, 14) : 'tool-lm-' + d.view;
+      else if (app.id === 'little-monsters' && d.type === 'lm-open-class' && typeof d.classId === 'string') id = 'tool-lm-class-' + d.classId.slice(0, 8);
+      if (!/^tool-[\w.-]{1,160}$/.test(id)) return;
+      const sequence = ++memberNavigation, previous = frame.getAttribute('src');
+      try {
+        const view = await readMemberTool(app, id, d.type === 'app-navigate' ? d.query : undefined);
+        if (sequence !== memberNavigation || previous !== frame.getAttribute('src') || frame !== activeMemberFrame() || e.source !== frame.contentWindow || !admittedApp(app.id)) return;
+        const current = memberDocumentState(frame);
+        if (!current || current.document !== requesting.document || current.url !== requesting.url) return;
+        if (!view) { toast('That view is not available to you here.'); return; }
+        retainMemberView(app, view); frame.src = hostedUrl(app); frame.title = view.label;
+        if (hooks.onMemberNavigation) hooks.onMemberNavigation(app.id, { id: view.id, query: view.query });
+      } catch (_) { toast('That view could not be checked. Try again.'); }
+    }
     function embedControls(app) {
       if (!options.audience) return '';
       const choice = (view, label) => button(label, 'embed-view', '', `data-view="${view}" aria-pressed="${state.embedView === view}"`);
       const note = state.embedView === 'full' ? `Full application opens ${esc(app.name)} without an audience request.` : `Summary view asks ${esc(app.name)} for its ${esc(options.audience)} view. The application decides: a page without that view runs its full UI.`;
       return `<div class="embed-switch"><div class="segmented" role="group" aria-label="How ${esc(app.name)} opens here">${choice('summary', 'Summary view')}${choice('full', 'Full application')}</div><p class="note-line">${note} Saved on this device.</p></div>`;
     }
-    const embedFrame = (app, cls = '') => `<iframe class="embed-frame${cls ? ` ${cls}` : ''}" src="${esc(hostedUrl(app))}" title="${esc(app.name)}" loading="lazy"></iframe>`;
+    function embedFrame(app, cls = '') {
+      if (!admittedApp(app.id)) return '<p class="note-line">That application view is not available to you here.</p>';
+      const pending = Boolean(memberReference(app)), url = pending ? 'about:blank' : hostedUrl(app);
+      if (!url) return '<p class="note-line">That application view is not available to you here.</p>';
+      return `${pending ? `<p class="note-line" data-member-state="${esc(app.id)}" role="status">Checking your saved application view…</p>` : ''}<iframe class="embed-frame${cls ? ` ${cls}` : ''}" data-hosted-app="${esc(app.id)}"${pending ? ' data-member-pending="true"' : ''} src="${esc(url)}" title="${esc(app.name)}" loading="lazy"></iframe>`;
+    }
     function setEmbedView(view) {
       state.embedView = view === 'full' ? 'full' : 'summary';
       LIVE.prefs.set('embed-view:' + layoutId, state.embedView);
@@ -601,6 +714,7 @@ ${workExtras(item)}
       dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
       dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
       if (kind === 'directory') { updateDirectory(); document.getElementById('app-search').focus(); }
+      if (kind === 'embed') restoreMemberTool(byId(id));
       if (kind === 'app' && byId(id)) { fillSummary(byId(id)); fillDetail(byId(id)); }
       if (kind === 'routines' && panels()) fillRoutines();
       if (kind === 'app' || kind === 'work') fillVisuals();
@@ -640,6 +754,7 @@ ${workExtras(item)}
       return false;
     }
     function bind(root) {
+      window.addEventListener('message', onMemberMessage);
       root.addEventListener('input', e => { if (e.target.id === 'app-search') { state.dirQuery = e.target.value; updateDirectory(); } });
       root.addEventListener('change', e => {
         if (e.target.dataset.role === 'experience-picker') { const exp = experienceFor(e.target.value); if (exp) location.href = exp.href; }
@@ -662,12 +777,12 @@ ${workExtras(item)}
         thread.turns = r.ok && r.body && Array.isArray(r.body.turns) ? r.body.turns.map(t => ({ role: t.role === 'user' ? 'user' : 'jarvis', text: t.text })) : [];
         thread.unavailable = !r.ok; thread.loaded = true; return thread;
       };
-      thread.send = async (prompt, onUpdate) => {
+      thread.send = async (prompt, onUpdate, context) => {
         const text = String(prompt || '').trim(); if (!text || thread.busy) return null;
         thread.busy = true;
         thread.turns.push({ role: 'user', text });
         const pending = { role: 'jarvis', text: 'Sending to Jarvis…', pending: true }; thread.turns.push(pending); onUpdate();
-        const result = await LIVE.ask(text, { sessionId: thread.explicit ? sessionId : undefined, onPhase: p => {
+        const result = await LIVE.ask(text, { context, sessionId: thread.explicit ? sessionId : undefined, onPhase: p => {
           if (p.phase === 'accepted') pending.text = 'Jarvis accepted the request and is working…';
           if (p.phase === 'waiting' && p.poll % 8 === 0) pending.text = `Still working (${Math.round(p.poll * 1.5)} s). Tool-using answers can take a minute.`;
           if (p.phase === 'rolled') pending.text = 'Your previous thread was not available under this sign-in; continuing in a fresh one.';
@@ -684,7 +799,7 @@ ${workExtras(item)}
     const threadNote = thread => thread.unavailable ? 'Earlier turns could not be loaded.' : thread.turns.length ? `${thread.turns.length} turns in this thread` : 'A new conversation. Ask anything across your swarm.';
 
     return { state, apps, suites, work, workState, workCount, overviewCount, workEmpty, workNotice, retryWork, workValue, byId, suiteOf, pinned, isPinned, togglePin, workFor, openWork, attention, timeAgo, appMark, statusBadge, miniApp, workRow, artifactTile, personRow, studyBar, appPanel, workPanel, open, close, renderModal, handle, bind, toast, createThread, threadHtml, threadNote, summaryFor, summaryMarkup, fillSummary,
-      gameApps, hostedUrl, embedControls, embedFrame, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard, fillPeople, membershipSlot, membership: () => state.membership };
+      gameApps, hostedUrl, embedControls, embedFrame, contextFor, activeMemberFrame, restoreMemberTool, detailSlot, fillDetail, rosterSlot, fillRoster, scene: () => state.scene, setScene, visualFor, fillVisuals, appCard, fillPeople, membershipSlot, membership: () => state.membership };
   }
 
   window.OSHAL_SHELL = { esc, button, primary, link, avatar, badge, chip, fileLink, answerHtml, withAudience, isGameApp, GAMES_TITLE, EXPERIENCES, readyExperiences, experienceFor, currentExperience, pickerMarkup, skinPicker, createShell };

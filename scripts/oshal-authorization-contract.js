@@ -6,12 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Add ADR-149 application permission contracts, policy persistence and isolated enforcement verification.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Permit explicit asset filenames while refusing dot-segment traversal and keeping parameter grammar unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A bots binding may name its agentId as a canonical lowercase UUID, which can begin with a digit (Intelligent Sales' concierge is 15000000-…-0001). Before this the package could not bind its own bot, and an unbound bot is refused for everyone once a catalog exists. Every other binding kind keeps the identifier rule.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Import native application role templates through the same bounded template validator used by experience packages.
  */
 /* ADR-149 shared CLI/runtime contract. Pure catalog validation; loading is package-confined. */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
+const { validateAuthorizationRoleTemplates } = require('./oshal-role-templates');
 const TIERS = ['deny', 'viewer', 'editor', 'admin'];
 const EFFECTS = { read: 1, write: 2, export: 2, execute: 2, administer: 3 };
 const SCOPES = ['own', 'team', 'tenant'];
@@ -133,8 +135,9 @@ function loadApplicationAuthorization(packageDir, manifest) {
   if (manifest.authorization === undefined) return null;
   if (!Array.isArray(manifest.uses) || !manifest.uses.includes('application-authorization')) fail('catalog requires uses: [application-authorization] so older cores refuse activation');
   const declaration = manifest.authorization;
-  exact(declaration, ['version', 'catalog'], 'authorization');
+  exact(declaration, ['version', 'catalog', 'roleTemplates'], 'authorization');
   if (declaration.version !== 1) fail('unsupported declaration version');
+  validateAuthorizationRoleTemplates(manifest);
   const file = declaration.catalog;
   if (typeof file !== 'string' || file.length > 256 || !/^[A-Za-z0-9_./-]+\.ya?ml$/.test(file)
     || file.startsWith('/') || file.split('/').some(segment => !segment || segment === '.' || segment === '..')) fail('catalog path escapes package');

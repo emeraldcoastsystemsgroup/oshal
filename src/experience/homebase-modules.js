@@ -9,6 +9,8 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Name the active space in the people strip accessibility label.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Name operational panels directly while preserving data, access rules, actions and visual styles.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Keep temporary navigation and unsent questions scoped to the exact principal, package and preset; retain input selection across repaint without sending anything.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Extract shared member catalog, frame and navigation helpers from the Homebase renderer, keeping fresh admission and frame source checks in one bounded module.
  */
 (function (root, factory) {
   var api = factory();
@@ -20,6 +22,183 @@
   /** The Settings, Location page: turning a check-in on needs its fresh sign-in and the browser's permission there. */
   const LOCATION_SETTINGS = '/cockpit/tools/location.html';
   const PRECISION = { exact: 'exact', block: 'block (about 110 m)', city: 'city (about 1 km)', 'place-only': 'place only' };
+
+  /** Temporary tab state is display context only; the caller must freshly admit every restored member. */
+  function createNavigation(ctx) {
+    const who = ctx.identity, scope = JSON.stringify([ctx.packageName, ctx.preset, who.mode, who.issuer, who.sub]);
+    const storageKey = who.issuer && who.sub ? `oshal-experience:homebase-state:${scope}` : '';
+    let saved = {};
+    try { saved = storageKey ? JSON.parse(sessionStorage.getItem(storageKey) || '{}') || {} : {}; } catch (_) { /* memory only */ }
+    const remembered = saved.nav;
+    const navigation = () => ({ page: ctx.state.page, tool: ctx.state.tool, resource: ctx.state.resource, query: ctx.state.search?.query || '' });
+    function persist(drafts = saved.drafts) {
+      saved = { nav: navigation(), drafts };
+      try { if (storageKey) sessionStorage.setItem(storageKey, JSON.stringify(saved)); } catch (_) { /* memory only */ }
+    }
+    function initial() {
+      const held = history.state?.oshalHomebase;
+      if (held && held.scope !== scope) return { page: 'home' };
+      const params = new URLSearchParams(location.search);
+      return params.has('homePage') ? { page: params.get('homePage'), tool: params.get('homeTool'), resource: params.get('homeResource'), query: params.get('homeQuery') }
+        : held?.nav || remembered || { page: 'home' };
+    }
+    function save(mode = 'push') {
+      persist();
+      const nav = navigation(), url = new URL(location.href);
+      ['homePage', 'homeTool', 'homeResource', 'homeQuery'].forEach(name => url.searchParams.delete(name));
+      url.searchParams.set('homePage', nav.page);
+      if (nav.tool) url.searchParams.set('homeTool', nav.tool);
+      if (nav.resource) url.searchParams.set('homeResource', nav.resource);
+      if (nav.page === 'search' && nav.query) url.searchParams.set('homeQuery', nav.query);
+      if (url.href === location.href && history.state?.oshalHomebase?.scope === scope) mode = 'replace';
+      history[mode === 'push' ? 'pushState' : 'replaceState']({ ...history.state, oshalHomebase: { scope, nav } }, '', url);
+    }
+    return { initial, save, ...createDrafts(ctx, saved.drafts, persist) };
+  }
+
+  /** Keep only bounded unsent question fields; restoring them never submits a form. */
+  function createDrafts(ctx, initial, persist) {
+    const fields = ['composer-input', 'ask-input', 'routine-input'];
+    let drafts = Object.create(null), renderedContext = '';
+    const context = () => JSON.stringify([ctx.state.page, ctx.state.tool, ctx.state.resource || '', ctx.state.page === 'search' ? ctx.state.search?.query || '' : '']);
+    Object.entries(initial || {}).slice(-24).forEach(([name, values]) => {
+      if (!values || typeof values !== 'object') return;
+      drafts[name] = Object.create(null);
+      fields.forEach(id => { if (typeof values[id] === 'string') drafts[name][id] = values[id].slice(0, 600); });
+    });
+    function remember(input) {
+      if (!input || !fields.includes(input.id)) return;
+      const current = renderedContext || context();
+      if (!drafts[current]) drafts[current] = Object.create(null);
+      drafts[current][input.id] = input.value.slice(0, 600);
+      drafts = Object.assign(Object.create(null), Object.fromEntries(Object.entries(drafts).slice(-24)));
+      persist(drafts);
+    }
+    function capture() {
+      fields.forEach(id => remember(ctx.root.querySelector(`#${id}`)));
+      const input = document.activeElement;
+      return input && ctx.root.contains(input) && fields.includes(input.id)
+        ? { id: input.id, start: input.selectionStart, end: input.selectionEnd, direction: input.selectionDirection, context: renderedContext } : null;
+    }
+    function restore(focus) {
+      renderedContext = context();
+      fields.forEach(id => { const input = ctx.root.querySelector(`#${id}`); if (input) input.value = drafts[renderedContext]?.[id] || ''; });
+      const input = focus?.context === renderedContext && ctx.root.querySelector(`#${focus.id}`);
+      if (input && !input.disabled) { input.focus({ preventScroll: true }); input.setSelectionRange(focus.start, focus.end, focus.direction); }
+    }
+    return { remember, capture, restore, value: id => drafts[context()]?.[id] || '' };
+  }
+
+  /** Bind only current catalog reads and explicit rendering hooks; an assembly does not grant its members. */
+  function createHosting(ctx) {
+    const catalog = createMemberCatalog(ctx), member = { ...ctx, ...catalog };
+    const frame = createMemberFrame(member);
+    return { ...catalog, ...frame, ...createMemberNavigation({ ...member, ...frame }) };
+  }
+
+  /** Profiles are caller-filtered and exact preset surfaces are checked before any member can open. */
+  function createMemberCatalog(ctx) {
+    const { LIVE, preset, data, key, app, has } = ctx;
+    let revision = 0;
+    async function hostProfile(host) {
+      if (host.app === 'little-monsters' && key !== 'classroom' && await ctx.educationGate(app(host.app))) return { ok: false, status: 0, body: null };
+      return LIVE.packages.profile(host.app);
+    }
+    async function loadTools() {
+      const version = ++revision;
+      const hosts = (preset.hosts || []).filter(host => has(host.app));
+      if (!hosts.length) { data.tools = null; return; }
+      const results = await Promise.all(hosts.map(async host => ({ host, r: await hostProfile(host) })));
+      const seen = new Set(), items = [];
+      for (const { host, r } of results) {
+        const list = r.ok && Array.isArray(r.body?.profile?.ribbon?.items) ? r.body.profile.ribbon.items : [];
+        for (const item of list) {
+          if (!(item && item.id && LIVE.localHref(item.toolUi?.iframeUrl))) continue;
+          if (Array.isArray(host.surfaces) && !window.OSHAL_EXPERIENCE_HOSTS?.admits(host, item)) continue;
+          const id = String(item.id); if (seen.has(id)) continue; seen.add(id);
+          items.push({ id, host: host.app, kicker: host.kicker || app(host.app).name.toUpperCase(), hidden: (host.hiddenTools || []).some(prefix => id.startsWith(prefix)), label: String(item.label || id), href: item.toolUi.iframeUrl, section: String(item.section || 'top') });
+        }
+      }
+      if (version === revision) data.tools = { items, hosts: hosts.map(host => host.app), statuses: results.map(result => result.r.status) };
+    }
+    const admittedTools = () => data.tools ? data.tools.items : [];
+    const navTools = () => admittedTools().filter(tool => !tool.hidden);
+    const toolById = id => admittedTools().find(tool => tool.id === id) || null;
+    const hostGroups = () => { const groups = []; navTools().forEach(tool => { let group = groups.find(value => value.host === tool.host); if (!group) { group = { host: tool.host, kicker: tool.kicker, tools: [] }; groups.push(group); } group.tools.push(tool); }); return groups; };
+    return { loadTools, navTools, toolById, hostGroups };
+  }
+
+  /** The current frame may remember a query/hash only on its freshly admitted surface path. */
+  function createMemberFrame(ctx) {
+    const { LIVE, preset, state, toolById, app, esc, btn, link } = ctx;
+    const hostedUrl = tool => { const url = new URL(tool.href, location.origin); if (preset.audience && !url.searchParams.has('audience')) url.searchParams.set('audience', preset.audience); return url.pathname + url.search + url.hash; };
+    function admittedResource(tool, value) {
+      if (!value) return hostedUrl(tool);
+      const local = typeof value === 'string' && value.length <= 2000 ? LIVE.localHref(value) : '';
+      return local && new URL(local, location.origin).pathname === new URL(tool.href, location.origin).pathname ? local : '';
+    }
+    function rememberResource() {
+      const frame = document.getElementById('tool-frame'), tool = toolById(state.tool);
+      if (!frame || !tool || state.page !== 'tool') return;
+      try {
+        const current = frame.contentWindow.location, resource = current.origin === location.origin && admittedResource(tool, current.pathname + current.search + current.hash);
+        if (resource && resource !== state.resource) { state.resource = resource; ctx.navigation().save('replace'); }
+      } catch (_) { /* a surface outside this origin cannot supply saved context */ }
+    }
+    function toolPanel() {
+      const tool = toolById(state.tool), host = tool ? app(tool.host) : null;
+      if (!tool) return `<section class="panel" data-module="tool"><h2>That tool is not available to you here.</h2>${btn('Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</section>`;
+      return `<section class="tool-shell" data-module="tool"><div class="tool-head"><div><div class="panel-kicker">${esc((host ? host.name : preset.name).toUpperCase())} / ${esc(tool.label.toUpperCase())}</div><h2>${esc(tool.label)}</h2></div><div class="tool-actions">${host && host.navigable ? link('Open in the cockpit ↗', host.href, 'text-button', 'target="_blank" rel="noopener"') : ''}${btn('← Back to ' + esc(preset.nav[0][1].toLowerCase()), 'page', 'button', 'data-page="home"')}</div></div><iframe class="tool-frame" id="tool-frame" src="${esc(state.resource || hostedUrl(tool))}" title="${esc(tool.label)}" allow="microphone; camera; fullscreen"></iframe></section>`;
+    }
+    return { hostedUrl, admittedResource, rememberResource, toolPanel };
+  }
+
+  /** Restore navigation only after fresh catalog reads; a newer selection cancels a late return. */
+  function createMemberNavigation(ctx) {
+    const { state, root, toolById, render, notice, loadTools, rememberResource, admittedResource } = ctx;
+    let revision = 0;
+    function openTool(id, resource, historyMode = 'push') {
+      const tool = toolById(id);
+      if (!tool) { notice('That view is not available to you here.'); return; }
+      rememberResource(); revision++;
+      state.page = 'tool'; state.tool = tool.id; state.resource = admittedResource(tool, resource); render(); ctx.navigation().save(historyMode);
+      const smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      root.querySelector('.tool-shell')?.scrollIntoView({ block: 'start', behavior: smooth ? 'smooth' : 'auto' });
+      document.getElementById('tool-frame')?.focus({ preventScroll: true });
+    }
+    const restoreNavigation = saved => restoreMemberNavigation({ ...ctx, openTool }, saved);
+    async function restoreHistory() {
+      const version = ++revision, saved = ctx.navigation().initial();
+      await loadTools();
+      if (version === revision) restoreNavigation(saved);
+    }
+    function onSurfaceMessage(event) {
+      const frame = document.getElementById('tool-frame');
+      if (!frame || event.source !== frame.contentWindow || event.origin !== location.origin) return;
+      const message = event.data;
+      if (message === 'lm-classes-changed' || (message && typeof message === 'object' && message.type === 'app-tools-changed')) { Promise.all([ctx.loadEducation(), loadTools()]).then(() => { if (state.page !== 'tool') render(); else if (!toolById(state.tool)) restoreNavigation(state); }); return; }
+      if (!message || typeof message !== 'object') return;
+      let id = null;
+      if (message.type === 'app-navigate' && message.tool) id = 'tool-' + String(message.tool);
+      else if (message.type === 'lm-navigate' && message.view) { const view = String(message.view); id = view.startsWith('class-') ? 'tool-lm-class-' + view.slice('class-'.length, 'class-'.length + 8) : 'tool-lm-' + view; }
+      else if (message.type === 'lm-open-class' && message.classId) id = 'tool-lm-class-' + String(message.classId).slice(0, 8);
+      if (id) openTool(id);
+    }
+    return { openTool, restoreNavigation, restoreHistory, onSurfaceMessage, touch: () => revision++ };
+  }
+
+  /** Saved paths and tool ids supply context only, and never expand the caller's current admitted surfaces. */
+  function restoreMemberNavigation(ctx, saved) {
+    const value = saved && typeof saved === 'object' ? saved : {};
+    if (value.page === 'tool') {
+      const tool = ctx.toolById(value.tool), resource = tool && ctx.admittedResource(tool, value.resource);
+      if (tool && resource) { ctx.openTool(tool.id, resource, 'replace'); return; }
+      ctx.goPage('home', 'replace'); ctx.notice('That remembered view is not available to you here.'); return;
+    }
+    if (value.page === 'search' && typeof value.query === 'string' && value.query.trim()) { ctx.runSearch(value.query.slice(0, 100), 'replace'); return; }
+    const pages = ctx.preset.nav.concat(ctx.preset.tabs || []).map(row => row[0]).concat(['home', 'files', 'tasks', 'routines']);
+    ctx.goPage(pages.includes(value.page) ? value.page : 'home', 'replace');
+  }
 
   /**
    * @description Bind the homebase's new modules to its render context. Every renderer reads the context at call time,
@@ -208,7 +387,7 @@
     /** @description The inline composer: a question typed here goes to the same Jarvis thread the Ask dialog uses. */
     function composer() {
       const busy = ctx.thread().busy;
-      return `<form id="composer-form" class="composer"><label class="screenreader" for="composer-input">Ask ${esc(ctx.preset.assistantLabel.toLowerCase())}</label><input id="composer-input" maxlength="600" autocomplete="off" placeholder="${esc(ctx.preset.assistantPrompt)}"${busy ? ' disabled' : ''}><button class="button primary" type="submit" aria-label="Send"${busy ? ' disabled' : ''}>↑</button></form>`;
+      return `<form id="composer-form" class="composer"><label class="screenreader" for="composer-input">Ask ${esc(ctx.preset.assistantLabel.toLowerCase())}</label><input id="composer-input" maxlength="600" autocomplete="off" value="${esc(ctx.draft ? ctx.draft('composer-input') : '')}" placeholder="${esc(ctx.preset.assistantPrompt)}"${busy ? ' disabled' : ''}><button class="button primary" type="submit" aria-label="Send"${busy ? ' disabled' : ''}>↑</button></form>`;
     }
     /** @description The room tabs a preset declares (Room, Tasks, Files …) with "Display options" beside them. */
     function roomTabs() {
@@ -242,5 +421,5 @@
     return { locations, locationOnDialog, devicesDialog, room, familyAdmin, peopleRolesDialog, routinesPage, searchPage, filesPage, tasksPage, dayAgenda, eventDialog, progressBlock, notices, bubble, composer, roomTabs, configExtras, arrange };
   }
 
-  return { create: create, LOCATION_SETTINGS: LOCATION_SETTINGS };
+  return { create: create, createNavigation: createNavigation, createHosting: createHosting, LOCATION_SETTINGS: LOCATION_SETTINGS };
 });

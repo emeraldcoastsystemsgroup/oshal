@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Probe the seven actual package entries after legacy aliases move to checked open operations and register alias regressions.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (server): register the profile refusal for a non-operator held to a focused landing (ui-profile-focused-refusal, real route + real ribbon init), its real-store companion on PostgreSQL under the enforcing role (ui-profile-rls-hidden-experience-postgres), the previously unregistered ribbon-profile-refusal and rail-tile-discoverability guards, and the #1041 picker spec.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client): register the Chromium proof of the locked cockpit (cockpit-shell-lock-browser: refusal with a ticket link, a locked allowed application, an unreadable plain document, and the unchanged unlocked doors).
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Register principal-scoped navigation, unsent drafts, selected-member context and authoritative auth-state issuer regressions for the seven experience applications.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -99,6 +100,9 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/experience-composite-postgres.spec.ts' },
     { level: 'browser', path: 'tests/unit/experience-composite-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-live-data.spec.ts' },
+    { level: 'integration', path: 'tests/unit/auth-state-principal-issuer.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-homebase-navigation-browser.spec.ts' },
+    { level: 'browser', path: 'tests/unit/experience-member-context-browser.spec.ts' },
     { level: 'unit', path: 'tests/unit/test-lab-experience-scenarios.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-shell-lock.spec.ts' },
     { level: 'integration', path: 'tests/unit/cockpit-shell-lock-routes.spec.ts' },
@@ -139,9 +143,11 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   ],
   steps: [{ id: 'pages', app: 'cockpit', label: 'Experience pages and their joined reads', run: (cookie) => experienceShellsStep(cookie) }],
 }, {
-  id: 'experience-composite-roles', title: 'Experience roles and lifecycle', group: 'tool',
-  description: 'Read the current caller-visible experience template catalog. Isolated policy, HTTP, browser and PostgreSQL suites verify explicit optional choices, current authority, identity, expiry, denial, sensitive approval, source-safe revocation, reviewed upgrade, restart receipts and atomic rollback. This probe never changes installed assignments.',
+  id: 'experience-composite-roles', title: 'Application composite roles and lifecycle', group: 'tool',
+  description: 'Read the current caller-visible application template catalog. Isolated policy, HTTP, browser and PostgreSQL suites verify complete required component coverage, native application bundles, fresh-user assignment, current authority, identity, expiry, denial, sensitive approval, source-safe revocation, reviewed upgrade, restart receipts and atomic rollback. This probe never changes installed assignments.',
   regressionTests: [
+    { level: 'integration', path: 'tests/unit/application-composite-registration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/composite-role-completeness.spec.ts' },
     { level: 'unit', path: 'tests/unit/composite-role-lifecycle.spec.ts' },
     { level: 'integration', path: 'tests/unit/experience-composite-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/experience-composite-routes.spec.ts' },

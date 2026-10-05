@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard: MOCK_OIDC is ONE predicate, not three readings. isMockOidcEnabled() accepts true|1|yes in any case, but server.ts tested MOCK_OIDC === 'true' at the /api/auth/user mode string and at the demo-auth route mount — so MOCK_OIDC=1 took the full auth bypass while reporting mode 'oidc' and never mounting the demo /logout. Part 1 runs the real application auth set, the real auth-state router and the real demo mount over a real HTTP listener and requires every value the helper accepts to produce an identical observation at all three call sites. Part 2 parses src/app/server.ts and requires that file to hold no MOCK_OIDC env read of its own and to reach both of its sites through the shared registrars — an AST walk, so a commented-out or renamed call cannot satisfy it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Widened from server.ts to the WHOLE tree. The original entry closed two readings in server.ts; six more survived elsewhere - two strict `=== 'true'` comparisons in the authorization identity resolver, one each in the judge and test-lab routes, and two code-identical private copies of the helper in the resilient ticket and workspace stores - plus five different generic truthiness helpers reading the same variable, two of which accepted `on` and three of which did not. Now an INVENTORY gate: every live reading of MOCK_OIDC anywhere in src/ must go through isMockOidcEnabled, so an eighth reading cannot be added quietly. Plus a behavioural case pinning that the deploy-mode resolver and the auth bypass agree on every spelling, including `on`, which they did not before.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Remove the duplicate predicate import and retain the direct principal-issuer definition for meaningful auth companion validation.
  */
 
 import express from 'express';
@@ -15,7 +16,6 @@ import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApplicationAuthMiddlewareSet } from '@/app/middleware/application-auth';
 import { createAuthStateRoutes, mountDemoAuthRoutes } from '@/app/routes/auth-state-routes';
-import { isMockOidcEnabled } from '@/shared/middleware/oidc';
 import { readdirSync, statSync } from 'node:fs';
 import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 import { detectMode } from '@/shared/deploy-mode/deploy-mode';

@@ -4,11 +4,13 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Moved the /api/auth/user auth-state probe and the MOCK_OIDC-gated demo auth mount out of server.ts so both read isMockOidcEnabled(), the one predicate that already decides the MOCK_OIDC auth bypass. server.ts tested MOCK_OIDC === 'true' exactly at both sites, so MOCK_OIDC=1 (or yes/TRUE) got the full bypass while /api/auth/user reported mode 'oidc' and the demo /logout was never mounted. Guard: tests/unit/mock-oidc-one-predicate.spec.ts.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose the verified session issuer independently of filtered display claims so experience drafts retain the authenticated identity namespace.
  */
 
 import { Router, type Application, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { isMockOidcEnabled } from '@/shared/middleware/oidc';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { isGuestRequest } from '@/shared/middleware/guest-session';
 import { guestCapabilities } from '@/shared/middleware/guest-capability-matrix';
 import { isLocalAuthEnabled } from '@/features/local-auth';
@@ -52,6 +54,7 @@ export function createAuthStateRoutes(): Router {
     res.json({
       authenticated,
       user: authenticated ? oidc?.user : null,
+      principalIssuer: authenticated ? getAuthenticatedPrincipalIssuer(req) : null,
       mode,
       guestMode: guest,
       // Capability snapshot so the cockpit can gray the right tiles. Only meaningful

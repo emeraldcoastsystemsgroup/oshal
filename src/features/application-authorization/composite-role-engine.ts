@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Resolve exact member roles, reserve reviewed constituents, and apply or revoke one provenance source atomically through the existing authority.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Extract constituent review and pre-apply authority checks to keep lifecycle functions within repository size limits.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Review complete installed required dependency coverage for native applications and experience hosts without guessing component roles.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { AuthorizationActor, AuthorizationApplyInput, AuthorizationChange, AuthorizationEffective, AuthorizationPreview, AuthorizationReceipt, AuthorizationTarget } from '@/shared/application-authorization';
@@ -15,11 +16,12 @@ import { canonical, managementAllowed, matchingAssignments, requireManagement, t
 import { ApplicationAuthorizationError, type AuthorizationState, type AuthorizationStore, type AuthorizationTransaction,
   type CompositeRoleBinding, type StoredCompositeRoleAssignment, type StoredCompositeRolePreview } from './types';
 import { parseCompositeRoleApply, parseCompositeRoleInput, parseCompositeRoleList } from './composite-role-validation';
+import { resolveCompositeRoleCoverage, type CompositeCoveragePorts } from './composite-role-coverage';
 
 /** @description Trusted service-only provenance context; closed request parsers cannot supply it. */
 export interface CompositeConstituentContext { id: string; revokeGrantSource?: string; sensitive?: boolean }
 /** @description Existing policy, transaction and current-identity ports used to compose member changes without a second authority. */
-export interface CompositeRolePorts {
+export interface CompositeRolePorts extends CompositeCoveragePorts {
   store: AuthorizationStore;
   now(): number;
   current(actor: AuthorizationActor): Promise<AuthorizationActor>;
@@ -41,7 +43,7 @@ const TTL = 600_000;
 function binding(app: string, registered: RegisteredAuthorizationApp | null): CompositeRoleBinding {
   return { app, source: registered?.source ?? null, version: registered?.version ?? null,
     catalogRevision: registered?.catalogRevision ?? null,
-    ...(registered?.compositeRoles ? { declarationDigest: digest(registered.compositeRoles) } : {}) };
+    ...(registered ? { declarationDigest: digest({ roles: registered.compositeRoles, requiredApps: registered.requiredApps }) } : {}) };
 }
 function target(existing: StoredCompositeRoleAssignment | undefined, input: CompositeRoleInput) {
   return existing ? { targetSub: existing.targetSub, targetIssuer: existing.targetIssuer, group: existing.group, tenantId: existing.tenantId }
@@ -101,8 +103,8 @@ export class CompositeRoleEngine {
     }
     const expiresAt = input.expiresAt === null ? undefined : input.expiresAt ?? existing?.expiresAt;
     if (input.action !== 'revoke' && expiresAt && Date.parse(expiresAt) <= this.ports.now()) throw new ApplicationAuthorizationError(400, 'authorization_expiry_invalid');
-    const required = new Set([input.app, ...(host?.compositeRoles?.requiredApps ?? [])]);
-    const desired = input.action === 'revoke' ? [] : template.members.filter(row => required.has(row.app) || optionalApps.includes(row.app));
+    const coverage = input.action === 'revoke' ? undefined : await resolveCompositeRoleCoverage(this.ports, input.app, template, optionalApps);
+    const desired = coverage?.desired ?? [];
     const removals = existing?.members ?? [];
     const members: CompositeRoleMemberReview[] = [];
     const desiredSet = [...removals.map(row => ({ ...row, action: 'revoke' as const })), ...desired.map(row => ({ ...row, action: 'grant' as const, sensitive: false }))];
@@ -111,6 +113,7 @@ export class CompositeRoleEngine {
     const subject = selected.group ? undefined : await this.ports.subject(current, { app: input.app, ...selected });
     for (const row of desiredSet) members.push(await this.reviewMember(row,
       { current, state, selected, subject, input, expiresAt, assignmentId, reviewId }));
+    members.push(...(coverage?.blocked ?? []));
     const review: CompositeRolePreview = { ready: members.every(row => !row.blocked), revision: state.revision, action: input.action, app: input.app,
       template: structuredClone(template), templateDigest: digest(template), assignmentId, ...selected, optionalApps: [...optionalApps], members,
       ...(expiresAt ? { assignmentExpiresAt: expiresAt } : {}) };
@@ -124,7 +127,7 @@ export class CompositeRoleEngine {
       transaction.state.compositePreviews = (transaction.state.compositePreviews ?? []).filter(row => row.receipt || Date.parse(row.review.expiresAt!) > this.ports.now());
       if (transaction.state.compositePreviews.length >= 10_000) throw new ApplicationAuthorizationError(503, 'authorization_preview_capacity');
       transaction.state.compositePreviews.push({ id: reviewId, actor: { sub: current.sub, issuer: current.issuer }, input, review: structuredClone(review),
-        assignmentId, bindings, childPreviewIds: members.map(row => row.preview!.previewId) });
+        assignmentId, bindings, childPreviewIds: members.map(row => row.preview!.previewId), dependencyDigest: coverage?.dependencyDigest });
     });
     return review;
   }
@@ -221,6 +224,7 @@ export class CompositeRoleEngine {
     initial: StoredCompositeRolePreview): Promise<AuthorizationActor> {
     if (!initial.receipt) {
       if (Date.parse(initial.review.expiresAt!) <= this.ports.now()) throw new ApplicationAuthorizationError(409, 'authorization_preview_expired');
+      await this.requireCurrentCoverage(initial);
       if (Object.keys(input.approvals ?? {}).some(key => !initial.childPreviewIds.includes(key))) throw new ApplicationAuthorizationError(400, 'composite_approval_reference_invalid');
       for (const id of initial.childPreviewIds) current = await this.ports.prepare(current, this.childInput(input, id), initial.id);
       const selected = initial.review;
@@ -238,6 +242,16 @@ export class CompositeRoleEngine {
       }
     }
     return current;
+  }
+  /** Re-read installed dependency declarations before writer acquisition; never nest package DB reads in its transaction. */
+  private async requireCurrentCoverage(initial: StoredCompositeRolePreview): Promise<void> {
+    if (initial.review.action === 'revoke') return;
+    const coverage = await resolveCompositeRoleCoverage(this.ports, initial.review.app, initial.review.template!, initial.review.optionalApps);
+    const reviewed = initial.review.members.filter(member => member.action === 'grant').map(({ app, role }) => ({ app, role }));
+    if (coverage.blocked.length || canonical(coverage.desired) !== canonical(reviewed)
+      || (initial.dependencyDigest !== undefined && coverage.dependencyDigest !== initial.dependencyDigest)) {
+      throw new ApplicationAuthorizationError(409, 'authorization_revision_conflict');
+    }
   }
   private childInput(input: CompositeRoleApplyInput, id: string): AuthorizationApplyInput {
     return { previewId: id, idempotencyKey: digest([input.idempotencyKey, id]), ...(input.approvals?.[id] ? { approvalReference: input.approvals[id] } : {}) };
