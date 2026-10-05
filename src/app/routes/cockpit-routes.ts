@@ -32,6 +32,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Extract ticket SSE and enforce current owner/application rights before subscription and delivery.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Restrict the global pipeline metrics collector to operator dashboards while retaining caller-scoped summaries.
  * 29 | maintainer@emeraldcoastsystemsgroup.com | Read and project global fleet summary metrics only for operators while preserving caller-owned work totals.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com   | DELETE /tickets/:ticketId, GET /tickets/:ticketId/history and POST /tickets/:ticketId/reply answer 404 unless the caller may use that ticket or task (owner or operator, canReadCockpitTicketOrTask), the same rule as the detail and activity routes; before, any signed-in user could delete, read the history of, or reply into another user's ticket (route review 2026-10-05).
  */
 
 import { Router } from 'express';
@@ -49,6 +50,7 @@ import {
   readTaskAgentId,
 } from './cockpit-route-helpers';
 import { createCockpitProjectRoutes } from './cockpit-project-routes';
+import { canReadCockpitTicketOrTask } from './cockpit-resource-access';
 import { createCockpitLogRoutes } from './cockpit-log-routes';
 import {
   applyWorkItemStatesToInternalTickets,
@@ -204,6 +206,7 @@ export function createCockpitRoutes(ctx: AppContext): Router {
     try {
       const { ticketId } = req.params;
       logger.info({ ticketId }, 'DELETE /api/v1/tickets/:ticketId');
+      if (!await ownTicketOr404(ctx, req, res, ticketId as string)) return;
 
       const internalTicket = await ctx.ticketService.getTicket(ticketId as string);
       if (internalTicket) {
@@ -643,6 +646,7 @@ export function createCockpitRoutes(ctx: AppContext): Router {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     logger.info({ ticketId, limit }, 'GET /api/v1/tickets/:ticketId/history');
     try {
+      if (!await ownTicketOr404(ctx, req, res, ticketId as string)) return;
       const history = await ctx.ticketService.getStatusHistory(ticketId as string, limit);
       res.json({ success: true, ticketId, history });
     } catch (error) {
@@ -662,6 +666,7 @@ export function createCockpitRoutes(ctx: AppContext): Router {
         return;
       }
       logger.info({ ticketId }, 'POST /api/v1/tickets/:ticketId/reply');
+      if (!await ownTicketOr404(ctx, req, res, ticketId as string)) return;
 
       // Persist the operator message to the primary task thread (durable update intent)
       const interactionResult = await ctx.ticketInteractionService.processInteraction({
@@ -757,6 +762,13 @@ async function buildSwarmHealth(ctx: AppContext): Promise<{ healthy: number; deg
   } catch {
     return { healthy: 0, degraded: 0, offline: getActiveRegistry().length };
   }
+}
+
+/** @description Answers 404 unless the caller may use this ticket or task (owner or operator), so other users' ids read as missing. */
+async function ownTicketOr404(ctx: AppContext, req: Request, res: Response, id: string): Promise<boolean> {
+  if (await canReadCockpitTicketOrTask(ctx, req, id)) return true;
+  res.status(404).json({ success: false, error: 'Ticket not found' });
+  return false;
 }
 
 function resolveCockpitOwnerSub(req: Request): string | undefined {
