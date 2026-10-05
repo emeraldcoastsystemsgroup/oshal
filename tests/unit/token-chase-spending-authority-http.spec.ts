@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Actual mounted replay spending routes preserve sharing/BYO/free work while enforcing operator lending, verified caller attribution and node machine/protection boundaries.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Ownerless frames are admin-only (operator decision 2026-10-05): an ordinary member is refused reading or replaying the shared run and the operator is admitted; ordinary-caller spending cases run on the caller-owned run, the issuer-less tail restore on a run that caller owns, and cost rollups are separated across two issuers of one caller plus the operator.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
@@ -45,6 +46,8 @@ let fixture: Awaited<ReturnType<typeof tokenChaseSpendingFixture>>;
 beforeEach(async () => { vi.clearAllMocks(); vi.mocked(listRunObservations).mockResolvedValue([]); fixture = await tokenChaseSpendingFixture(); });
 afterEach(async () => { await fixture?.close(); });
 const VARIANT = '/runs/shared/frames/1/variant';
+/** The caller-owned run: ordinary users replay only frames they own (ownerless frames are admin-only). */
+const VARIANT_OWN = '/runs/own/frames/1/variant';
 const NODE_BODY = { history: [], systemPrompt: null, taskId: 'shared', userSub: 'fixture-member', principalIssuer: 'https://identity.example.test' };
 
 /** @description Switch only the fixture registry's harness classification, without loading credentials or a vendor binary. */
@@ -80,7 +83,7 @@ describe('Token Chase verified spending authority through real controller/client
   });
 
   it.each(['own-byo', 'free:auto', 'framework:openrouter'])('preserves ordinary %s without reading paid framework secrets', async connectionId => {
-    const response = await fixture.call(VARIANT, 'member', { connectionId }); expect(response.status).toBe(200);
+    const response = await fixture.call(VARIANT_OWN, 'member', { connectionId }); expect(response.status).toBe(200);
     expect(fixture.node.variantProvider).toHaveBeenCalledTimes(1); expect(fixture.secrets).not.toHaveBeenCalled();
     expect(fixture.node.recordCost).toHaveBeenCalledWith(expect.objectContaining({ ownerSub: 'fixture-member' }));
     if (connectionId === 'own-byo') expect(getUserLlmConnection).toHaveBeenCalledWith(expect.anything(), 'fixture-member', { connectionId: 'own-byo' });
@@ -89,12 +92,14 @@ describe('Token Chase verified spending authority through real controller/client
 
   it('refuses an unavailable shared free lane without paid/default fallback', async () => {
     vi.mocked(platformFreeConnection).mockResolvedValueOnce(null);
-    expect((await fixture.call(VARIANT, 'member', { connectionId: 'framework:openrouter' })).status).toBe(404);
+    expect((await fixture.call(VARIANT_OWN, 'member', { connectionId: 'framework:openrouter' })).status).toBe(404);
     expect(fixture.node.generated).not.toHaveBeenCalled(); expect(fixture.secrets).not.toHaveBeenCalled();
   });
 
-  it('preserves ownerless reads and own frames while refusing foreign-owned replay', async () => {
-    expect((await fixture.call('/runs/shared/frames/1')).status).toBe(200);
+  it('keeps ownerless frames admin-only, own frames readable and foreign-owned replay refused', async () => {
+    expect((await fixture.call('/runs/shared/frames/1')).status).toBe(404);
+    expect((await fixture.call('/runs/shared/replay', 'member', { fromFrame: 1 })).status).toBe(404);
+    expect((await fixture.call('/runs/shared/frames/1', 'operator')).status).toBe(200);
     expect((await fixture.call('/runs/own/frames/1')).status).toBe(200);
     expect((await fixture.call('/runs/foreign/frames/1')).status).toBe(404);
     expect((await fixture.call('/runs/foreign/replay', 'member', { fromFrame: 1 })).status).toBe(404);
@@ -102,7 +107,7 @@ describe('Token Chase verified spending authority through real controller/client
   });
 
   it('preserves current hosted replay and overwrites forged body/header identity with verified caller and issuer', async () => {
-    const response = await fixture.call('/runs/shared/replay', 'member', { fromFrame: 1, userSub: 'fixture-operator', principalIssuer: 'https://forged.test', isOperator: true }, { 'x-user-sub': 'fixture-operator' });
+    const response = await fixture.call('/runs/own/replay', 'member', { fromFrame: 1, userSub: 'fixture-operator', principalIssuer: 'https://forged.test', isOperator: true }, { 'x-user-sub': 'fixture-operator' });
     expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ replay: { status: 'deterministic' } });
     expect(fixture.node.currentProvider).toHaveBeenCalledTimes(1); expect(fixture.node.variantProvider).not.toHaveBeenCalled();
     expect(fixture.node.generated).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ extraEnv: { OSHAL_USER_SUB: 'fixture-member' }, tools: [], autoApprove: false }));
@@ -115,14 +120,14 @@ describe('Token Chase verified spending authority through real controller/client
   });
 
   it('resolves a normal CLI replay through the caller hosted ladder before actual dispatch', async () => {
-    cliHarness(); const response = await fixture.call('/runs/shared/replay', 'member', { fromFrame: 1 }); expect(response.status).toBe(200);
+    cliHarness(); const response = await fixture.call('/runs/own/replay', 'member', { fromFrame: 1 }); expect(response.status).toBe(200);
     expect(resolveUserLlmConnection).toHaveBeenCalledWith(expect.anything(), 'fixture-member');
     expect(fixture.node.variantProvider).toHaveBeenCalledWith({ baseUrl: 'https://own.example.test/v1', apiKey: 'fixture-owned-fixture-member', model: 'owner-model' });
   });
 
   it('refuses CLI resolver failure before node dispatch instead of falling to the deployment default', async () => {
     cliHarness(); vi.mocked(resolveUserLlmConnection).mockRejectedValueOnce(new Error('fixture ladder down'));
-    const response = await fixture.call('/runs/shared/replay', 'member', { fromFrame: 1 }); expect(response.status).toBe(200);
+    const response = await fixture.call('/runs/own/replay', 'member', { fromFrame: 1 }); expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ replay: { status: 'replay-error' } });
     expect(fixture.node.currentProvider).not.toHaveBeenCalled(); expect(fixture.node.generated).not.toHaveBeenCalled();
   });
@@ -141,10 +146,10 @@ describe('Token Chase verified spending authority through real controller/client
   });
 
   it('keeps the token-free tail restore available without an issuer and binds optional re-fire spend to the verified caller', async () => {
-    const restore = await fixture.call('/runs/shared/tail-replay', 'missing-issuer', { fromFrame: 1 });
+    const restore = await fixture.call('/runs/issuerless/tail-replay', 'missing-issuer', { fromFrame: 1 });
     expect(restore.status).toBe(200); expect(await restore.json()).toMatchObject({ tailReplay: { paidCalls: 0, refire: null } });
     expect(fixture.node.generated).not.toHaveBeenCalled();
-    const refire = await fixture.call('/runs/shared/tail-replay', 'member', { fromFrame: 1, refire: true });
+    const refire = await fixture.call('/runs/own/tail-replay', 'member', { fromFrame: 1, refire: true });
     expect(refire.status).toBe(200); expect(await refire.json()).toMatchObject({ tailReplay: { paidCalls: 1 } });
     expect(fixture.node.recordCost).toHaveBeenCalledWith(expect.objectContaining({ ownerSub: 'fixture-member' }));
     expect(fixture.tailRestore).toHaveBeenCalledWith('fixture-worker', expect.objectContaining({ access: { callerSub: 'fixture-member', isAdmin: false } }));
@@ -156,10 +161,11 @@ describe('Token Chase verified spending authority through real controller/client
     expect(fixture.node.costIdentities).toEqual([{ sub: 'fixture-member', principalIssuer: 'https://identity.example.test', isOperator: false }]);
   });
 
-  it('separates shared-run cost rollups across callers and verified issuers without raw principal identifiers', async () => {
-    for (const user of ['member', 'second', 'other-issuer']) expect((await fixture.call('/runs/shared/replay', user, { fromFrame: 1 })).status).toBe(200);
+  it('separates replay cost rollups across callers and verified issuers without raw principal identifiers', async () => {
+    for (const user of ['member', 'other-issuer']) expect((await fixture.call('/runs/own/replay', user, { fromFrame: 1 })).status).toBe(200);
+    expect((await fixture.call('/runs/shared/replay', 'operator', { fromFrame: 1 })).status).toBe(200);
     const ids = fixture.node.recordCost.mock.calls.map(call => (call[0] as { taskId: string }).taskId);
-    expect(new Set(ids).size).toBe(3); for (const id of ids) expect(id).toMatch(/^shared::replay::[a-f0-9]{64}$/);
+    expect(new Set(ids).size).toBe(3); for (const id of ids) expect(id).toMatch(/^(own|shared)::replay::[a-f0-9]{64}$/);
     expect(fixture.node.costIdentities).toEqual(expect.arrayContaining([{ sub: 'fixture-member', principalIssuer: 'https://other.identity.test', isOperator: false }]));
   });
 

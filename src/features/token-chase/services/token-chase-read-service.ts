@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Workspace-bound provenance: expose captured tool schemas, workspace commit/store-version references and the bounded snapshot result used by the tail replay.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | End-of-run checkpoint (BACKLOG "Workspace-bound checkpoint and tail replay"): getFinal() reads the run's final.json (post-tool tree digest, final commit, store version, trailing pins) under the same owner scoping as frames, and a frame's recorded owner rides on TokenChaseFrameDetail.ownerSub so the tail replay can bind the accountable owner when it delegates to the bot node.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Bot-node tail executor inputs: getCaptureDir() hands the traversal-guarded capture directory to the on-node restore (private git repo + object store live there), and getStoreManifest() reads the owner-store manifest the lane wrote for one version (store-<version>.json — paths and ciphertext digests, never plaintext) under the run's owner scoping.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Ownerless (system/internal) frames are admin-only. They were readable and replayable by every signed-in user and can carry persona prompts and other users' ticket content (operator decision 2026-10-05, from the 2026-10-04 cockpit route audit).
  */
 
 import fsSync from 'node:fs';
@@ -252,13 +253,15 @@ export class TokenChaseReadService {
   }
 
   /**
-   * @description Whether a frame is visible to the caller: admins see all; frames with no recorded
-   * owner (system/internal calls) are public to authenticated callers; otherwise owner must match.
+   * @description Whether a frame is visible to the caller: admins see all; otherwise the caller must
+   * be the recorded owner. Frames with no recorded owner (system/internal calls) are admin-only:
+   * they can carry persona prompts and other users' ticket content, so an ordinary user may neither
+   * read nor replay them (operator decision 2026-10-05).
    */
   private isVisible(frame: Record<string, unknown>, access: TokenChaseAccess): boolean {
     if (access.isAdmin) return true;
     const owner = (frame.userSub as string) ?? null;
-    return !owner || owner === access.callerSub;
+    return Boolean(owner) && owner === access.callerSub;
   }
 
   /** @description Parses a frame JSON file, returning null on read/parse failure. */

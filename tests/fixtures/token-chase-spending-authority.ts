@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Mount actual controller/client/node replay routes over isolated frames, synthetic verified sessions and recorded provider/ownership/cost seams.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Adds a run owned by the issuer-less principal so the token-free tail restore is exercised on the caller's own frames now that ownerless frames are admin-only.
  */
 import express, { type RequestHandler } from 'express';
 import type { AddressInfo } from 'node:net';
@@ -32,9 +33,9 @@ const authenticate: RequestHandler = (req, res, next) => {
   Object.assign(req, { oidc: { isAuthenticated: () => true, user: { sub }, idTokenClaims: { sub, iss } } }); next();
 };
 
-/** @description Real captured-frame files exercise ownerless sharing and exact owner refusal through the production read service. */
+/** @description Real captured-frame files exercise admin-only ownerless frames and exact owner refusal through the production read service. */
 async function writeFrames(root: string) {
-  for (const [runId, userSub] of [['shared', undefined], ['own', 'fixture-member'], ['foreign', 'fixture-other']]) {
+  for (const [runId, userSub] of [['shared', undefined], ['own', 'fixture-member'], ['foreign', 'fixture-other'], ['issuerless', 'fixture-missing-issuer']]) {
     const dir = path.join(root, runId!, '.tokenchase'); await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'frame-0001.json'), JSON.stringify({ seq: 1, phase: 'closed', userSub,
       agentId: 'fixture-worker', replayable: true, decision: { model: 'baseline', harnessFired: 'hosted' },
