@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Keep readable personal overview fields when the global roster is intentionally omitted; qualify calendar readiness separately without inventing assistant totals.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Retain the verified issuer in display identity so saved experience context is keyed by the exact signed-in principal.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Forward advisory selected-app context to the existing Jarvis ask contract and honor the authoritative principal issuer field.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com | Name suite purposes plainly while retaining their manifest-owned membership and live catalog data.
  */
 (function attach(root, factory) {
   'use strict';
@@ -30,13 +31,13 @@
 
   /** ADR-097 primary suites. Display copy only; membership comes from each manifest's `suite:`. */
   var SUITE_META = {
-    'ai-finance': { name: 'Finance', symbol: 'F', line: 'Money, markets & ventures', accent: '#679682' },
-    'ai-engineering': { name: 'Engineering', symbol: 'E', line: 'Design, simulate & build', accent: '#5c85b2' },
-    'ai-creative': { name: 'Creative & games', symbol: 'C', line: 'Make something. Play together.', accent: '#aa7ca2' },
-    'ai-productivity': { name: 'Productivity', symbol: 'P', line: 'Office, communication & business', accent: '#b99255' },
-    'ai-home': { name: 'Home & life', symbol: 'H', line: 'People, places & everyday life', accent: '#849b60' },
-    'ai-knowledge': { name: 'Knowledge & career', symbol: 'K', line: 'Understand the world. Find what’s next.', accent: '#8b86b4' },
-    platform: { name: 'Platform', symbol: 'O', line: 'Kernel tools, probes & fixtures', accent: '#8a8f98' }
+    'ai-finance': { name: 'Finance', symbol: 'F', line: 'Financial applications', accent: '#679682' },
+    'ai-engineering': { name: 'Engineering', symbol: 'E', line: 'Engineering applications', accent: '#5c85b2' },
+    'ai-creative': { name: 'Creative & games', symbol: 'C', line: 'Creative and game applications', accent: '#aa7ca2' },
+    'ai-productivity': { name: 'Productivity', symbol: 'P', line: 'Office and business applications', accent: '#b99255' },
+    'ai-home': { name: 'Home & life', symbol: 'H', line: 'Home and household applications', accent: '#849b60' },
+    'ai-knowledge': { name: 'Knowledge & career', symbol: 'K', line: 'Knowledge and career applications', accent: '#8b86b4' },
+    platform: { name: 'Platform', symbol: 'O', line: 'Platform applications', accent: '#8a8f98' }
   };
   var SUITE_ORDER = ['ai-finance', 'ai-engineering', 'ai-creative', 'ai-productivity', 'ai-home', 'ai-knowledge', 'platform'];
 

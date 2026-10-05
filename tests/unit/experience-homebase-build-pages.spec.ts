@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Guards for paths the design study lists that were built earlier without a browser case: + Add posting a personal Little Monsters event (title kept as typed, day and time); the display choices (compact density, the activity panel and the week strip hidden) saved on this device, surviving a reload and restored; the My access and About access dialogs, a sidebar application's dialog with its summary, and All applications. A notice shown before the repaint that follows it (the added event) is still shown after it.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | The access dialog names the preset's own space since #1042: Business reads "The same workspace, different access", and a family and a classroom case pin "home" and "classroom" (the regression test #1042 shipped without).
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Follow native Display settings and save/restore labels while preserving local persistence, panel order, assistant choices and six-width overflow assertions; the removed platform footer stays absent.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -188,11 +189,11 @@ describe('the existing calendar and display paths the design study lists', () =>
   it('compact density, a hidden activity panel and a hidden week strip are saved on this device, survive a reload and restore', async () => {
     await open('family', '[data-module="updates"]');
     expect(await page.locator('.week-strip').count()).toBe(1);
-    await page.getByRole('button', { name: 'Configure home' }).click();
+    await page.locator('.main-top').getByRole('button', { name: 'Display settings', exact: true }).click();
     await page.selectOption('#density-choice', 'compact');
     await page.locator('#show-updates').uncheck(); await page.locator('#show-week').uncheck();
-    await page.getByRole('button', { name: 'Save on this device' }).click();
-    await toastHas('Display choices saved on this device. No permissions changed.');
+    await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+    await toastHas('Display settings saved.');
     const check = async () => {
       expect(await page.locator('.experience').getAttribute('data-density')).toBe('compact');
       expect(await page.locator('[data-module="updates"]').count()).toBe(0);
@@ -201,10 +202,10 @@ describe('the existing calendar and display paths the design study lists', () =>
     await check();
     await page.reload(); await page.waitForSelector('.home-shell'); await page.waitForLoadState('networkidle');
     await check();
-    expect(await page.locator('.page-footer').innerText()).toContain('(v2)');
-    await page.getByRole('button', { name: 'Configure home' }).click();
-    await page.getByRole('button', { name: 'Restore previous' }).click();
-    await toastHas('Previous display choices restored.');
+    expect(await page.locator('.page-footer').count()).toBe(0);
+    await page.locator('.main-top').getByRole('button', { name: 'Display settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Restore previous settings', exact: true }).click();
+    await toastHas('Previous display settings restored.');
     expect(await page.locator('.experience').getAttribute('data-density')).toBe('comfortable');
     expect(await page.locator('[data-module="updates"]').count()).toBe(1);
     expect(await page.locator('.week-strip').count()).toBe(1);
@@ -264,9 +265,9 @@ describe('the assistant and the choices', () => {
     await page.reload(); await page.waitForSelector('[data-bubble="catch-up"]');
     expect(await page.locator('[data-bubble="catch-up"]').innerText()).toContain('2 tasks finished and 1 task failed');
     // "Waiting for me to ask": no catch-up is offered; the choice is saved on this device only.
-    await page.getByRole('button', { name: 'Configure home' }).click();
+    await page.locator('.main-top').getByRole('button', { name: 'Display settings', exact: true }).click();
     await page.selectOption('#bot-choice', 'ask');
-    await page.getByRole('button', { name: 'Save on this device' }).click();
+    await page.getByRole('button', { name: 'Save settings', exact: true }).click();
     await page.waitForFunction(() => !document.querySelector('[data-bubble="catch-up"]'));
     await page.reload(); await page.waitForSelector('#composer-input'); await page.waitForLoadState('networkidle');
     expect(await page.locator('[data-bubble]').count()).toBe(0);
@@ -281,20 +282,20 @@ describe('the assistant and the choices', () => {
     await page.locator('input[name="lead-choice"][value="work"]').check();
     await page.locator('input[data-keep="room"]').uncheck();
     await page.locator('input[data-keep="shopping"]').uncheck();
-    await page.getByRole('button', { name: 'Save on this device' }).click();
-    await toastHas('No permissions changed');
+    await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+    await toastHas('Display settings saved.');
     expect((await mainOrder()).slice(0, 3)).toEqual(['projects', 'calendar', 'finance']);
     expect(await page.locator('[data-module="room"]').count()).toBe(0);
     expect(await page.locator('.aside-column [data-module="shopping"]').count()).toBe(0);
     await page.reload(); await page.waitForSelector('.home-shell'); await page.waitForLoadState('networkidle');
     expect((await mainOrder())[0]).toBe('projects');
     expect(fixture.state.calls.filter(c => !c.startsWith('GET ')).length).toBe(before);
-    await page.getByRole('button', { name: 'Configure home' }).click();
+    await page.locator('.main-top').getByRole('button', { name: 'Display settings', exact: true }).click();
     await page.locator('input[name="lead-choice"][value="day"]').check();
-    await page.getByRole('button', { name: 'Save on this device' }).click();
+    await page.getByRole('button', { name: 'Save settings', exact: true }).click();
     expect((await mainOrder())[0]).toBe('calendar');
-    await page.getByRole('button', { name: 'Configure home' }).click();
-    await page.getByRole('button', { name: 'Restore previous' }).click();
+    await page.locator('.main-top').getByRole('button', { name: 'Display settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Restore previous settings', exact: true }).click();
     expect((await mainOrder())[0]).toBe('projects');
   });
 

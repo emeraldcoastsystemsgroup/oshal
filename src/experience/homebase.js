@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Restore freshly admitted member views and their same-surface resource across reload and return; scope temporary navigation and unsent questions to the principal and package, retaining caret and focus on repaint.
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Extract shared member hosting into the existing Homebase module to keep the renderer within its size budget.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com | Use native application headers and a signed-in Appearance dialog; move page display and dialog rendering into the existing context module.
  */
 (() => {
   'use strict';
@@ -48,7 +49,7 @@
   const money = n => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
   const isoDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  let snapshot, shell, data = {}, thread, dialogKind = null, dialogId = null, opener = null, timer, config, M, H, navigation, locationAsked = false;
+  let snapshot, shell, data = {}, thread, timer, config, M, H, D, navigation, locationAsked = false;
   const state = { page: 'home', tool: null, resource: null, search: null };
   const defaultConfig = () => ({ density: 'comfortable', updates: true, week: true, lead: 'room', hide: [], bot: 'suggest', revision: 1, previous: null });
   const me = () => snapshot.me;
@@ -84,6 +85,7 @@
     navigation = window.HOMEBASE_MODULES.createNavigation({ identity: me(), packageName: document.body.dataset.experienceApp || key, preset: key, root, state });
     H = window.HOMEBASE_MODULES.createHosting({ LIVE, preset, key, data, state, root, app, has, educationGate, loadEducation, esc, btn, link, render, notice, goPage, runSearch, navigation: () => navigation });
     M = window.HOMEBASE_MODULES.create(moduleContext());
+    D = window.HOMEBASE_MODULES.createDisplay(moduleContext());
     bind();
     render();
     // Work, tasks and the overview arrive in the second phase; repaint then unless a tool is open (a repaint would reload its frame).
@@ -101,7 +103,9 @@
    */
   function moduleContext() {
     return {
-      esc, btn, link, pill, head, avatar, LIVE, S, data, state, preset, key, dueOn,
+      esc, btn, link, pill, head, avatar, LIVE, S, data, state, preset, key, dueOn, root,
+      navigation: () => navigation, markup: pageMarkup, dialogBody, afterDialog, configExtras: () => M.configExtras(),
+      groupName, groupMembers, peopleList, memberLine, hostGroups, featuredApps,
       config: () => config, me, displayName, snapshot: () => snapshot, isTeacher, isLearner, toolById, app, canConfigure, draft: id => navigation.value(id),
       thread: () => thread, shell: () => shell, openWork: () => shell.openWork(), events: () => (data.edu && data.edu.ok ? data.edu.events : []), assignments: assignmentsOpen,
       bubbleSeen: () => LIVE.prefs.get(`homebase:${key}:bubble`, '')
@@ -409,21 +413,6 @@
   }
 
   /* ── page composition ────────────────────────────────────────── */
-  function sidebar() {
-    const lm = key === 'classroom' && data.edu && data.edu.installed;
-    const people = peopleList().slice(0, 6);
-    const toolSection = hostGroups().map(g => `<div class="side-section"><div class="side-kicker">${esc(g.kicker)}</div><div class="tool-nav">${g.tools.slice(0, 6).map(t => btn(`<span class="nav-symbol" aria-hidden="true">${esc(t.label.slice(0, 1))}</span>${esc(t.label)}`, 'tool', 'nav-link', `data-tool="${esc(t.id)}" ${state.page === 'tool' && state.tool === t.id ? 'aria-current="page"' : ''}`)).join('')}</div></div>`).join('');
-    return `<aside class="home-sidebar"><div><div class="wordmark ${key === 'classroom' ? 'class-brand' : ''}">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${preset.short}</div><p class="workspace-label">${groupName() ? `${esc(groupName())} · ${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'}` : `${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'}`} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([id, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇', '↻', '▤'][i] || '·'}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${id}" ${id === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(memberLine).join('')}</div>${toolSection}<div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${canConfigure() ? btn(`Configure this ${space}`, 'configure', 'button sidebar-config') : ''}${link('Help and guides ↗', '/api/help', 'text-button sidebar-help', 'target="_blank" rel="noopener"')}</div></aside>`;
-  }
-  function hero() {
-    if (state.page === 'tool') return '';
-    const learner = isLearner();
-    const heading = learner ? (key === 'family' ? `Your day, ${displayName().split(' ')[0]}.` : `Ready to explore, ${displayName().split(' ')[0]}?`) : preset.title;
-    const admins = groupMembers().filter(m => m.role === 'admin').length;
-    const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.workCount(shell.openWork().length, 'open items')}` : `${snapshot.apps.length} apps · ${shell.workCount(shell.openWork().length, 'open items')}`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.workCount(shell.openWork().length, 'open items')} · ${shell.overviewCount(`${snapshot.botsOnline} assistants online`)}`;
-    const art = key === 'family' ? '<div class="family-scene" role="img" aria-label="A little house among green trees"><span class="plant"></span><span class="little-house"></span><span class="plant"></span></div>' : key === 'classroom' ? (data.edu && data.edu.installed ? '<img class="hero-monster" src="/api/education/logo-256.png" alt="Little Monsters study companion">' : '') : '<div class="company-emblem" aria-hidden="true"><span></span><span></span><span></span></div>';
-    return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
-  }
   /* ── package summary cards and the declared front page ───────── */
   /** A tile row from a probe's tiles (live-data already caps them at four). */
   const cardTiles = tiles => tiles.length ? `<div class="card-tiles">${tiles.map(t => `<div class="card-tile tone-${esc(t.tone)}"><strong>${esc(t.value)}</strong><span>${esc(t.label)}</span></div>`).join('')}</div>` : '';
@@ -492,23 +481,14 @@
     const [main, aside] = pageColumns();
     return `${M.roomTabs()}<div class="home-content"><div class="main-column">${main.join('')}<div class="assistant"><div class="assistant-line"><span class="assistant-orb" aria-hidden="true"></span><div>${esc(preset.assistantPrompt)}<small>${esc(preset.assistantLabel)} · answered by your Jarvis</small></div>${btn('Ask', 'ask', 'text-button')}</div>${M.bubble()}${M.composer()}</div></div><aside class="aside-column">${aside.join('')}</aside></div>`;
   }
-  /** The breadcrumb's page name: the open tool, a nav or tab page, or Search. */
-  const pageName = () => (state.page === 'tool' && toolById(state.tool) ? toolById(state.tool).label : state.page === 'search' ? 'Search' : ((preset.nav.concat(preset.tabs || [])).find(n => n[0] === state.page) || [])[1] || 'Home');
-  /** The top bar's search box: it searches what this home read and the caller's own swarm data. */
-  const searchBox = () => `<form id="home-search" class="home-search" role="search"><label class="screenreader" for="home-search-input">Search in this ${space}</label><input id="home-search-input" type="search" maxlength="100" placeholder="Search in this ${space}…" value="${esc(state.search ? state.search.query : '')}"><button class="text-button" type="submit" aria-label="Search">⌕</button></form>`;
-  function render() {
-    const focus = navigation.capture();
-    // A notice shown just before a repaint (an add, then the list re-read) stays: the new toast element takes its text.
-    const shown = document.getElementById('toast') ? document.getElementById('toast').textContent : '';
-    root.innerHTML = `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="preview-bar"><a href="/cockpit/">← Cockpit</a><span class="demo-tag">LIVE · ${esc(displayName().toUpperCase())}</span><div class="preview-selects"><label>Experience ${S.pickerMarkup(key)}</label><label>Style ${S.skinPicker()}</label></div></div><div class="home-shell">${sidebar()}<main class="home-main"><header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${searchBox()}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${canConfigure() ? btn(`Configure ${space}`, 'configure') : ''}${btn('My access', 'policy')}${avatar(me().initials, 0)}</div></header>${hero()}${state.page === 'tool' ? '' : shell.workNotice()}${content()}<footer class="page-footer"><span>One platform · ${key} preset · ${esc(document.body.dataset.skin || preset.skin)} skin · display choices saved on this device (v${config.revision})<br>Access follows this swarm’s authorization; appearance never changes it.</span>${btn('About this data', 'about', 'text-button')}</footer></main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
-    if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'); const def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
-    if (shown) document.getElementById('toast').textContent = shown;
-    if (dialogKind) openDialog(dialogKind, dialogId);
-    navigation.restore(focus);
+  /** The native application page; source and dialog lifecycle are handled by its display module. */
+  function pageMarkup() {
+    return `<div class="experience" data-skin="${esc(document.body.dataset.skin || preset.skin)}" data-density="${esc(config.density)}"><div class="home-shell">${D.sidebar()}<main class="home-main">${D.header()}${D.hero()}${state.page === 'tool' ? '' : shell.workNotice()}${content()}</main></div><div id="dialog-host"></div><div class="toast" id="toast" role="status" aria-live="polite"></div></div>`;
   }
+  function render() { D.render(); }
 
   /* ── dialogs ─────────────────────────────────────────────────── */
-  function close() { const d = document.getElementById('homebase-dialog'); if (d) d.close(); document.getElementById('dialog-host').replaceChildren(); dialogKind = null; dialogId = null; if (opener && opener.isConnected) opener.focus(); }
+  function close() { D.close(); }
   /** @description Teacher-only classwork form: the class picker offers only classes the caller teaches, and the type list is the package's own allowed set. The server still decides. */
   function classworkDialog() {
     const classes = teachableClasses(data.edu);
@@ -530,7 +510,8 @@
     if (kind === 'people-roles') return M.peopleRolesDialog();
     if (kind === 'devices') return key === 'family' ? M.devicesDialog() : ['', ''];
     if (kind === 'location-on') return key === 'family' ? M.locationOnDialog() : ['', ''];
-    if (kind === 'configure') return [`Make this ${space} your own`, `<p>A preset supplies the starting point; a skin supplies the look. What you may see is decided by this swarm’s authorization, independently.</p><div class="config-flow"><span>${key} preset</span> → <span>your authorized modules</span> → <span>chosen skin</span></div><form id="config-form"><label class="field">Visual skin<select id="skin-choice">${window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.map(s => `<option value="${s.id}" ${(document.body.dataset.skin || preset.skin) === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label><label class="field">Density<select id="density-choice"><option value="comfortable" ${config.density === 'comfortable' ? 'selected' : ''}>Comfortable</option><option value="compact" ${config.density === 'compact' ? 'selected' : ''}>Compact</option></select></label><label class="config-check"><input id="show-updates" type="checkbox" ${config.updates ? 'checked' : ''}>Show the activity panel</label><label class="config-check"><input id="show-week" type="checkbox" ${config.week ? 'checked' : ''}>Show the calendar week strip</label>${M.configExtras()}<p>Changing a skin never grants Finance, reveals student records, installs an app or enrolls anyone in anything.</p><div class="dialog-actions"><button type="submit" class="button primary">Save on this device</button>${config.previous ? btn('Restore previous', 'restore') : ''}</div></form><p>Version ${config.revision} · saved in this browser only. No server setting changes.</p>`];
+    if (kind === 'appearance') return D.appearance();
+    if (kind === 'configure') return D.configuration();
     if (kind === 'event') return ['Add a shared moment', data.edu && data.edu.ok ? `<p>This adds a personal event to your Little Monsters calendar${isTeacher() ? '; class-wide events are published from a class in Little Monsters' : ''}. No invitation is sent.</p><form id="event-form"><label class="field">Event title<input id="event-title" maxlength="200" required placeholder="A moment to make time for"></label><label class="field">Date<input id="event-date" type="date" value="${isoDay(new Date())}" required></label><label class="field">Time (optional)<input id="event-time" type="time"></label><div class="dialog-actions"><button class="button primary" type="submit">Add event</button></div></form>` : '<p>No calendar source accepts events here yet.</p>'];
     if (kind === 'learning') return [`${displayName()}’s learning space`, data.edu && data.edu.ok ? `<p>Your open classwork from Little Monsters. Nothing is submitted from here: Little Monsters keeps no per-learner submission record.</p><div class="list-items">${assignmentsOpen().map(a => `<div class="list-item"><span><span class="item-title">${esc(a.title)}</span><small>${esc(a.class_name || '')}${a.due_date ? ` · due ${esc(dueOn(a.due_date))}` : ''}${a.assignment_type ? ` · ${esc(a.assignment_type)}` : ''}</small></span></div>`).join('') || '<p class="subtle">Nothing open right now.</p>'}</div><div class="dialog-actions">${toolById('tool-lm-myday') ? btn('Open My Day here', 'tool', 'button primary', 'data-tool="tool-lm-myday"') : ''}${lm ? link('Open Little Monsters ↗', lm.href, toolById('tool-lm-myday') ? 'button' : 'button primary') : ''}</div>` : `<p>${esc(!data.edu ? 'Reading your learning space…' : !data.edu.installed ? 'Little Monsters is not installed on this swarm.' : eduRefusal(data.edu, `Your learning space could not be read (HTTP ${data.edu.status}).`))}</p>`];
     if (kind === 'app') { const a = app(id); if (!a) return ['', '']; const sm = shell.state.summaries.get(a.id); return [a.name, `<p>${esc(a.description)}</p><p class="pill">${esc(shell.suiteOf(a.suite).name)}${a.version ? ` · v${esc(a.version)}` : ''} · ${a.navigable ? 'available to you' : 'not available in your workspace'}</p><div id="app-summary-slot">${shell.summaryMarkup(a, sm || null)}</div><div class="dialog-actions">${a.navigable ? link(`Open ${esc(a.name)} ↗`, a.href, 'button primary') : ''}${btn('Review access', 'policy', 'button')}</div>`]; }
@@ -553,12 +534,8 @@
     if (data.routines) lines.push(`<li>Routines: Jarvis briefings ${status(data.routines.briefings)} and your schedules ${status(data.routines.schedules)}.</li>`);
     return lines.join('');
   }
-  function openDialog(kind, id) {
-    const [title, body] = dialogBody(kind, id); if (!title) return;
-    dialogKind = kind; dialogId = id === undefined ? null : id;
-    document.getElementById('dialog-host').innerHTML = `<dialog id="homebase-dialog" class="config-dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2>${btn('×', 'close', 'close', 'aria-label="Close panel"')}</div><div class="dialog-body">${body}</div></dialog>`;
-    const d = document.getElementById('homebase-dialog'); d.showModal(); d.addEventListener('cancel', e => { e.preventDefault(); close(); }); d.addEventListener('click', e => { if (e.target === d) close(); });
-    navigation.restore();
+  /** Fill only the application data requested by the open dialog. */
+  function afterDialog(kind, id) {
     if (kind === 'app' && app(id)) shell.summaryFor(app(id)).then(sm => { shell.state.summaries.set(id, sm); const slot = document.getElementById('app-summary-slot'); if (slot) slot.innerHTML = shell.summaryMarkup(app(id), sm); });
     if (kind === 'project' && document.getElementById('ticket-slot')) fillTicketSlot(snapshot.work.find(x => x.id === id));
     if (kind === 'drafts') fillDrafts();
@@ -618,7 +595,7 @@
   async function fillDrafts() {
     const [drafts, tasks] = await Promise.all([LIVE.packages.content.drafts(), LIVE.packages.jarvis.tasks()]);
     data.draftsHtml = draftsMarkup(drafts);
-    const slot = document.getElementById('drafts-slot'); if (slot) slot.innerHTML = data.draftsHtml + (dialogKind === 'drafts' ? finishedTaskMarkup(tasks) : '');
+    const slot = document.getElementById('drafts-slot'); if (slot) slot.innerHTML = data.draftsHtml + (D.kind() === 'drafts' ? finishedTaskMarkup(tasks) : '');
   }
   function draftRow(d) {
     const when = LIVE.parseDate(d.created_at), lines = String(d.draft || '').split('\n').map(s => s.trim()).filter(Boolean).slice(0, 2).join(' ');
@@ -652,7 +629,7 @@
     if (state.page !== 'tool') render();
     notice(`Classwork added to ${cls ? cls.name : 'the class'}${r.body && r.body.eventId ? ' and its class calendar' : ''}.`);
   }
-  function open(kind, id) { opener = document.activeElement; openDialog(kind, id); }
+  function open(kind, id) { D.open(kind, id); }
 
   /* ── events ──────────────────────────────────────────────────── */
   function saveConfig(next) { config = { ...next, revision: config.revision + 1, previous: { ...config, previous: null } }; LIVE.prefs.set(`homebase:${key}`, config); }
@@ -676,10 +653,10 @@
     if (a === 'retry-work') return shell.retryWork();
     if (a === 'page') { goPage(b.dataset.page); return; }
     if (ACTIONS[a]) { ACTIONS[a](b); return; }
-    if (a === 'tool') { if (dialogKind) close(); openTool(b.dataset.tool); return; }
+    if (a === 'tool') { if (D.kind()) close(); openTool(b.dataset.tool); return; }
     if (a === 'ticket-approve') { approveTicket(b); return; }
     if (a === 'all-apps') { location.href = '/portal#catalog-directory'; return; }
-    if (a === 'restore' && config.previous) { const prev = config.previous; config = { ...prev, revision: config.revision + 1, previous: null }; LIVE.prefs.set(`homebase:${key}`, config); close(); render(); notice('Previous display choices restored.'); return; }
+    if (a === 'restore' && config.previous) { const prev = config.previous; config = { ...prev, revision: config.revision + 1, previous: null }; LIVE.prefs.set(`homebase:${key}`, config); close(); render(); notice('Previous display settings restored.'); return; }
     if (a === 'project') return open('project', b.dataset.work);
     if (a === 'event-detail') return open('event-detail', b.dataset.event);
     open(a, b.dataset.app);
@@ -687,14 +664,14 @@
   /** @description Show a page; Routines reads its sources the first time it opens and Files reads the caller's drafts. */
   function goPage(page, historyMode = 'push') {
     rememberResource(); H.touch();
-    if (dialogKind) close();
+    if (D.kind()) close();
     state.page = page; state.tool = null; state.resource = null; render(); navigation.save(historyMode);
     if (page === 'routines' && !data.routines) loadRoutines().then(repaint);
     if (page === 'files') fillDrafts();
   }
   async function onChange(e) {
     if (e.target.dataset.role === 'experience-picker') { const exp = S.experienceFor(e.target.value); if (exp) location.href = exp.href; }
-    if (e.target.id === 'universal-skin-picker') { window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value); render(); }
+    if (e.target.id === 'universal-skin-picker') { window.OSHAL_STYLE_SWITCHER.applySkin(e.target.value); }
     if (e.target.id === 'share-location') { shareToggle(e.target); return; }
     if (e.target.dataset.briefing) { briefingToggle(e.target); return; }
     if (e.target.dataset.shoppingItem) {
@@ -767,7 +744,7 @@
   /** @description Search this home's own reads at once, then the caller-scoped swarm search; a late answer for an older query is dropped. */
   async function runSearch(q, historyMode = 'push') {
     rememberResource(); H.touch();
-    if (dialogKind) close();
+    if (D.kind()) close();
     state.search = { query: q, local: window.HOMEBASE_DATA.localMatches(q, searchPools()), global: null }; state.page = 'search'; state.tool = null; state.resource = null; render(); navigation.save(historyMode);
     const global = await HD.search(q);
     if (state.search && state.search.query === q) { state.search.global = global; repaint(); }
@@ -805,7 +782,7 @@
       if (r.ok) { notice(`Added ${text} to your list.`); await loadShopping(); render(); const again = document.getElementById('shopping-input'); if (again) again.focus(); }
       else { input.disabled = false; notice(`Could not add that (HTTP ${r.status}).`); }
     }
-    if (e.target.id === 'config-form') { saveConfig({ density: document.getElementById('density-choice').value, updates: document.getElementById('show-updates').checked, week: document.getElementById('show-week').checked, lead: (e.target.querySelector('input[name="lead-choice"]:checked') || { value: 'room' }).value, bot: document.getElementById('bot-choice').value === 'ask' ? 'ask' : 'suggest', hide: Array.from(e.target.querySelectorAll('input[data-keep]')).filter(i => !i.checked).map(i => i.dataset.keep) }); window.OSHAL_STYLE_SWITCHER.applySkin(document.getElementById('skin-choice').value); close(); render(); notice('Display choices saved on this device. No permissions changed.'); }
+    if (e.target.id === 'config-form') { saveConfig({ density: document.getElementById('density-choice').value, updates: document.getElementById('show-updates').checked, week: document.getElementById('show-week').checked, lead: (e.target.querySelector('input[name="lead-choice"]:checked') || { value: 'room' }).value, bot: document.getElementById('bot-choice').value === 'ask' ? 'ask' : 'suggest', hide: Array.from(e.target.querySelectorAll('input[data-keep]')).filter(i => !i.checked).map(i => i.dataset.keep) }); window.OSHAL_STYLE_SWITCHER.applySkin(document.getElementById('skin-choice').value); close(); render(); notice('Display settings saved.'); }
     if (e.target.id === 'event-form') {
       const title = document.getElementById('event-title').value.trim(), date = document.getElementById('event-date').value, time = document.getElementById('event-time').value;
       if (!title || !date) return;

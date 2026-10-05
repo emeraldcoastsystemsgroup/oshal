@@ -5,6 +5,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Image/container probe for the Cline fallback entrypoint. The JS ProviderFailoverProvider hands every Codex refusal to cline-cli, and on 2026-09-17 that fallback died on every ticket with `spawnSync /usr/local/lib/node_modules/cline/bin/.cline ENOENT` - a file that EXISTS. cline 3.x ships a Bun-compiled glibc executable and the musl base had no /lib64/ld-linux-x86-64.so.2, so the kernel reported the missing interpreter as ENOENT on the binary. No gate saw it: the image built, the stack was healthy, chat answered through the ADR-127 hosted retry, and only a ticket that needed the fallback found out. This probe runs the REAL launcher (`cline --version`) inside the artifact that ships - `--image <tag>` before any container is touched, or `--container <name>` on a running one - and names the failure shape it finds, so scripts/oshal-deploy.sh refuses an image whose fallback brain cannot start.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Report the Dockerfile's confined aarch64-musl abort as UNAVAILABLE with exit 3, only after proving architecture, executable cache, matching loader and confinement. Other failures remain refused.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -14,8 +15,13 @@ import { pathToFileURL } from 'node:url';
 export const CLINE_CACHED_BINARY = '/usr/local/lib/node_modules/cline/bin/.cline';
 /** @description The glibc program interpreter the Bun-compiled cline executable is linked against. */
 export const GLIBC_LOADER = '/lib64/ld-linux-x86-64.so.2';
+/** @description The architecture-specific glibc interpreter used by the aarch64 artifact. */
+export const GLIBC_ARM64_LOADER = '/lib/ld-linux-aarch64.so.1';
 /** @description glibc aliases gcompat drops into musl's default search path; their presence is the unconfined shape. */
-export const GLIBC_ALIASES = ['/lib/libc.so.6', '/lib/libm.so.6', '/lib/libpthread.so.0'];
+export const GLIBC_ALIASES = [
+  '/lib/libc.so.6', '/lib/libm.so.6', '/lib/libpthread.so.0', '/lib/libresolv.so.2',
+  '/lib/librt.so.1', '/lib/libutil.so.1', '/lib/libcrypt.so.1',
+];
 
 /**
  * @description The one-line shell body executed inside the artifact. It is a flat `;` chain on
@@ -26,11 +32,14 @@ export const GLIBC_ALIASES = ['/lib/libc.so.6', '/lib/libm.so.6', '/lib/libpthre
  */
 export function buildProbeScript() {
   const parts = [
+    `arch=$(uname -m); loader="${GLIBC_LOADER}"; [ "$arch" != aarch64 ] || loader="${GLIBC_ARM64_LOADER}"`,
     `out=$(cline --version 2>&1); rc=$?`,
+    `printf 'CLINE_PROBE_ARCH=%s\\n' "$arch"`,
     `printf 'CLINE_PROBE_RC=%s\\n' "$rc"`,
     `printf 'CLINE_PROBE_OUT_BEGIN\\n%s\\nCLINE_PROBE_OUT_END\\n' "$out"`,
-    `[ -e "${CLINE_CACHED_BINARY}" ] && printf 'CLINE_PROBE_BIN=present\\n' || printf 'CLINE_PROBE_BIN=missing\\n'`,
-    `[ -e "${GLIBC_LOADER}" ] && printf 'CLINE_PROBE_LOADER=present\\n' || printf 'CLINE_PROBE_LOADER=missing\\n'`,
+    `[ -x "${CLINE_CACHED_BINARY}" ] && printf 'CLINE_PROBE_BIN=present\\n' || printf 'CLINE_PROBE_BIN=missing\\n'`,
+    `printf 'CLINE_PROBE_LOADER_PATH=%s\\n' "$loader"`,
+    `[ -e "$loader" ] && printf 'CLINE_PROBE_LOADER=present\\n' || printf 'CLINE_PROBE_LOADER=missing\\n'`,
     `aliases=""; for a in ${GLIBC_ALIASES.join(' ')}; do [ -e "$a" ] && aliases="$aliases $a"; done`,
     `printf 'CLINE_PROBE_ALIASES=%s\\n' "$aliases"`,
     `printf 'CLINE_PROBE_LIBC=%s\\n' "$(ls /lib/ld-musl-* 2>/dev/null | head -n1)"`,
@@ -41,7 +50,7 @@ export function buildProbeScript() {
 /**
  * @description Parses the marker lines the probe script prints into a structured report.
  * @param {string} raw Combined stdout of the probe run.
- * @returns {{rc: number|null, out: string, bin: string, loader: string, aliases: string[], libc: string}}
+ * @returns {{rc: number|null, out: string, arch: string, bin: string, loader: string, loaderPath: string, aliases: string[], aliasesChecked: boolean, libc: string}}
  */
 export function parseProbeReport(raw) {
   const text = String(raw ?? '').replace(/\r\n/g, '\n');
@@ -54,9 +63,12 @@ export function parseProbeReport(raw) {
   return {
     rc: rcText === '' ? null : Number(rcText),
     out: outMatch ? outMatch[1].trim() : '',
+    arch: field('CLINE_PROBE_ARCH'),
     bin: field('CLINE_PROBE_BIN'),
     loader: field('CLINE_PROBE_LOADER'),
+    loaderPath: field('CLINE_PROBE_LOADER_PATH'),
     aliases: field('CLINE_PROBE_ALIASES').split(/\s+/).filter(Boolean),
+    aliasesChecked: /^CLINE_PROBE_ALIASES=/m.test(text),
     libc: field('CLINE_PROBE_LIBC'),
   };
 }
@@ -93,7 +105,7 @@ export function classifyProbe(report, opts = {}) {
     return {
       ok: false,
       code: 'glibc-binary-no-loader',
-      message: `the launcher reports ENOENT on ${CLINE_CACHED_BINARY}, which EXISTS: it is a glibc executable and ${GLIBC_LOADER} is absent${isMusl ? ' on this musl base' : ''} - the kernel is reporting the missing program interpreter (fix: the confined gcompat layer in Dockerfile.oshal)`,
+      message: `the launcher reports ENOENT on ${CLINE_CACHED_BINARY}, which EXISTS: it is a glibc executable and ${report.loaderPath || GLIBC_LOADER} is absent${isMusl ? ' on this musl base' : ''} - the kernel is reporting the missing program interpreter (fix: the confined gcompat layer in Dockerfile.oshal)`,
     };
   }
   if (/ENOENT/.test(report.out) && report.bin === 'missing') {
@@ -101,6 +113,13 @@ export function classifyProbe(report, opts = {}) {
   }
   if (/Error relocating|symbol not found/.test(report.out)) {
     return { ok: false, code: 'glibc-symbols-unresolved', message: `the loader is present but glibc symbols are unresolved: ${firstLine(report.out)}` };
+  }
+  if (report.arch === 'aarch64' && report.libc === '/lib/ld-musl-aarch64.so.1'
+      && report.rc === 134 && report.bin === 'present' && report.loader === 'present'
+      && report.loaderPath === GLIBC_ARM64_LOADER && report.aliasesChecked && report.aliases.length === 0
+      && !version && !/ENOENT/.test(report.out)) {
+    return { ok: false, code: 'arm64-musl-unavailable',
+      message: 'Cline aborts on aarch64 musl despite its executable and confined loader being present; Dockerfile.oshal supports this image with the Cline fallback unavailable.' };
   }
   return { ok: false, code: 'exit-nonzero', message: `cline --version exited ${report.rc}${version ? '' : ' without printing a version'}: ${firstLine(report.out) || '(no output)'}` };
 }
@@ -140,10 +159,12 @@ export function runProbe(target) {
  * @description CLI entry: `--image <tag>` or `--container <name>`, optional `--quiet`.
  * Exit 0 = the fallback entrypoint starts. Exit 1 = it does not (reason on stderr).
  * Exit 2 = usage error or docker could not run the artifact.
+ * Exit 3 = the proved, confined aarch64-musl abort supported by Dockerfile.oshal; unavailable, never a working entrypoint.
  * @param {string[]} argv Process arguments after the script path.
+ * @param {(file: string, args: string[]) => string} [runner] Optional command boundary for isolated callers/tests.
  * @returns {number} The process exit code.
  */
-export function main(argv) {
+export function main(argv, runner) {
   const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
   const image = flag('--image');
   const container = flag('--container');
@@ -155,17 +176,18 @@ export function main(argv) {
   const where = image ? `image ${image}` : `container ${container}`;
   let raw;
   try {
-    raw = runProbe({ image, container });
+    raw = runProbe({ image, container, runner });
   } catch (err) {
     const detail = String(err?.stderr || err?.message || err).trim().split('\n').slice(-1)[0];
     process.stderr.write(`cline entrypoint probe: could not run the probe in ${where}: ${detail}\n`);
     return 2;
   }
   const verdict = classifyProbe(parseProbeReport(raw), { requireConfined: Boolean(image) });
-  const line = `cline entrypoint probe [${where}] ${verdict.ok ? 'PASS' : 'FAIL'} (${verdict.code}): ${verdict.message}\n`;
+  const unavailable = verdict.code === 'arm64-musl-unavailable';
+  const line = `cline entrypoint probe [${where}] ${verdict.ok ? 'PASS' : unavailable ? 'UNAVAILABLE' : 'FAIL'} (${verdict.code}): ${verdict.message}\n`;
   if (verdict.ok) { if (!quiet) process.stdout.write(line); return 0; }
   process.stderr.write(line);
-  return 1;
+  return unavailable ? 3 : 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The demo's remaining interactions end to end: the directory's empty state, Studio's use-as-context, Commons drafts per room, keyboard tabs (arrows, Home, End), an application leading to its room, Room details and the private space opening (they opened nothing before), Orbit's hub ask and its way back, a fresh conversation and the phone-width menu.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Align day-focus wording with operational headings while retaining ordering, device memory and real games question checks.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Exercise day focus through native Settings while retaining live ordering, local memory and application/room transitions; empty conversations show actual-work briefings.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -276,13 +277,27 @@ describe('Routines panel over the schedules and Workflow Studio routes', () => {
 function homeTask() {
   fixture.state.tasks.unshift({ id: 'task-home', title: 'Synthetic hearth: evening lights', status: 'running', kind: 'simple', result: '', createdAt: iso(-4 * HOUR), finishedAt: iso(-4 * HOUR) } as typeof fixture.state.tasks[number]);
 }
-const focus = (value: string) => page.selectOption('#scene-picker', value);
+async function openSettings() {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.waitForSelector('#full-dialog #scene-picker');
+}
+async function currentFocus() {
+  await openSettings();
+  const value = await page.locator('#scene-picker').inputValue();
+  await page.keyboard.press('Escape');
+  return value;
+}
+async function focus(value: string) {
+  await openSettings();
+  await page.selectOption('#scene-picker', value);
+  await page.keyboard.press('Escape');
+}
 
 describe('day focus (workday / evening at home)', () => {
   it('Studio orders its work by the focus, changes its heading and remembers the choice on this device only', async () => {
     homeTask();
     await open('/studio', '.running-row');
-    expect(await page.locator('#scene-picker').inputValue()).toBe('workday');
+    expect(await currentFocus()).toBe('workday');
     expect(await page.locator('.studio-conversation h1').innerText()).toBe('Recent Work');
     const rows = () => page.locator('.running-row').evaluateAll(es => es.map(e => e.getAttribute('data-work')));
     expect(await rows()).not.toContain('task:task-home');
@@ -292,12 +307,14 @@ describe('day focus (workday / evening at home)', () => {
     expect(evening.indexOf('task:task-home')).toBeGreaterThanOrEqual(0);
     expect(evening.indexOf('task:task-home')).toBeLessThan(evening.indexOf(`ticket:${LEDGER}`));
     expect(await page.locator('.running-row').count()).toBe(4);
-    expect(await page.locator('.studio-conversation .user-message').first().innerText()).toContain('What is ready for this evening?');
+    expect(await page.locator('.studio-conversation .user-message').count()).toBe(0);
+    expect(await page.locator('.work-briefing .badge').innerText()).toBe('Evening');
+    expect(await page.locator('.work-briefing').innerText()).toContain('Synthetic failed task');
     expect(await page.locator('#toast').innerText()).toContain('Nothing is hidden');
     expect(await page.locator('.context-app small').innerText()).toMatch(/^(Home & life|Creative & games)/);
     expect(await page.evaluate(() => localStorage.getItem('oshal-experience:scene:studio'))).toBe('"evening"');
     await page.reload(); await page.waitForSelector('.running-row');
-    expect(await page.locator('#scene-picker').inputValue()).toBe('evening');
+    expect(await currentFocus()).toBe('evening');
     expect(fixture.state.calls.some(c => /scene/i.test(c))).toBe(false);
     expect(errors).toEqual([]);
   });

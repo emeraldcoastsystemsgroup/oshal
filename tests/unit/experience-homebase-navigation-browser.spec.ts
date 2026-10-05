@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Drive shipped Homebase source on loopback to verify admitted member/resource return, refused remembered surfaces and principal/package-scoped unsent drafts with caret-preserving recovery. Package entry attributes and member/auth APIs are synthetic; this does not prove deployed admission or real-user approval.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Assert focus before recovery and after successful ticket/task reads and completed source rendering; the retry button also disappears during loading.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Verify native Appearance and ordinary display settings without showcase chrome, including signed-in guests; retain focused unsent drafts under the shipped theme API.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -71,15 +72,57 @@ async function member(tool: string, surface: string) {
 const inputState = (id = 'composer-input') => page.locator(`#${id}`).evaluate((node: HTMLInputElement) => ({
   value: node.value, focused: document.activeElement === node, start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection,
 }));
-/** Change the skin through the shipped event handler while an input owns focus. */
+/** Paint through the shipped theme API while an unsent input owns focus; the modal picker has separate user-journey coverage. */
 async function repaintWithSkin() {
-  await page.locator('#universal-skin-picker').evaluate((node: HTMLSelectElement) => {
-    node.value = Array.from(node.options).find(option => option.value !== node.value)!.value;
-    node.dispatchEvent(new Event('change', { bubbles: true }));
+  await page.evaluate(() => {
+    const switcher = (window as any).OSHAL_STYLE_SWITCHER;
+    const next = switcher.FLAT_SKINS.find((skin: { id: string }) => skin.id !== switcher.currentSkin());
+    switcher.applySkin(next.id);
   });
 }
 
 describe('Home, Business and Classroom navigation and drafts', () => {
+  it.each([
+    { app: 'home-experience', brand: 'Home' },
+    { app: 'business-experience', brand: 'Business' },
+    { app: 'classroom-experience', brand: 'Classroom' },
+  ])('$app keeps its native header and offers a keyboard-accessible Appearance dialog', async ({ app, brand }) => {
+    await open(app);
+    expect(await page.locator('.preview-bar,.study-bar,.demo-tag,.preview-selects,.page-footer').count()).toBe(0);
+    expect(await page.locator('.home-sidebar .wordmark').textContent()).toContain(brand);
+    expect(await page.locator('.home-sidebar .wordmark').getAttribute('href')).toBe('/portal');
+    expect(await page.locator('.main-top #home-search-input').isVisible()).toBe(true);
+    expect(await page.locator('.main-top [data-action="policy"]').isVisible()).toBe(true);
+    const appearance = page.locator('.main-top [data-action="appearance"]');
+    await appearance.focus(); await appearance.press('Enter');
+    expect(await page.getByRole('dialog', { name: 'Appearance' }).isVisible()).toBe(true);
+    const picker = page.locator('#homebase-dialog #universal-skin-picker');
+    const next = await picker.evaluate((node: HTMLSelectElement) => Array.from(node.options).find(option => option.value !== node.value)!.value);
+    await picker.selectOption(next);
+    expect(await page.locator('body').getAttribute('data-skin')).toBe(next);
+    expect(await page.getByRole('dialog', { name: 'Appearance' }).isVisible()).toBe(true);
+    await page.keyboard.press('Escape');
+    expect(await page.locator('#homebase-dialog').count()).toBe(0);
+    expect(await appearance.evaluate(node => document.activeElement === node)).toBe(true);
+    await page.reload();
+    await expect.poll(() => page.locator('body').getAttribute('data-skin')).toBe(next);
+    await page.locator('.main-top [data-action="configure"]').click();
+    expect(await page.getByRole('dialog', { name: 'Display settings' }).isVisible()).toBe(true);
+    expect(await page.locator('.config-flow').count()).toBe(0);
+    expect(await page.locator('#homebase-dialog').textContent()).not.toMatch(/preset|Version \d|never grants|authorization, independently/i);
+    await page.keyboard.press('Escape');
+  });
+
+  it.each(['home-experience', 'business-experience', 'classroom-experience'])('%s offers Appearance to a signed-in guest without exposing Configure', async app => {
+    await page.route('**/api/auth/user', route => route.fulfill({ json: { authenticated: true, user: fixture.state.user, mode: 'mock', guestMode: true, capabilities: null } }));
+    await open(app);
+    expect(await page.locator('[data-action="configure"]').count()).toBe(0);
+    await page.locator('.main-top [data-action="appearance"]').click();
+    expect(await page.getByRole('dialog', { name: 'Appearance' }).isVisible()).toBe(true);
+    expect(await page.locator('#universal-skin-picker').isVisible()).toBe(true);
+    await page.keyboard.press('Escape');
+  });
+
   it.each(MEMBERS)('$app restores its admitted member/resource after Back, refresh and package return', async ({ app, tool, surface, audience }) => {
     await open(app); await member(tool, surface);
     const resource = `/fixture/surface/${surface}?audience=${audience}&fixtureResource=own-1#part`;

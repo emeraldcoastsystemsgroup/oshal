@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com | The paint-timing case waits for the CONNECTING placeholder to be replaced, a marker every preset shares. Since #1042 the classroom placeholder reads "Reading your classroom", so waiting for "Reading your home" to vanish was true on first paint and timed nothing.
  * 12 | maintainer@emeraldcoastsystemsgroup.com | Use operational panel labels in existing behavior checks; retain actual application data, interactions and caller-context assertions.
  * 13 | maintainer@emeraldcoastsystemsgroup.com | Keep directory Escape focus on its visible opener after delayed Commons history reads on desktop and phone and pin-triggered close repaint across all four full layouts.
+ * 14 | maintainer@emeraldcoastsystemsgroup.com | Use native application settings and the portal launcher after removing preview chrome; retain skin persistence and propagation to an already loaded member.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -94,7 +95,8 @@ describe('experience shells over the real routes', () => {
     await open('/studio', '.full-studio');
     await page.waitForSelector('.running-row');
     const text = await bodyText();
-    expect(text).toContain('LIVE SWARM / 19 APPS');
+    expect(await page.locator('.study-bar,.preview-bar').count()).toBe(0);
+    expect(await page.locator('.studio-top').isVisible()).toBe(true);
     expect(text).toContain('Synthetic ledger review');
     expect(text).toContain('synthetic');
     expect(text).not.toMatch(FIXTURE_ERA);
@@ -438,18 +440,21 @@ describe('experience shells over the real routes', () => {
     expect(errors).toEqual([]);
   });
 
-  it('the portal lists discovered packages, the chooser checks opening, and skins are remembered per layout', async () => {
+  it('the portal opens discovered packages and native settings remember appearance per application', async () => {
     await open('/portal', '[data-experience-package]');
     expect(await page.locator('[data-experience-package]').count()).toBe(7);
     expect(await page.locator('[data-experience-package="orbit-experience"]').getAttribute('href')).toBe('/api/ui/experiences/orbit-experience/open');
-    await open('/studio', '#universal-skin-picker');
+    await open('/studio', '.full-studio');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.selectOption('#universal-skin-picker', 'ocean');
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('ocean');
+    await page.keyboard.press('Escape');
     await page.reload(); await page.waitForSelector('.full-studio');
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('ocean');
     await open('/jarvis', '.full-jarvis');
     expect(await page.evaluate(() => document.body.dataset.skin)).toBe('jarvis');
-    await page.selectOption('[data-role="experience-picker"]', 'orbit-experience');
+    await open('/portal', '[data-experience-package]');
+    await page.locator('[data-experience-package="orbit-experience"]').click();
     await page.waitForURL(/\/fixture\/experience\/orbit\.html$/);
     expect(await bodyText()).toContain('orbit.html');
   });
@@ -464,19 +469,23 @@ describe('experience shells over the real routes', () => {
   });
 
   it('a chosen skin becomes the saved cockpit appearance and reaches an embedded application surface', async () => {
-    await open('/studio', '#universal-skin-picker');
+    await open('/studio', '.full-studio');
     expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBeNull();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.selectOption('#universal-skin-picker', 'orbit');
     expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('orbit');
     expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('orbit');
-    await page.keyboard.press('Control+k');
-    await page.fill('#app-search', 'ledger');
-    await page.locator('.catalog-card .catalog-main').click();
-    await page.locator('#full-dialog').getByRole('button', { name: 'Open here' }).click();
-    const frame = page.frameLocator('#full-dialog iframe.embed-frame');
+    await page.keyboard.press('Escape');
+    await page.locator('.studio-sidebar [data-action="select-app"][data-app="ledger"]').click();
+    await page.locator('.full-context [data-action="toggle-embed"]').click();
+    const loadedMember = await page.locator('.full-context iframe.embed-frame').elementHandle();
+    const frame = page.frameLocator('.full-context iframe.embed-frame');
     await expect.poll(() => frame.locator('html').getAttribute('data-theme')).toBe('orbit');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.selectOption('#universal-skin-picker', 'family');
     await expect.poll(() => frame.locator('html').getAttribute('data-theme')).toBe('family');
+    expect(await loadedMember?.evaluate(node => node.isConnected)).toBe(true);
+    await page.keyboard.press('Escape');
     expect(await page.evaluate(() => localStorage.getItem('cockpit-theme'))).toBe('family');
   });
 

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Align source recovery notices with existing themed surfaces and responsive gutters, preserving main and dialog placement.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Let standalone application shells fill the viewport after removing preview chrome, with display choices in native settings.
  */
 /* Additions the live shells need beyond the prototype stylesheets: embedded application
    frames, status tones, loading and sign-in states, and anchor variants of prototype buttons. */
@@ -140,3 +141,17 @@ a.action.primary,a.action{display:inline-flex;align-items:center;gap:6px;cursor:
 .work-source-status p{margin:0 0 10px}
 .work-source-status p:last-child{margin-bottom:0}
 .home-main .work-source-status,dialog .work-source-status{margin-left:0;margin-right:0}
+
+/* These shared rules follow the package styles; application headers keep their own height. */
+.experience .home-shell,.full-swarm .app-shell{min-height:100vh}
+.experience a.wordmark{color:inherit;text-decoration:none}
+.experience .main-top{flex-wrap:wrap}
+.experience .top-controls{min-width:0;max-width:100%;flex-wrap:wrap}
+.full-studio .studio-workspace{min-height:calc(100vh - 70px)}
+.full-orbit .orbit-content{min-height:calc(100vh - 78px)}
+.full-commons .commons-shell{min-height:calc(100vh - 65px)}
+.full-commons .commons-room{min-height:calc(100vh - 189px)}
+.application-settings{display:grid;gap:18px}
+.application-settings label{display:grid;gap:8px;font-size:13px}
+.application-settings select{width:100%;max-width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface,var(--paper));color:var(--ink)}
+@media(max-width:720px){.full-studio .studio-workspace{min-height:calc(100vh - 60px)}}
