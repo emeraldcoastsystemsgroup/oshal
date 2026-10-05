@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | The reduced-motion pass reads the frame position once, right after the frame appears, so only an instant scroll passes it; the other pass still polls for the smooth scroll
  * 6 | maintainer@emeraldcoastsystemsgroup.com | The learner card now carries the learner's own level and XP progress from Little Monsters' dashboard (built by the home build lane); the case still proves no classwork completion is claimed, and that the only progress bar is the XP bar.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Actual renderer source-state cases: loading,503/refusal/partial/unreadable/empty and keyboard retry without invented totals or discarded successful rows.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Follow the native Display settings label with the exact two signed-in member controls and zero guest controls; retain the existing guest access assertions.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir } from 'node:fs/promises';
@@ -270,12 +271,12 @@ describe('homebase gap closure over the real routes', () => {
     expect(await page.locator('#homebase-dialog a', { hasText: 'Open Jarvis' }).count()).toBe(1);
   });
 
-  it('"Configure home" is offered to a signed-in member and hidden for a guest', async () => {
+  it('"Display settings" is offered to a signed-in member and hidden for a guest', async () => {
     await open('/homebase?preset=family', '.home-shell');
-    expect(await page.getByRole('button', { name: /^Configure (this )?home$/ }).count()).toBe(2);
+    expect(await page.getByRole('button', { name: 'Display settings', exact: true }).count()).toBe(2);
     await page.route('**/api/auth/user', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ authenticated: true, user: { sub: 'synthetic-guest', email: '', preferred_username: 'Synthetic Guest' }, mode: 'mock', guestMode: true, capabilities: null }) }));
     await page.reload(); await page.waitForSelector('.home-shell'); await page.waitForLoadState('networkidle');
-    expect(await page.getByRole('button', { name: /Configure/ }).count()).toBe(0);
+    expect(await page.getByRole('button', { name: 'Display settings', exact: true }).count()).toBe(0);
     expect(await page.getByRole('button', { name: 'My access' }).count()).toBe(1);
     expect(errors).toEqual([]);
   });

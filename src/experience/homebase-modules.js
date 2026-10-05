@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Keep temporary navigation and unsent questions scoped to the exact principal, package and preset; retain input selection across repaint without sending anything.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Extract shared member catalog, frame and navigation helpers from the Homebase renderer, keeping fresh admission and frame source checks in one bounded module.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Extract native page display and dialog helpers; keep appearance in an ordinary signed-in dialog and retain semantic opener focus through repaint.
  */
 (function (root, factory) {
   var api = factory();
@@ -22,6 +23,77 @@
   /** The Settings, Location page: turning a check-in on needs its fresh sign-in and the browser's permission there. */
   const LOCATION_SETTINGS = '/cockpit/tools/location.html';
   const PRECISION = { exact: 'exact', block: 'block (about 110 m)', city: 'city (about 1 km)', 'place-only': 'place only' };
+
+  /**
+   * @description Render the application's native page and dialogs over current controller data, preserving drafts and the control that opened a panel.
+   * @param {object} ctx Current markup, navigation, data and dialog callbacks from the Homebase controller.
+   * @returns {object} Page renderers and dialog actions.
+   */
+  function createDisplay(ctx) {
+    const { root, esc, btn, link, pill, avatar, preset, key, data, state, S, me, displayName, isTeacher, isLearner, groupName, groupMembers, peopleList, hostGroups, featuredApps, toolById, canConfigure } = ctx;
+    const space = key === 'company' ? 'workspace' : key === 'classroom' ? 'classroom' : 'home';
+    let kind = null, id = null, opener = null, openerFocus = null;
+    function sidebar() {
+      const snapshot = ctx.snapshot(), lm = key === 'classroom' && data.edu && data.edu.installed;
+      const people = peopleList().slice(0, 6);
+      const toolSection = hostGroups().map(g => `<div class="side-section"><div class="side-kicker">${esc(g.kicker)}</div><div class="tool-nav">${g.tools.slice(0, 6).map(t => btn(`<span class="nav-symbol" aria-hidden="true">${esc(t.label.slice(0, 1))}</span>${esc(t.label)}`, 'tool', 'nav-link', `data-tool="${esc(t.id)}" ${state.page === 'tool' && state.tool === t.id ? 'aria-current="page"' : ''}`)).join('')}</div></div>`).join('');
+      const name = { family: 'Home', company: 'Business', classroom: 'Classroom' }[key] || S.experienceFor(document.body.dataset.experienceApp || key)?.label;
+      return `<aside class="home-sidebar"><div><a class="wordmark ${key === 'classroom' ? 'class-brand' : ''}" href="/portal" aria-label="Applications">${lm ? '<img class="monster-logo" src="/api/education/logo-96.png" alt="">' : `<span class="brand-glyph">${preset.mark}</span>`}${esc(name)}</a><p class="workspace-label">${groupName() ? `${esc(groupName())} · ${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'}` : `${esc(displayName())}’s ${key === 'family' ? 'home' : key === 'classroom' ? 'classroom' : 'company swarm'}`} · ${snapshot.apps.length} apps</p></div><nav class="side-nav" aria-label="Homebase navigation">${preset.nav.map(([page, label], i) => btn(`<span class="nav-symbol" aria-hidden="true">${['⌂', '▦', '☷', '◎', '◇', '↻', '▤'][i] || '·'}</span>${esc(label)}`, 'page', 'nav-link', `data-page="${page}" ${page === state.page ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="side-section"><div class="side-kicker">${preset.peopleKicker}</div>${people.map(ctx.memberLine).join('')}</div>${toolSection}<div class="side-section"><div class="side-kicker">YOUR APPLICATIONS</div>${featuredApps().slice(0, 5).map(a => btn(`<span class="nav-symbol" aria-hidden="true">${esc(a.name.slice(0, 1))}</span>${esc(a.name)}`, 'app', 'nav-link', `data-app="${esc(a.id)}"`)).join('')}${btn('<span class="nav-symbol" aria-hidden="true">…</span>All applications', 'all-apps', 'nav-link')}</div><div class="sidebar-note"><strong>${esc(preset.sidebarNote[0])}</strong>${esc(preset.sidebarNote[1])}${canConfigure() ? btn('Display settings', 'configure', 'button sidebar-config') : ''}${link('Help and guides ↗', '/api/help', 'text-button sidebar-help', 'target="_blank" rel="noopener"')}</div></aside>`;
+    }
+    function hero() {
+      if (state.page === 'tool') return '';
+      const snapshot = ctx.snapshot(), shell = ctx.shell(), learner = isLearner();
+      const heading = learner ? (key === 'family' ? `Your day, ${displayName().split(' ')[0]}.` : `Ready to explore, ${displayName().split(' ')[0]}?`) : preset.title;
+      const admins = groupMembers().filter(m => m.role === 'admin').length;
+      const badgeText = key === 'family' ? (groupName() ? `${groupMembers().length} ${groupMembers().length === 1 ? 'person' : 'people'} · ${admins} admin${admins === 1 ? '' : 's'} · ${shell.workCount(shell.openWork().length, 'open items')}` : `${snapshot.apps.length} apps · ${shell.workCount(shell.openWork().length, 'open items')}`) : key === 'classroom' ? (data.edu && data.edu.ok ? `${isTeacher() ? 'Teacher' : 'Student'} · ${data.edu.classes.length} class${data.edu.classes.length === 1 ? '' : 'es'}` : 'Classroom') : `${shell.workCount(shell.openWork().length, 'open items')} · ${shell.overviewCount(`${snapshot.botsOnline} assistants online`)}`;
+      const art = key === 'family' ? '<div class="family-scene" role="img" aria-label="A little house among green trees"><span class="plant"></span><span class="little-house"></span><span class="plant"></span></div>' : key === 'classroom' ? (data.edu && data.edu.installed ? '<img class="hero-monster" src="/api/education/logo-256.png" alt="Little Monsters study companion">' : '') : '<div class="company-emblem" aria-hidden="true"><span></span><span></span><span></span></div>';
+      return `<section class="hero ${key === 'company' ? 'professional-hero' : ''}"><div><div class="eyebrow">${esc(preset.eyebrow)}</div><h1>${esc(heading)}</h1><p>${learner ? 'Your own learning space, with the shared moments close by.' : esc(preset.subtitle)}</p><div class="hero-cta">${pill(badgeText)}</div></div>${art}</section>`;
+    }
+    const pageName = () => (state.page === 'tool' && toolById(state.tool) ? toolById(state.tool).label : state.page === 'search' ? 'Search' : ((preset.nav.concat(preset.tabs || [])).find(n => n[0] === state.page) || [])[1] || 'Home');
+    function header() {
+      const search = `<form id="home-search" class="home-search" role="search"><label class="screenreader" for="home-search-input">Search in this ${space}</label><input id="home-search-input" type="search" maxlength="100" placeholder="Search in this ${space}…" value="${esc(state.search ? state.search.query : '')}"><button class="text-button" type="submit" aria-label="Search">⌕</button></form>`;
+      return `<header class="main-top"><div class="breadcrumb">${esc(groupName() || preset.name)} / ${esc(pageName())}</div><div class="top-controls">${search}<span class="date-chip">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>${btn('Appearance', 'appearance')}${canConfigure() ? btn('Display settings', 'configure') : ''}${btn('My access', 'policy')}${btn('About this data', 'about', 'text-button')}${avatar(me().initials, 0)}</div></header>`;
+    }
+    function appearance() { return ['Appearance', `<div class="application-settings"><label for="universal-skin-picker">Theme</label>${S.skinPicker()}</div>`]; }
+    function configuration() {
+      const config = ctx.config();
+      return ['Display settings', `<p>Choose the layout and panels to show on this device.</p><form id="config-form"><label class="field">Theme<select id="skin-choice">${window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.map(s => `<option value="${s.id}" ${(document.body.dataset.skin || preset.skin) === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label><label class="field">Density<select id="density-choice"><option value="comfortable" ${config.density === 'comfortable' ? 'selected' : ''}>Comfortable</option><option value="compact" ${config.density === 'compact' ? 'selected' : ''}>Compact</option></select></label><label class="config-check"><input id="show-updates" type="checkbox" ${config.updates ? 'checked' : ''}>Show activity</label><label class="config-check"><input id="show-week" type="checkbox" ${config.week ? 'checked' : ''}>Show calendar week</label>${ctx.configExtras()}<div class="dialog-actions"><button type="submit" class="button primary">Save settings</button>${config.previous ? btn('Restore previous settings', 'restore') : ''}</div></form>`];
+    }
+    /** Find the same visible control after an asynchronous read replaces the page. */
+    function restoreOpener() {
+      if (!opener || opener.isConnected) return;
+      const attributes = ['id', 'data-action', 'data-app', 'data-page', 'data-tool', 'data-work', 'data-event', 'aria-label'].filter(name => opener.hasAttribute(name));
+      const candidates = attributes.length ? Array.from(root.querySelectorAll(opener.tagName)).filter(node => attributes.every(name => node.getAttribute(name) === opener.getAttribute(name)) && !node.disabled && node.getClientRects().length && getComputedStyle(node).visibility === 'visible') : [];
+      opener = candidates.find(node => node.className === opener.className && node.textContent === opener.textContent) || candidates[0] || null;
+    }
+    function close() {
+      const dialog = document.getElementById('homebase-dialog'); if (dialog) dialog.close();
+      document.getElementById('dialog-host').replaceChildren(); kind = null; id = null;
+      restoreOpener();
+      if (opener && opener.isConnected) opener.focus();
+      if (openerFocus) ctx.navigation().restore(openerFocus);
+    }
+    function openDialog(nextKind, nextId) {
+      const [title, body] = ctx.dialogBody(nextKind, nextId); if (!title) return;
+      kind = nextKind; id = nextId === undefined ? null : nextId;
+      document.getElementById('dialog-host').innerHTML = `<dialog id="homebase-dialog" class="config-dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2>${btn('×', 'close', 'close', 'aria-label="Close panel"')}</div><div class="dialog-body">${body}</div></dialog>`;
+      const dialog = document.getElementById('homebase-dialog'); dialog.showModal(); dialog.addEventListener('cancel', e => { e.preventDefault(); close(); }); dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
+      ctx.navigation().restore(); ctx.afterDialog(nextKind, nextId);
+    }
+    function open(nextKind, nextId) { opener = document.activeElement; openerFocus = ctx.navigation().capture(); openDialog(nextKind, nextId); }
+    function render() {
+      const focus = ctx.navigation().capture(), activeId = document.activeElement?.id;
+      const shown = document.getElementById('toast')?.textContent || '';
+      root.innerHTML = ctx.markup();
+      if (window.OSHAL_STYLE_SWITCHER) { const exp = root.querySelector('.experience'), def = window.OSHAL_STYLE_SWITCHER.FLAT_SKINS.find(s => s.id === (document.body.dataset.skin || preset.skin)); if (exp && def) exp.dataset.skin = def.alias || def.id; }
+      if (shown) document.getElementById('toast').textContent = shown;
+      restoreOpener();
+      if (kind) openDialog(kind, id);
+      ctx.navigation().restore(focus);
+      if (!focus && kind === 'appearance' && activeId === 'universal-skin-picker') document.getElementById(activeId)?.focus();
+    }
+    return { sidebar, hero, header, appearance, configuration, render, close, open, kind: () => kind };
+  }
 
   /** Temporary tab state is display context only; the caller must freshly admit every restored member. */
   function createNavigation(ctx) {
@@ -398,10 +470,10 @@
     /** @description The configure dialog's layout choices, saved on this device: how the assistant offers help, what greets you first, and which modules stay on the front page. */
     function configExtras() {
       const c = ctx.config(), hide = c.hide || [];
-      const lead = [['room', 'The room · the preset’s order'], ['day', 'My day · the calendar first'], ['work', 'The work · open items first']];
+      const lead = [['room', 'Overview'], ['day', 'Calendar first'], ['work', 'Open work first']];
       const keep = [['room', `People in this ${space}`], ['calendar', 'Calendar'], ['shopping', 'Shopping list']];
       const bot = `<label class="field">Your assistant helps by<select id="bot-choice"><option value="suggest" ${c.bot !== 'ask' ? 'selected' : ''}>Offering a catch-up of finished work</option><option value="ask" ${c.bot === 'ask' ? 'selected' : ''}>Waiting for me to ask</option></select></label>`;
-      return `${bot}<fieldset class="config-fieldset"><legend>What greets you?</legend>${lead.map(([v, l]) => `<label class="config-check"><input type="radio" name="lead-choice" value="${v}" ${(c.lead || 'room') === v ? 'checked' : ''}>${l}</label>`).join('')}</fieldset><fieldset class="config-fieldset"><legend>Keep close at hand</legend>${keep.map(([v, l]) => `<label class="config-check"><input type="checkbox" data-keep="${v}" ${hide.includes(v) ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>`;
+      return `${bot}<fieldset class="config-fieldset"><legend>Page order</legend>${lead.map(([v, l]) => `<label class="config-check"><input type="radio" name="lead-choice" value="${v}" ${(c.lead || 'room') === v ? 'checked' : ''}>${l}</label>`).join('')}</fieldset><fieldset class="config-fieldset"><legend>Visible panels</legend>${keep.map(([v, l]) => `<label class="config-check"><input type="checkbox" data-keep="${v}" ${hide.includes(v) ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>`;
     }
     /**
      * @description A front-page column after the device's layout choices: modules unticked under "Keep close at hand"
@@ -421,5 +493,5 @@
     return { locations, locationOnDialog, devicesDialog, room, familyAdmin, peopleRolesDialog, routinesPage, searchPage, filesPage, tasksPage, dayAgenda, eventDialog, progressBlock, notices, bubble, composer, roomTabs, configExtras, arrange };
   }
 
-  return { create: create, createNavigation: createNavigation, createHosting: createHosting, LOCATION_SETTINGS: LOCATION_SETTINGS };
+  return { create: create, createDisplay: createDisplay, createNavigation: createNavigation, createHosting: createHosting, LOCATION_SETTINGS: LOCATION_SETTINGS };
 });

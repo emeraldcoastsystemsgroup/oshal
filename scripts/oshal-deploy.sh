@@ -17,6 +17,7 @@
 # 11 | maintainer@emeraldcoastsystemsgroup.com   | The api must live THROUGH the bot recreate, and the run now says whether it did. On 2026-09-05 the storm starved the api's event loop, a transaction idled past Postgres's idle_in_transaction_session_timeout, the termination reached a checked-out pg client nothing owned, the crash guards exited the process, Docker restarted it, and this script printed DEPLOYED over about a minute of api downtime that only the container's RestartCount recorded. scripts/api-storm-probe.sh snapshots RestartCount + the clock before the recreate and, after the census gate, counts restarts and `idle-in-transaction` api-log lines inside that window; a non-zero verdict is exit 6 (deployed and SERVING - the downtime already happened, so nothing is rolled back - but the api did not survive its own deploy). The recreate pacing is unchanged and now printed with the RestartCount, so the log states which of pacing or the connection-error fix the run relied on. The fix itself is src/shared/services/database/pool-connection-errors.ts; the probe's own proof is tests/unit/api-storm-probe.spec.ts.
 # 12 | maintainer@emeraldcoastsystemsgroup.com   | The exit-6 text branches on which trigger the probe reported. A terminated transaction the api survived is the line this change's own connection owner writes, so it is the likelier exit 6 after this lands, and reporting it as a restart sends the operator after one that never happened - the defect the exit-2 arm above exists to avoid.
 # 13 | maintainer@emeraldcoastsystemsgroup.com   | Exit 2 has two causes since the probe began refusing unreadable log windows, so the UNVERIFIED sentences say "could not be taken (not inspectable, or log window not readable)" instead of naming only inspection - the probe line directly above them would otherwise contradict the reason given.
+# 14 | maintainer@emeraldcoastsystemsgroup.com | Accept only the Cline probe's distinct confined aarch64-musl UNAVAILABLE verdict as the existing Dockerfile limitation; never report that fallback as starting. All other artifact and deployment gates remain strict.
 # =============================================================================
 #
 # Usage:  bash scripts/oshal-deploy.sh [--preview] [--skip-build] [--no-rollback] [--allow-unpushed] [--dry-run]
@@ -171,11 +172,16 @@ fi
 # thing that proves it is running the real launcher inside the artifact (2026-09-17: every gate
 # here was green while every failed-over ticket died on ENOENT). Exit 2 = the probe could not run,
 # which is not a verdict and is refused just the same - a gate that cannot verify does not skip.
+# Exit 3 proves the confined aarch64-musl abort already supported by Dockerfile.oshal;
+# the image is supported with that fallback UNAVAILABLE, not a working Cline entrypoint.
 if [ -f scripts/check-cline-entrypoint.mjs ]; then
-  if ! timeout 300 node scripts/check-cline-entrypoint.mjs --image "$IMAGE" --quiet >>"$RUN_LOG" 2>&1; then
-    log "IMAGE VERIFY FAILED: cline fallback entrypoint cannot start in $IMAGE (see $RUN_LOG) — stack untouched"; exit 1
-  fi
-  log "image verified: cline fallback entrypoint starts"
+  timeout 300 node scripts/check-cline-entrypoint.mjs --image "$IMAGE" --quiet >>"$RUN_LOG" 2>&1
+  CLINE_PROBE_RC=$?
+  case "$CLINE_PROBE_RC" in
+    0) log "image verified: cline fallback entrypoint starts" ;;
+    3) log "image limitation: Cline fallback UNAVAILABLE on confined aarch64 musl (Dockerfile.oshal supported-image contract)" ;;
+    *) log "IMAGE VERIFY FAILED: cline fallback entrypoint cannot start in $IMAGE (see $RUN_LOG) — stack untouched"; exit 1 ;;
+  esac
 fi
 
 # ── Classify services by their compose-declared image (NEVER by name) ───────
