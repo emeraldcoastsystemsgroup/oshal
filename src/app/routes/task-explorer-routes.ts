@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | CM-3: Added /explorer/tickets/:ticketId/status-history endpoint for Process tab
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Passed exact authenticated identity and explicit operator authority into workspace browse, tree, and preview handlers before filesystem resolution.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Scope fallback project discovery to current readable caller tasks.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | GET /explorer/tickets/:ticketId/status-history answers 404 unless the caller may use that ticket (canReadCockpitTicketOrTask), like the cockpit's own history route (route review 2026-10-05).
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -15,7 +16,7 @@ import { TaskExplorerService } from '@/features/task-explorer';
 import { createChildLogger } from '@/shared/logger';
 import { getCaller, isOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '../composition-root';
-import { canReadCockpitTask } from './cockpit-resource-access';
+import { canReadCockpitTask, canReadCockpitTicketOrTask } from './cockpit-resource-access';
 
 const logger = createChildLogger({ module: 'task-explorer-routes' });
 
@@ -233,6 +234,10 @@ function createStatusHistoryHandler(ctx: AppContext) {
     }
 
     try {
+      if (!await canReadCockpitTicketOrTask(ctx, req, ticketId)) {
+        res.status(404).json({ success: false, error: 'Ticket not found' });
+        return;
+      }
       const history = await ctx.ticketService.getStatusHistory(ticketId, 50);
       logger.info(
         { ticketId, count: history.length, durationMs: Date.now() - startedAt },

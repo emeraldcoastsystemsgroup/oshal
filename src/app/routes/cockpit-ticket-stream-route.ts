@@ -4,25 +4,16 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Authorize ticket SSE before subscribing and recheck current rights before each event and heartbeat.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The ticket-else-task check moved unchanged to cockpit-resource-access.ts (canReadCockpitTicketOrTask) so other cockpit routes share it.
  */
 import type { Request, Response } from 'express';
 import type { AppContext } from '../composition-root';
-import { canReadCockpitTask, canReadCockpitTicket } from './cockpit-resource-access';
+import { canReadCockpitTicketOrTask as readable } from './cockpit-resource-access';
 
 /** @description A canonical ticket ID and its activity payload; wildcard IDs are never delivered. */
 export type TicketActivityEvent = { ticketId: string; entry: Record<string, unknown> };
 /** @description An event-bus observer owned by one authenticated stream connection. */
 export type TicketActivityListener = (event: TicketActivityEvent) => void;
-
-/** @description Resolve the canonical ticket or historical task on every read. @param ctx Runtime. @param req Verified caller. @param id Resource ID. @returns Current admission. */
-async function readable(ctx: AppContext, req: Request, id: string): Promise<boolean> {
-  try {
-    const ticket = await ctx.ticketService.getTicket(id);
-    if (ticket) return canReadCockpitTicket(ctx, req, ticket);
-    const task = await ctx.taskStore.get(id);
-    return !!task && await canReadCockpitTask(ctx, req, task);
-  } catch { return false; }
-}
 
 /** @description Own one admitted SSE subscription and serialize current-policy checks. @param ctx Runtime. @param req Verified caller. @param res Stream response. @param bus Existing event bus. @returns No value. */
 function subscribe(ctx: AppContext, req: Request, res: Response, bus: Set<TicketActivityListener>): void {

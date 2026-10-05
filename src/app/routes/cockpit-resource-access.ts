@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Share current owner, issuer and protected-result checks between project discovery and ticket streams.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ownsRow/actorFor moved unchanged to record-ownership.ts (ownsRecord/verifiedActorFor). canReadCockpitTicket now delegates to canReadTicket, the /api/tickets verdict built on the same ownsRecord, so the cockpit and the ticket API read a ticket by one rule. Cockpit verdicts are unchanged. P5 step 1.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | canReadCockpitTicketOrTask: the ticket-else-task check from the ticket stream route, shared so the cockpit's delete, history and reply routes and the explorer status history decide access the same way (route review 2026-10-05).
  */
 import type { Request } from 'express';
 import type { InternalTicket } from '@/entities/ticket';
@@ -28,4 +29,14 @@ export async function canReadCockpitTask(ctx: AppContext, req: Request, task: St
 export async function canReadCockpitResult(ctx: AppContext, req: Request, task: ProtectedResultTask): Promise<boolean> {
   try { return await ownsRecord(ctx, req, task) && await canReadProtectedResult(task, () => verifiedActorFor(ctx, req)); }
   catch { return false; }
+}
+
+/** @description The cockpit by-id verdict: a canonical ticket by owner and application rights, else a historical task by owner and result lineage; false for neither or on error. @param ctx Runtime. @param req Caller. @param id Ticket or task ID. @returns Admission. */
+export async function canReadCockpitTicketOrTask(ctx: AppContext, req: Request, id: string): Promise<boolean> {
+  try {
+    const ticket = await ctx.ticketService.getTicket(id);
+    if (ticket) return await canReadCockpitTicket(ctx, req, ticket);
+    const task = await ctx.taskStore.get(id);
+    return !!task && await canReadCockpitTask(ctx, req, task);
+  } catch { return false; }
 }
