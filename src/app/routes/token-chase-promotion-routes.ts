@@ -5,11 +5,12 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Token Chase keep-winner → re-baseline routes (ADR-046, BACKLOG "auto keep-winner then re-baseline loop"): POST /runs/:runId/frames/:seq/promote runs the keep-winner bar (llm-judged only, min quality + min savings) over the frame's persisted observations and promotes the winner to the frame's preferred lane (422 + per-candidate rejections when nothing clears the bar); POST /promotions/:id/revert is the reversal; GET /runs/:runId/promotions lists the store + the promote/auto-promote/revert audit trail. maybeAutoPromote is the OPERATOR-GATED auto mode consumed by the savings loop — default OFF, on ONLY when TOKEN_CHASE_AUTO_PROMOTE=true, and it touches nothing when disabled. Optional applyToBotConfig routes a framework-provider winner through the EXISTING ADR-034 config-ownership path (ConfigSyncService.pushToBot → the bot's PUT /api/llm-provider, version bump + config_sync_log audit) — never a bypass; BYO/endpoint lanes are refused honestly because a per-user key must never become bot config. Mounted inside createTokenChaseRoutes, so every route sits behind the same requiresAuth wrapper.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse nonoperator shared bot-configuration application before reading or persisting an otherwise owner-scoped promotion.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | accessOf mirrors token-chase-routes: the portal admin (isOperator) is a Token Chase admin alongside TOKEN_CHASE_ADMIN_SUBS.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
-import { requireOperator } from '@/shared/middleware/authz';
+import { isOperator, requireOperator } from '@/shared/middleware/authz';
 import type { AppContext } from '@/app/composition/app-context';
 import {
   TokenChaseReadService,
@@ -36,7 +37,7 @@ const logger = createChildLogger({ module: 'token-chase-promotion-routes' });
 function accessOf(req: Request): TokenChaseAccess {
   const callerSub = (req as { oidc?: { user?: { sub?: string } } }).oidc?.user?.sub ?? null;
   const admins = new Set((process.env.TOKEN_CHASE_ADMIN_SUBS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
-  return { callerSub, isAdmin: callerSub !== null && admins.has(callerSub) };
+  return { callerSub, isAdmin: callerSub !== null && (isOperator(req) || admins.has(callerSub)) };
 }
 
 /** @description The outcome of one gated auto-promotion pass over a run. */
