@@ -79,6 +79,7 @@
  * 72 | maintainer@emeraldcoastsystemsgroup.com | Verification and consensus review get isDelegationEnforced: under signing they skip the unsigned mesh round every node refuses and use the structural result immediately.
  * 73 | maintainer@emeraldcoastsystemsgroup.com | The build-lane planning executor is wired with the signed BotNodeClient and the push-on-dispatch resolver instead of the worker's handler deps: the round now crosses the signed hop to the configured planning node (OSHAL_PM_PLANNING_NODE), where the installed provider switch rows choose the engine, and no longer runs on a hosted connection inside the api.
  * 74 | maintainer@emeraldcoastsystemsgroup.com | mountAgentProviderRoutes now takes requiresAuth and applies serviceSecretOr(requiresAuth) at its own /api/agents mounts, so the posture is fixed at the mount and visible to the route inventory; this call passes requiresAuth and the now-unused serviceSecretOr import is dropped. Behavior is identical.
+ * 75 | maintainer@emeraldcoastsystemsgroup.com   | /api/swarm/ops is portal-admin only (requiresOperator at the mount): ops intelligence is the operator's dashboard of swarm-wide costs, rankings and routing audit, and its stuck-work watchdog escalates other users' work (route review 2026-10-05).
  */
 
 import type { Pool } from 'pg';
@@ -86,7 +87,7 @@ import type { Application, RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { bindFuturesResearchWorker } from '@/app/trading-futures-research-workflow';
 import type { BindManifestWorker } from '@/features/swarm-orchestration';
-import { serviceSecretHeaders } from '@/shared/middleware/authz';
+import { requiresOperator, serviceSecretHeaders } from '@/shared/middleware/authz';
 import { AgentProfileRepository } from '@/entities/agent';
 import { AgentToolRepository, ToolRepository } from '@/entities/tool';
 import { WorkItemRepository } from '@/entities/work-item';
@@ -975,7 +976,7 @@ export function registerSwarmExtensionRoutes(
       bindings.swarmMemoryService,
     ));
   }
-  app.use('/api/swarm/ops', requiresAuth, createOpsIntelligenceRoutes(bindings));
+  app.use('/api/swarm/ops', requiresAuth, requiresOperator, createOpsIntelligenceRoutes(bindings));
   app.use('/api/swarm/bots', requiresAuth, createBotRegistryRoutes(bindings.runtimeRegistryService, bindings.pool));
   app.use('/api/swarm/config', requiresAuth, createConfigPropagationRoutes());
   // ADR-034: OSHAL-owned per-agent runtime config (provider/model) — push-down + read.

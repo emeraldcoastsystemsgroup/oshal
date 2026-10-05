@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Baseline for the signed-in route ratchet (tests/unit/operator-route-ratchet.spec.ts): every controller /api mount that ANY signed-in user reaches (requiresAuth or delegated-user auth at the mount, no operator gate), as of 2026-10-05. Pre-existing mounts are recorded as LEGACY, not approved: many gate operator actions per route inside their modules, and each is reviewed module by module during convergence (operator gate at the mount, or a written reason). New mounts cannot be LEGACY.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, first slice: /api/personal-graph and /api/personal-graph/ingest are operator mounts now (entries removed); /api/swarm/packs is reviewed (deploy is admin-only). LEGACY_CEILING 107 -> 104.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, second slice: /api/logs, /api/process-lab, /api/bot/restart|rebuild|rollback, /api/proxy-health, /api/redis-visibility and /api/swarm/ops are operator mounts now (entries removed); /api/checkpoints is reviewed (owner-scoped). Admin-only routes inside still-LEGACY mounts: /api/governance/posture, Plane ticket sync (/api/tickets/sync/*), /api/swarm/bots/proxy-health. LEGACY_CEILING 104 -> 95.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -14,7 +15,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 104;
+export const LEGACY_CEILING = 95;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -38,15 +39,12 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/antigravity/auth', reason: LEGACY },
   { path: '/api/apply-operator', reason: LEGACY },
   { path: '/api/batch-jobs', reason: LEGACY },
-  { path: '/api/bot/rebuild', reason: LEGACY },
-  { path: '/api/bot/restart', reason: LEGACY },
-  { path: '/api/bot/rollback', reason: LEGACY },
   { path: '/api/bot/status', reason: LEGACY },
   { path: '/api/budgets', reason: LEGACY },
   { path: '/api/calendar', reason: LEGACY },
   { path: '/api/capability-providers', reason: LEGACY },
   { path: '/api/channels', reason: LEGACY },
-  { path: '/api/checkpoints', reason: LEGACY },
+  { path: '/api/checkpoints', reason: 'A checkpoint belongs to its task: GET, restore and delete answer 404 unless the caller may read the stored task result (checkpoint-routes.ts callerMayUseCheckpoint, reviewed 2026-10-05)' },
   { path: '/api/claude-code/auth', reason: LEGACY },
   { path: '/api/cockpit/home/preferences', reason: LEGACY },
   { path: '/api/config', reason: LEGACY },
@@ -83,7 +81,6 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/linkedin-assistant', reason: LEGACY },
   { path: '/api/llm-governance/status', reason: LEGACY },
   { path: '/api/location', reason: LEGACY },
-  { path: '/api/logs', reason: LEGACY },
   { path: '/api/me', reason: LEGACY },
   { path: '/api/memory', reason: LEGACY },
   { path: '/api/mesh/channels', reason: LEGACY },
@@ -95,13 +92,10 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/optimize', reason: LEGACY },
   { path: '/api/personal', reason: LEGACY },
   { path: '/api/privacy', reason: LEGACY },
-  { path: '/api/process-lab', reason: LEGACY },
   { path: '/api/providers', reason: LEGACY },
-  { path: '/api/proxy-health', reason: LEGACY },
   { path: '/api/queue/dlq', reason: LEGACY },
   { path: '/api/rag', reason: LEGACY },
   { path: '/api/rca', reason: LEGACY },
-  { path: '/api/redis-visibility', reason: LEGACY },
   { path: '/api/search', reason: LEGACY },
   { path: '/api/settings/llm-default', reason: LEGACY },
   { path: '/api/slack', reason: LEGACY },
@@ -113,7 +107,6 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/swarm/bots', reason: LEGACY },
   { path: '/api/swarm/config', reason: LEGACY },
   { path: '/api/swarm/memory', reason: LEGACY },
-  { path: '/api/swarm/ops', reason: LEGACY },
   { path: '/api/swarm/packs', reason: 'Packs are per-user (each caller lists, reads and downloads only their own pack directory); deploying a pack registers swarm-wide bots, so POST /:name/deploy requires the portal admin (swarm-pack-routes.ts requireOperator, reviewed 2026-10-05)' },
   { path: '/api/swarm/registries', reason: LEGACY },
   { path: '/api/swarm/roles', reason: LEGACY },
