@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove the public schedule API cannot create, replace, mutate, or synthesize manifest-owned jobs and cannot bypass ownership through the legacy execute callback.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The user a schedule acts for is the caller: create and update refuse a taskData.userSub naming another user unless the caller is the portal admin, and execute-scheduled-task without a stored schedule id is portal-admin only. The synthetic-manifest case now runs as the admin so it still proves the manifest check rather than the new gate.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -52,7 +53,7 @@ function request(
 function response(): CapturedResponse {
   const res = {
     statusCode: 200,
-    payload: undefined,
+    payload: undefined as unknown,
     status(code: number) {
       this.statusCode = code;
       return this;
@@ -178,14 +179,15 @@ describe('ScheduleController system-owned boundary', () => {
     expect(service.executeScheduledTask).toHaveBeenCalledWith(body);
   });
 
-  it('rejects synthetic manifest handler dispatch even without a reserved taskType', async () => {
+  it('rejects synthetic manifest handler dispatch even without a reserved taskType, including for operators', async () => {
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-1';
     const { controller, service } = fixture();
     const res = response();
 
     await controller.executeScheduledTask(request({
       taskType: 'ordinary-name',
       taskData: { kind: MANIFEST_SERVICE_ROUTE_TASK_KIND, scheduleKey: 'example-policy-tick' },
-    }), res);
+    }, 'operator-1'), res);
 
     expect(res.statusCode).toBe(403);
     expect(service.executeScheduledTask).not.toHaveBeenCalled();
@@ -228,5 +230,69 @@ describe('ScheduleController system-owned boundary', () => {
 
     expect(res.statusCode).toBe(403);
     expect(service.triggerSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScheduleController acts only for the signed-in user', () => {
+  const TRADING = { taskType: 'trading-autopilot:user-1', schedule: '*/5 9-16 * * 1-5' };
+
+  it('refuses a schedule that names another user to act for', async () => {
+    const { controller, service } = fixture();
+    const res = response();
+
+    await controller.createSchedule(request({ ...TRADING, taskData: { userSub: 'user-2', mode: 'paper' } }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(service.createSchedule).not.toHaveBeenCalled();
+  });
+
+  it('accepts a schedule that names the caller, or nobody', async () => {
+    const own = fixture();
+    const ownRes = response();
+    await own.controller.createSchedule(request({ ...TRADING, taskData: { userSub: 'user-1', mode: 'paper' } }), ownRes);
+    expect(ownRes.statusCode).toBe(200);
+    expect(own.service.createSchedule).toHaveBeenCalledWith(expect.objectContaining({ ownerSub: 'user-1' }));
+
+    const plain = fixture();
+    const plainRes = response();
+    await plain.controller.createSchedule(request({ taskType: 'ordinary-task', schedule: '0 * * * *', taskData: { prompt: 'Run' } }), plainRes);
+    expect(plainRes.statusCode).toBe(200);
+  });
+
+  it('refuses an update that changes the user a schedule acts for', async () => {
+    const { controller, service } = fixture(schedule({ taskType: TRADING.taskType, taskData: { userSub: 'user-1' } }));
+    const res = response();
+
+    await controller.updateSchedule(request({ taskData: { userSub: 'user-2' } }), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(service.updateSchedule).not.toHaveBeenCalled();
+  });
+
+  it('lets the portal admin name the user a schedule acts for', async () => {
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-1';
+    const { controller, service } = fixture();
+    const res = response();
+
+    await controller.createSchedule(request({ ...TRADING, taskData: { userSub: 'user-1' } }, 'operator-1'), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(service.createSchedule).toHaveBeenCalled();
+  });
+
+  it('runs a one-off job from a request body for the portal admin only', async () => {
+    const body = { taskType: 'ordinary-task', taskData: { prompt: 'Run now', userSub: 'user-1' } };
+    const denied = fixture();
+    const deniedRes = response();
+    await denied.controller.executeScheduledTask(request(body, 'user-1'), deniedRes);
+    expect(deniedRes.statusCode).toBe(403);
+    expect(denied.service.executeScheduledTask).not.toHaveBeenCalled();
+
+    process.env.OSHAL_OPERATOR_SUBS = 'operator-1';
+    const allowed = fixture();
+    const allowedRes = response();
+    await allowed.controller.executeScheduledTask(request(body, 'operator-1'), allowedRes);
+    expect(allowedRes.statusCode).toBe(200);
+    expect(allowed.service.executeScheduledTask).toHaveBeenCalledWith(body);
   });
 });

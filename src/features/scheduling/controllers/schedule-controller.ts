@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Captured caller ownerSub on create + scoped getAllSchedules by app queue (?taskType) and caller (?scope=all overrides for admin dashboards)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Object-level authorization (IDOR fix): every by-id handler (get/update/pause/resume/delete/trigger) now verifies the caller owns the schedule (or is an operator, or it is unowned/system) via requireOwnedSchedule() and 404s on mismatch. The ?scope=all list override is now operator-only. Previously any authenticated user could read/edit-cron/delete/run-on-demand another user's scheduled job by guessing its (predictable) id, or enumerate all schedules with ?scope=all.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reserve manifest-owned app/app-route schedules from the user API, require operator authority for workflow schedules, apply ownership checks to the legacy execute callback, and stop logging prompt-bearing request bodies.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The user a schedule acts for is the caller. Create and update refuse a taskData.userSub naming anyone but the signed-in user unless the caller is the portal admin, because the trading, event and home dispatchers run as that user. execute-scheduled-task without a stored schedule id (a one-off job built from the body, run as system and owned by nobody) is portal-admin only; no page or service calls it (route review 2026-10-05).
  */
 
 import { Request, Response } from 'express';
@@ -40,6 +41,7 @@ export class ScheduleController {
       const taskType = this.readOptionalString(body.taskType);
       logger.info({ taskType }, 'POST /api/v1/agent/schedule-task');
       if (!this.authorizeExternalSchedulePayload(req, res, body)) return;
+      if (!this.authorizeActingUser(req, res, body)) return;
       const ownerSub = this.readCallerSub(req);
       if (!ownerSub) {
         res.status(401).json({ success: false, error: 'Authentication required' });
@@ -113,6 +115,7 @@ export class ScheduleController {
     try {
       logger.info({ scheduleId }, 'PUT /api/v1/agent/schedules/:id');
       if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
+      if (!this.authorizeActingUser(req, res, this.readBody(req))) return;
       const schedule = await this.scheduleService.updateSchedule(scheduleId, req.body);
       res.json({ success: true, schedule });
     } catch (error) {
@@ -215,6 +218,12 @@ export class ScheduleController {
       logger.info({ scheduleId, taskType }, 'POST /api/v1/agent/execute-scheduled-task');
       if (scheduleId) {
         if (!(await this.requireExternallyMutableSchedule(req, res, scheduleId))) return;
+      } else if (!isOperator(req)) {
+        // A payload with no stored schedule runs a one-off job built from the request body under the
+        // system identity, owned by nobody. Only the portal admin may do that; users trigger their
+        // own stored schedules by id.
+        res.status(403).json({ success: false, error: 'Operator privilege required' });
+        return;
       } else if (!this.authorizeExternalSchedulePayload(req, res, body)) {
         return;
       }
@@ -316,6 +325,19 @@ export class ScheduleController {
       return false;
     }
     return true;
+  }
+
+  /**
+   * @description A schedule acts for the user named in `taskData.userSub`: the trading, event and home
+   * dispatchers run as that user. Only the portal admin may name someone else; any other caller may
+   * name only themselves (or nobody). Refuses with 403 otherwise.
+   */
+  private authorizeActingUser(req: Request, res: Response, payload: Record<string, unknown>): boolean {
+    const named = this.asRecord(payload.taskData)?.userSub;
+    if (named === undefined || named === null || isOperator(req)) return true;
+    if (typeof named === 'string' && named === this.readCallerSub(req)) return true;
+    res.status(403).json({ success: false, error: 'A schedule can act only for the signed-in user' });
+    return false;
   }
 
   /** @description True for schedule namespaces derived exclusively from active app manifests. */

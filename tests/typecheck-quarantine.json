@@ -2,7 +2,7 @@
   "version": 1,
   "description": "Quarantined pre-existing test typecheck errors as of 2026-09-24",
   "recordedAt": "2026-09-24T03:50:58.263Z",
-  "totalQuarantined": 742,
+  "totalQuarantined": 741,
   "entries": [
     {
       "file": "tests/agent-profile-bulk-config.spec.ts",
@@ -4691,14 +4691,6 @@
       "code": "TS2305",
       "message": "Module '\"@/features/swarm-apps\"' has no exported member 'SwarmApplication'.",
       "reason": "Pre-existing: Untyped test pattern prior to test-tree typecheck gate introduction"
-    },
-    {
-      "file": "tests/unit/schedule-controller-system-boundary.spec.ts",
-      "line": 61,
-      "col": 7,
-      "code": "TS2322",
-      "message": "Type 'unknown' is not assignable to type 'undefined'.",
-      "reason": "Pre-existing: Test fixture or mock object does not strictly satisfy production interface"
     },
     {
       "file": "tests/unit/schema-docs.spec.ts",
