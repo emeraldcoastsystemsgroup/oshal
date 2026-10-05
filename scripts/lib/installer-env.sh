@@ -5,6 +5,7 @@
 # SEQ                 | AUTHOR                      | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com   | Installer .env + host-preparation helpers, split out of oshal-install.sh (800-line rule). Adds env insertion (--env-file: bring an existing .env to a clean install, BOM/CRLF-safe, never overwriting a different one), mints JWT_SECRET/ENCRYPTION_KEY like the ps1 (without them the Codex login fails with ENCRYPTION_KEY_REQUIRED), writes the real OSHAL_DOCKER_PROJECT_ROOT on Linux/macOS, keeps every .env owner-only, and pre-creates bind-mount sources so Docker never makes a root-owned ~/.claude.json DIRECTORY.
+# 2 | maintainer@emeraldcoastsystemsgroup.com   | Backward compatibility: check_image_arch stops a foreign-CPU image only where nothing can emulate it. Docker Desktop (macOS, Windows, WSL) and Linux hosts with a binfmt handler ran the amd64 image before the check existed and keep doing so, with a warning; OSHAL_ALLOW_FOREIGN_ARCH=1 skips the stop.
 # =============================================================================
 #
 # Sourced by scripts/oshal-install.sh (from beside it, or fetched from the repo when the installer
@@ -132,12 +133,27 @@ idp_signin_note() {
   note "  docker exec oshal-local-api node scripts/oshal-admin-link.mjs --origin http://localhost:$2 --email $3"
 }
 
+# can_emulate_arch ARCH — whether this Docker can run images built for another CPU. Docker Desktop
+# (macOS, Windows, WSL) emulates through Rosetta/QEMU, and so does a Linux host with a binfmt handler.
+can_emulate_arch() {
+  case "$(uname -s 2>/dev/null)" in Darwin*|MINGW*|MSYS*|CYGWIN*|Windows*) return 0 ;; esac
+  case "$(docker info -f '{{.OperatingSystem}}' 2>/dev/null)" in *"Docker Desktop"*) return 0 ;; esac
+  local q; case "$1" in amd64) q=qemu-x86_64 ;; arm64) q=qemu-aarch64 ;; *) return 1 ;; esac
+  grep -qs '^enabled' "${BINFMT_DIR:-/proc/sys/fs/binfmt_misc}/$q"
+}
+
 # check_image_arch IMAGE — an image built for another CPU (the published image is linux/amd64 today)
-# starts containers that die with "exec format error", which reads as a broken swarm. Stop with the fix.
+# starts containers that die with "exec format error", which reads as a broken swarm. Stop with the fix,
+# but only where nothing can emulate it: an Apple-silicon Mac on Docker Desktop ran the amd64 image
+# before this check existed, and still does (slower). OSHAL_ALLOW_FOREIGN_ARCH=1 skips the stop.
 check_image_arch() {
   local want have; want="$(docker version -f '{{.Server.Arch}}' 2>/dev/null || true)"
   have="$(docker image inspect -f '{{.Architecture}}' "$1" 2>/dev/null || true)"
   if [ -n "$want" ] && [ -n "$have" ] && [ "$want" != "$have" ]; then
+    if [ "${OSHAL_ALLOW_FOREIGN_ARCH:-0}" = 1 ] || can_emulate_arch "$have"; then
+      echo "$1 is built for $have on this $want machine; it runs under emulation (slower). --mode 2 builds a native image." >&2
+      return 0
+    fi
     echo "$1 is built for $have, but this machine is $want. Install from source instead: --mode 2" >&2
     exit 1
   fi

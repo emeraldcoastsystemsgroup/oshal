@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the clean-install fixes found on a real arm64 Linux run, plus env insertion. Each scripts/lib/installer-env.sh function runs in REAL bash against a real temp filesystem (the boundary the defects lived in): a Windows .env (BOM + CRLF) inserts cleanly and never overwrites a different one; missing install secrets are filled but an existing ENCRYPTION_KEY is never rotated; placeholders count as missing; the docker project root is the real path on Linux, replacing a Docker Desktop path; an explicit auth mode wins without duplicate keys; bind-mount sources are created as the user (~/.claude.json a FILE, never a root-owned directory); the unattended sign-in link lands in an owner-only file; a foreign-CPU image stops with the --mode 2 fix. Plus the installer wiring that makes these run.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The CPU check is hermetic (fake uname, daemon OS and binfmt dir) and proves backward compatibility: an Apple-silicon Mac, Docker Desktop on Linux/WSL, Windows Git Bash, a Linux host with a binfmt handler and OSHAL_ALLOW_FOREIGN_ARCH=1 all keep running a foreign-CPU image with a warning; only a host that cannot emulate stops.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -155,14 +156,37 @@ describe('first sign-in and image CPU', () => {
     expect(r.out).not.toContain('token=t'); // the link itself is never printed
   });
 
-  it('stops with the --mode 2 fix when the image is built for another CPU', () => {
-    const stub = (server: string, image: string) =>
-      `docker() { case "$*" in *Server.Arch*) echo ${server};; *Architecture*) echo ${image};; esac; }\n`;
-    const bad = run(`${stub('arm64', 'amd64')}check_image_arch ghcr.io/x/oshal-bot:latest; echo REACHED`);
+  // Hermetic host: a fake docker (server/image CPU and daemon OS) and a fake uname, plus an empty
+  // binfmt dir unless a test registers a handler, so the host running the suite never decides it.
+  const host = (server: string, image: string, opts: { os?: string; uname?: string } = {}) =>
+    `docker() { case "$*" in *Server.Arch*) echo ${server};; *Architecture*) echo ${image};;`
+    + ` *OperatingSystem*) echo '${opts.os ?? 'Ubuntu 24.04 LTS'}';; esac; }\n`
+    + `uname() { echo ${opts.uname ?? 'Linux'}; }\n`;
+  const noBinfmt = (): Record<string, string> => { mkdirSync(join(dir, 'binfmt'), { recursive: true }); return { BINFMT_DIR: join(dir, 'binfmt') }; };
+
+  it('stops with the --mode 2 fix when the image is built for another CPU and nothing can emulate it', () => {
+    const bad = run(`${host('arm64', 'amd64')}check_image_arch ghcr.io/x/oshal-bot:latest; echo REACHED`, noBinfmt());
     expect(bad.code).toBe(1);
     expect(bad.err).toMatch(/built for amd64, but this machine is arm64.*--mode 2/);
     expect(bad.out).not.toContain('REACHED');
-    expect(run(`${stub('arm64', 'arm64')}check_image_arch img; echo REACHED`).out).toContain('REACHED');
+    expect(run(`${host('arm64', 'arm64')}check_image_arch img; echo REACHED`, noBinfmt()).out).toContain('REACHED');
+  });
+
+  it('stays backward compatible wherever the foreign image ran before: emulation warns, never stops', () => {
+    const env = noBinfmt();
+    const passes = (snippet: string, extra: Record<string, string> = {}) => {
+      const r = run(`${snippet}check_image_arch img; echo REACHED`, { ...env, ...extra });
+      expect(r.code).toBe(0);
+      expect(r.out).toContain('REACHED');
+      expect(r.err).toMatch(/runs under emulation \(slower\)/);
+    };
+    passes(host('arm64', 'amd64', { uname: 'Darwin' }));                       // Apple-silicon Mac, Docker Desktop
+    passes(host('arm64', 'amd64', { os: 'Docker Desktop' }));                  // Docker Desktop on Linux / WSL
+    passes(host('amd64', 'arm64', { uname: 'MINGW64_NT-10.0' }));             // Windows Git Bash
+    writeFileSync(join(dir, 'binfmt', 'qemu-x86_64'), 'enabled\ninterpreter /usr/bin/qemu-x86_64\n');
+    passes(host('arm64', 'amd64'));                                            // Linux with a binfmt handler
+    rmSync(join(dir, 'binfmt', 'qemu-x86_64'));
+    passes(host('arm64', 'amd64'), { OSHAL_ALLOW_FOREIGN_ARCH: '1' });         // explicit override
   });
 });
 
