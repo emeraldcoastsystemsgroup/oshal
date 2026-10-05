@@ -10,6 +10,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted connector schema, revocation, and access-token refresh operations from connectors-routes.ts without changing SQL, selection, crypto, or provider refresh behavior.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A failed token refresh names the provider and its OAuth error ("schwab refresh 400 invalid_grant: ..."). The bare "refresh 400" hid why Schwab's 7-day login had lapsed on the DGX Spark move (2026-10-05). Only the RFC 6749 `error` and `error_description` fields are read, trimmed and capped, so no token or credential text can reach a log.
  * -----------------------------------------------------------------------------
  *
  * @module connector-account-operations
@@ -134,6 +135,26 @@ export async function revokeRefreshToken(
  * @param opts - optional account selector and force-refresh liveness flag
  * @returns a usable access token, or null if not connected / unrefreshable
  */
+/**
+ * @description Describes a failed token refresh from the provider's OAuth error response. Only the RFC 6749
+ * `error` and `error_description` fields are read, trimmed and capped, so no token or credential text ever
+ * reaches a log or a scheduler result.
+ * @param provider - The connector provider id.
+ * @param status - The HTTP status of the refresh response.
+ * @param bodyText - The raw response body.
+ * @returns A message like `schwab refresh 400 invalid_grant: <description>`.
+ */
+export function describeRefreshFailure(provider: string, status: number, bodyText: string): string {
+  let reason = '';
+  try {
+    const body = JSON.parse(bodyText) as { error?: unknown; error_description?: unknown };
+    const code = typeof body.error === 'string' ? body.error.trim().slice(0, 64) : '';
+    const detail = typeof body.error_description === 'string' ? body.error_description.trim().slice(0, 160) : '';
+    reason = [code, detail].filter(Boolean).join(': ');
+  } catch { /* not an OAuth JSON error body; the status alone is reported */ }
+  return `${provider} refresh ${status}${reason ? ` ${reason}` : ''}`;
+}
+
 export async function getValidAccessToken(
   pool: any, userSub: string, provider: string, opts?: ConnectionSelector & { forceRefresh?: boolean },
 ): Promise<string | null> {
@@ -159,7 +180,7 @@ export async function getValidAccessToken(
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Square-Version': SQUARE_VERSION },
       body: JSON.stringify({ client_id: creds.clientId, client_secret: creds.clientSecret, grant_type: 'refresh_token', refresh_token: refreshPlain }),
     });
-    if (!sr.ok) throw new Error(`square refresh ${sr.status}`);
+    if (!sr.ok) throw new Error(describeRefreshFailure(provider, sr.status, await sr.text()));
     const sj = (await sr.json()) as { access_token?: string; expires_at?: string };
     if (!sj.access_token) return null;
     const exp = sj.expires_at ? new Date(sj.expires_at) : null;
@@ -177,7 +198,7 @@ export async function getValidAccessToken(
     body.set('client_secret', creds.clientSecret);
   }
   const r = await fetch(def.tokenUrl, { method: 'POST', headers, body });
-  if (!r.ok) throw new Error(`refresh ${r.status}`);
+  if (!r.ok) throw new Error(describeRefreshFailure(provider, r.status, await r.text()));
   const tok = (await r.json()) as { access_token?: string; expires_in?: number; refresh_token?: string };
   if (!tok.access_token) return null;
   // Twitter/SmartThings rotate refresh tokens — persist the new one when present. Key the

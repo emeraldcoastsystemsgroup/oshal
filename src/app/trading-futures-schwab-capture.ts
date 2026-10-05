@@ -10,6 +10,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Fetch bounded recent dated-contract 30-minute bars, validate complete buckets and immutable replays, and persist under forced owner RLS.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Measure bounded owner-private active-contract session gaps and trailing freshness on true UTC buckets.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Add bounded, explicit current-contract catch-up through the same immutable private store.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | The scheduler entry logs and returns why a capture failed (for example "schwab refresh 400 invalid_grant") instead of swallowing it. On the DGX Spark move (2026-10-05) a lapsed Schwab login showed only as a generic failure.
  */
 import type { Pool } from 'pg';
 import { createHash } from 'node:crypto';
@@ -20,6 +21,9 @@ import { futuresUtcToWall } from './trading-futures-prediction-clock';
 import { getValidAccessToken } from './routes/connectors-routes';
 import type { AppContext } from './composition-root';
 import type { ScheduleDispatchResult, ScheduleRecord } from '@/features/scheduling';
+import { createChildLogger } from '@/shared/logger';
+
+const captureLogger = createChildLogger({ module: 'trading-futures-schwab-capture' });
 
 const TABLE = 'oshal_trading_futures_schwab_bars';
 const BASE = 'https://api.schwabapi.com/marketdata/v1';
@@ -272,5 +276,10 @@ export async function dispatchSchwabFuturesCapture(ctx: AppContext, schedule: Sc
     const roots = (schedule.taskData as Record<string, unknown>).roots;
     const receipt = await captureSchwabFuturesBars(ctx.pool, ownerSub, token, roots as string[]);
     return { success: true, scheduleId: schedule.id, taskId: receipt.completedAt };
-  } catch { return { success: false, scheduleId: schedule.id, error: 'Schwab Futures capture failed; inspect owner coverage and provider connectivity' }; }
+  } catch (error) {
+    // The reason is a status and an OAuth error code (describeRefreshFailure), never a token.
+    const reason = error instanceof Error ? error.message.slice(0, 240) : 'unknown error';
+    captureLogger.warn({ scheduleId: schedule.id, reason }, 'Schwab Futures capture failed');
+    return { success: false, scheduleId: schedule.id, error: `Schwab Futures capture failed: ${reason}` };
+  }
 }
