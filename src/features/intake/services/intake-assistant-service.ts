@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Session 22: Conversational intake assistant - interviews users with consulting 101 questions before ticket enters pipeline
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Outcome-first L1 intake - classifies quick answers vs lightweight execution vs structured project delivery
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | An intake session records the user who started it (ownerSub), so the routes can keep each session to its owner (route review 2026-10-05).
  */
 
 import { randomUUID } from 'crypto';
@@ -35,6 +36,8 @@ export interface IntakeSession {
   assessment: IntakeL1Assessment | null;
   createdAt: string;
   updatedAt: string;
+  /** The signed-in user who started the session; only they may continue, read or submit it. */
+  ownerSub: string | null;
 }
 
 /**
@@ -115,11 +118,13 @@ export class IntakeAssistantService {
   /**
    * @description Creates and registers a new active intake session, seeding it with the assistant's
    * opening message so the front end can begin the interview immediately.
+   * @param ownerSub - The signed-in user starting the session.
    * @returns The new session id paired with the assistant's first message.
    */
-  startSession(): { sessionId: string; message: IntakeMessage } {
+  startSession(ownerSub: string | null = null): { sessionId: string; message: IntakeMessage } {
     const session: IntakeSession = {
       id: randomUUID(),
+      ownerSub,
       status: 'active',
       messages: [],
       gathered: {},

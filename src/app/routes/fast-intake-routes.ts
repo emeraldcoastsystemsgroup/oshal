@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                    | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Fast intake API route — POST /api/intake/fast
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The fast-intake ticket is owned by the caller. It was filed with no owner, so it showed in nobody's queue, and the tickets table's row-level check rejects an ownerless insert from an ordinary user (route review 2026-10-05).
  *                     |                           | Accepts natural language, extracts ticket fields via direct LLM,
  *                     |                           | creates internal ticket, returns in 1-3 seconds
  */
 
 import type { Express, Request, RequestHandler, Response } from 'express';
 import { FastIntakeService } from '@/features/intake';
+import { getCaller } from '@/shared/middleware/authz';
 import { createChildLogger } from '@/shared/logger';
 
 const logger = createChildLogger({ module: 'fast-intake-routes' });
@@ -66,6 +68,7 @@ export function registerFastIntakeRoutes(
             status: 'approved',
             stateGroup: 'approved',
             source: 'fast-intake',
+            ownerSub: getCaller(req).sub,
           });
           result.ticketId = ticket.ticketId;
           result.status = 'created';

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Session 22: Intake assistant API routes — start session, send message, submit ticket
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Each intake session belongs to the user who started it: message, read and submit answer 404 for anyone else, and the submitted ticket is owned by the caller instead of nobody (route review 2026-10-05).
  */
 
 import { Router } from 'express';
@@ -11,6 +12,7 @@ import type { Request, Response } from 'express';
 import { createChildLogger } from '@/shared/logger';
 import { IntakeAssistantService } from '@/features/intake';
 import type { TicketService } from '@/features/ticketing';
+import { getCaller } from '@/shared/middleware/authz';
 
 const logger = createChildLogger({ module: 'intake-assistant-routes' });
 
@@ -26,9 +28,19 @@ export function createIntakeAssistantRoutes(ticketService: TicketService): Route
   /**
    * POST /api/v1/intake/start — Start a new intake session
    */
-  router.post('/start', (_req: Request, res: Response) => {
+  /** The caller's own session, or null after answering 404 (another user's session reads as missing). */
+  const ownSession = (req: Request, res: Response) => {
+    const session = intakeService.getSession(String(req.params.sessionId));
+    if (!session || session.ownerSub !== getCaller(req).sub) {
+      res.status(404).json({ success: false, error: 'Session not found' });
+      return null;
+    }
+    return session;
+  };
+
+  router.post('/start', (req: Request, res: Response) => {
     try {
-      const { sessionId, message } = intakeService.startSession();
+      const { sessionId, message } = intakeService.startSession(getCaller(req).sub);
       res.json({ success: true, sessionId, message });
     } catch (error) {
       logger.error({ err: error }, 'Failed to start intake session');
@@ -42,6 +54,7 @@ export function createIntakeAssistantRoutes(ticketService: TicketService): Route
   router.post('/:sessionId/message', (req: Request, res: Response) => {
     try {
       const sessionId = String(req.params.sessionId);
+      if (!ownSession(req, res)) return;
       const { message } = req.body as { message: string };
       if (!message) {
         res.status(400).json({ success: false, error: 'Message is required' });
@@ -59,11 +72,8 @@ export function createIntakeAssistantRoutes(ticketService: TicketService): Route
    * GET /api/v1/intake/:sessionId — Get session state
    */
   router.get('/:sessionId', (req: Request, res: Response) => {
-    const session = intakeService.getSession(String(req.params.sessionId));
-    if (!session) {
-      res.status(404).json({ success: false, error: 'Session not found' });
-      return;
-    }
+    const session = ownSession(req, res);
+    if (!session) return;
     res.json({ success: true, session });
   });
 
@@ -72,6 +82,7 @@ export function createIntakeAssistantRoutes(ticketService: TicketService): Route
    */
   router.post('/:sessionId/submit', async (req: Request, res: Response) => {
     try {
+      if (!ownSession(req, res)) return;
       const payload = intakeService.buildTicketPayload(String(String(req.params.sessionId))) as Record<string, any>;
       const ticket = await ticketService.createTicket({
         title: String(payload.title),
@@ -86,6 +97,7 @@ export function createIntakeAssistantRoutes(ticketService: TicketService): Route
         workspaceId: null,
         assignedAgentId: null,
         parentTicketId: null,
+        ownerSub: getCaller(req).sub,
       } as any);
       logger.info({ sessionId: String(req.params.sessionId), ticketId: ticket.ticketId }, 'Intake ticket created');
       res.json({ success: true, ticket });
