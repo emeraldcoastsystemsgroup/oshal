@@ -1,3 +1,10 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | A missing Antigravity login file ("credential file is unavailable") fails over to the fallback lane; it matched no pattern, and 35 of 36 bots failed on the DGX Spark move (2026-10-05).
+ */
 import { describe, expect, it, vi } from 'vitest';
 import {
   LLMService,
@@ -70,6 +77,21 @@ describe('ProviderFailoverService', () => {
       messages: [{ role: 'user', content: 'fix the thing' }],
     })).resolves.toBe(fallbackResponse);
     expect(primary.sendRequestMock).toHaveBeenCalledTimes(1);
+    expect(fallback.sendRequestMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails over when the Antigravity login file is missing (DGX Spark move, 2026-10-05)', async () => {
+    const primary = new StubProvider('harness:antigravity-cli', async () => {
+      throw new Error('Bot node execution failed: Antigravity credential file is unavailable: antigravity-oauth-token');
+    });
+    const fallback = new StubProvider('harness:codex-cli', async () => fallbackResponse);
+    const provider = new ProviderFailoverService({
+      primary, fallback, reason: 'unit-test-missing-login', shouldFailover: isProviderRuntimeStall,
+    });
+
+    await expect(provider.sendRequest({
+      messages: [{ role: 'user', content: 'fix the thing' }],
+    })).resolves.toBe(fallbackResponse);
     expect(fallback.sendRequestMock).toHaveBeenCalledTimes(1);
   });
 

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Reconcile failover accountability fixtures with request-scoped capability snapshots and the fail-closed autonomous CLI boundary.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove protected single-shot reasoning never advances to a fallback after either a recoverable thrown error or a primary runtime-failure banner.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prove a host-tools-only turn never enters failover after a recoverable primary error or a primary failure banner (the world classifier's dispatch shape over web-fetched text).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | A missing Antigravity login file fails over (classifier SEQ 4); a bridge configuration fault does not.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -309,6 +310,16 @@ describe('any-bot ProviderFailoverProvider', () => {
     expect(isProviderRecoverableRuntimeFailure('login required')).toBe(true);
     // A provider must recognize the failure banner it builds ITSELF.
     expect(isProviderRecoverableRuntimeFailure('Cline CLI task failed: exit 1')).toBe(true);
+  });
+
+  it('classifies a MISSING Antigravity login file as an auth failure so the fallback lane runs', () => {
+    // DGX Spark move, 2026-10-05: the antigravity-cli fleet default had no login yet, this exact error
+    // matched no pattern, and 35 of 36 bots failed instead of failing over to openai-codex.
+    expect(isProviderRecoverableRuntimeFailure(
+      new Error('Antigravity credential file is unavailable: antigravity-oauth-token'),
+    )).toBe(true);
+    // A configuration fault in the bridge is not a login problem and must not switch providers.
+    expect(isProviderRecoverableRuntimeFailure(new Error('Antigravity tool bridge controller URL is invalid'))).toBe(false);
   });
 
   it('does NOT fall back when a successful primary answer merely mentions throttle/auth keywords', async () => {
