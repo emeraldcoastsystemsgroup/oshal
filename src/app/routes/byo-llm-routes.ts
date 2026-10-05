@@ -27,6 +27,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial Bring-Your-Own-LLM connector: POST /save (live chat-completion validation + per-user encrypted store), POST /test (round-trip ping), GET /models (endpoint model list), buildAnyLlmListEntry() for the /list surface, and getUserLlmConnection() resolution seam. Reuses connector-token-crypto + connector-tenancy so disconnect/relabel/default come from the shared rails.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | BUG-13: carry the same per-connection `expired` boolean the other /list entries now carry, so a consumer reading the key does not find it missing on this one entry. Always false in practice - a pasted BYO endpoint key stores no expiry - but the shape is uniform.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Carry the same per-connection `expiring` boolean the other /list entries carry, uniform across the collection.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | storedKeyFor reuses a stored key only for the exact base URL it was saved for. With a blank apiKey, /save, /test and /models fell back to the default or first accessible connection, so a caller-chosen URL received that key as a Bearer header, including a household member's shared key (route review 2026-10-05).
  * -----------------------------------------------------------------------------
  *
  * @module byo-llm-routes
@@ -189,7 +190,9 @@ export async function getUserLlmConnection(
  *  and key-less Test/Models calls). Returns '' if no matching connection exists. */
 async function storedKeyFor(pool: any, userSub: string, baseUrl: string): Promise<string> {
   const rows = await accessibleConnections(pool, userSub, ANY_LLM_PROVIDER);
-  const row = rows.find((r) => r.account_id === baseUrl) || rows.find((r) => r.is_default) || rows[0];
+  // A stored key is reused only for the exact endpoint it was saved for. Falling back to the default
+  // or first row sent that key, possibly a household member's shared one, to whatever URL was asked.
+  const row = rows.find((r) => r.account_id === baseUrl);
   if (!row?.access_token) return '';
   try { return await decryptToken(pool, ownerSub(row), row.access_token); } catch { return ''; }
 }

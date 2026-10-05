@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, cockpit: /api/v1 is reviewed (by-id ticket routes owner-checked, the explorer's unscoped copies removed). LEGACY_CEILING 93 -> 92.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, tenants: /api/tenants is reviewed (adding a person is portal-admin only). LEGACY_CEILING 92 -> 91.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, RAG: /api/rag is reviewed (ingest grants limited to the caller's own tenants). LEGACY_CEILING 91 -> 90.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, BYO LLM: /api/connect/any-llm is reviewed (stored keys reused only for their own endpoint). LEGACY_CEILING 90 -> 89.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -19,7 +20,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 90;
+export const LEGACY_CEILING = 89;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -53,7 +54,7 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/cockpit/home/preferences', reason: LEGACY },
   { path: '/api/config', reason: LEGACY },
   { path: '/api/connect', reason: LEGACY },
-  { path: '/api/connect/any-llm', reason: LEGACY },
+  { path: '/api/connect/any-llm', reason: 'Each user saves and tests their own LLM connection (tenant saves need membership); a stored key is reused only for the exact endpoint it was saved for (byo-llm-routes.ts, reviewed 2026-10-05)' },
   { path: '/api/connect/free-tier', reason: LEGACY },
   { path: '/api/connectors', reason: LEGACY },
   { path: '/api/connectors/:id/actions/:action', reason: LEGACY },
