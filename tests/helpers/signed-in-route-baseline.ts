@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Baseline for the signed-in route ratchet (tests/unit/operator-route-ratchet.spec.ts): every controller /api mount that ANY signed-in user reaches (requiresAuth or delegated-user auth at the mount, no operator gate), as of 2026-10-05. Pre-existing mounts are recorded as LEGACY, not approved: many gate operator actions per route inside their modules, and each is reviewed module by module during convergence (operator gate at the mount, or a written reason). New mounts cannot be LEGACY.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, first slice: /api/personal-graph and /api/personal-graph/ingest are operator mounts now (entries removed); /api/swarm/packs is reviewed (deploy is admin-only). LEGACY_CEILING 107 -> 104.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, second slice: /api/logs, /api/process-lab, /api/bot/restart|rebuild|rollback, /api/proxy-health, /api/redis-visibility and /api/swarm/ops are operator mounts now (entries removed); /api/checkpoints is reviewed (owner-scoped). Admin-only routes inside still-LEGACY mounts: /api/governance/posture, Plane ticket sync (/api/tickets/sync/*), /api/swarm/bots/proxy-health. LEGACY_CEILING 104 -> 95.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Route review 2026-10-05, intake: /api/intake/fast and /api/v1/intake are reviewed (tickets filed as the caller's own; intake sessions bound to their starter). LEGACY_CEILING 95 -> 93.
  */
 
 /** Marks a mount that was signed-in-only before the ratchet existed and has not been reviewed yet. */
@@ -15,7 +16,7 @@ export const LEGACY = 'legacy: signed-in-only at the mount before the 2026-10-05
  * @description The most LEGACY entries allowed. It only goes DOWN: when a module review puts a mount
  * behind requiresOperator or writes its reason, lower this number in the same change.
  */
-export const LEGACY_CEILING = 95;
+export const LEGACY_CEILING = 93;
 
 /**
  * @description One /api mount any signed-in user can reach, recorded on purpose.
@@ -69,7 +70,7 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/health-dashboard/registry', reason: LEGACY },
   { path: '/api/help', reason: LEGACY },
   { path: '/api/intake', reason: LEGACY },
-  { path: '/api/intake/fast', reason: LEGACY },
+  { path: '/api/intake/fast', reason: 'Every user may file a ticket from a sentence; the ticket is filed as the caller\'s own (fast-intake-routes.ts ownerSub = caller, reviewed 2026-10-05)' },
   { path: '/api/jarvis', reason: LEGACY },
   { path: '/api/jarvis/ambient', reason: LEGACY },
   { path: '/api/jarvis/ambient/person', reason: LEGACY },
@@ -125,7 +126,7 @@ export const SIGNED_IN_ROUTES: readonly SignedInRouteEntry[] = [
   { path: '/api/user-model', reason: LEGACY },
   { path: '/api/v1', reason: LEGACY },
   { path: '/api/v1/agent', reason: LEGACY },
-  { path: '/api/v1/intake', reason: LEGACY },
+  { path: '/api/v1/intake', reason: 'Every user may run the intake interview; a session belongs to the user who started it (others get 404) and the submitted ticket is the caller\'s own (intake-assistant-routes.ts, reviewed 2026-10-05)' },
   { path: '/api/voice', reason: LEGACY },
   { path: '/api/voice-sim', reason: LEGACY },
   { path: '/api/workflow-studio', reason: LEGACY },
