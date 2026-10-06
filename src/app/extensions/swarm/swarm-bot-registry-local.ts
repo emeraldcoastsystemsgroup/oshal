@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. Doc-only here: the inline-bot comments said '(claude-code)' while the fleet has run codex since 2026-08-12 — corrected to '(codex)'. No registry entry changed.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | Signed delegation, core queued ticket types (BACKLOG "Signed delegation refuses every ticket whose worker bot runs inline"): with controller signing on, a worker with no dedicated bot-node endpoint is refused - dispatch-manifest-worker throws 'Signed HTTP delegation requires a dedicated bot-node endpoint' and the incident path rethrows 'No endpoint found for agent ...' for the same missing endpoint (the first appears five times in this box's api log in the 24h to 2026-09-16). rca-specialist, system-architect and queue-bot already NAME a running compose node and were forced inline only by the codex rule, so they take requiresOwnNode (the remedy resolve-bot-node-endpoint.ts already logs). security-analyst and workflow-assistant own queued ticket types ('security-finding', 'workflow-build') and move off container oshal-api onto their own nodes - a queued type must cross the signed hop, and triaging untrusted scanner output inside the control-plane container was the blast radius controller-inline-scope.ts names. Guard: tests/unit/signed-delegation-core-ticket-types.spec.ts.
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | Build-lane child execution crosses the signed bot-node hop: code-developer, code-reviewer, documentation-writer, test-engineer, devops-bot, research-bot and tester-bot take requiresOwnNode (each names a running compose node; the codex rule sent them inline, where signed delegation refuses them). documentation-writer gains accessRoles ['operator','swarm'] so owning a node does not make it a Jarvis call-out target. Guard: tests/unit/signed-swarm-child-dispatch.spec.ts.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com  | concierge-host (d97fe8e7-d2d6-4b18-b8df-f15e15820d79), the compose concierge-bot node that runs installed inline application bots on the operator's CLI login (BOT_NODE_SERVES=inline-app-bots). Registered so its compose UUID, heartbeat and registry agree (the Bot registry rule); operator-only with no capabilities, so it is never a call-out or Jarvis target and never wins routing; it is reached only by the controller's concierge route for OTHER agents' turns. Full mode inherits it through SWARM_BOT_REGISTRY's union.
  */
 
 import type { SwarmBotDefinition } from './swarm-bot-registry';
@@ -1001,6 +1002,24 @@ export const LOCAL_BOT_REGISTRY: ReadonlyArray<SwarmBotDefinition> = [
     apiType: 'a2a',
     a2aEndpointEnv: 'A2A_SAMPLE_AGENT_URL',
     accessRoles: ['operator', 'swarm'],   // out of Jarvis until the outbound gateway is proven (ADR-087)
+  },
+  // concierge-host — the concierge NODE itself (compose concierge-bot, profile concierge-node). It
+  // executes OTHER agents' turns: installed inline application bots, on the operator's CLI login,
+  // routed by the controller's concierge route (BOT_NODE_SERVES=inline-app-bots). Registered so the
+  // compose UUID, the heartbeat and the registry agree. No capabilities and operator-only: it must
+  // never win a call-out, appear to Jarvis, or be dispatched to under its own identity. The harness
+  // pair is the fleet default only; each served turn carries its own stamped provider.
+  {
+    agentId: 'd97fe8e7-d2d6-4b18-b8df-f15e15820d79',
+    name: 'concierge-host',
+    port: 3098,
+    container: 'concierge-bot',
+    requiresOwnNode: true,
+    role: 'concierge/host',
+    capabilities: [],
+    harnessType: 'codex-cli',
+    apiType: 'openai-codex',
+    accessRoles: ['operator'],
   },
   // (Little Monsters education bots removed — carved out to the oshal-applications store package, ADR-085.)
 ];

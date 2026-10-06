@@ -7,11 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin both Claude OAuth mounts on package-owned CLI nodes. The sales node originally mounted ~/.claude but omitted the sibling ~/.claude.json account metadata, so a recreate turned a working login into a failed refresh and an honest raw fallback.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | The Claude rule is now "whole or not at all", and scene-studio-bot joins the package-node checks. Requiring both halves on EVERY node made a credential-minimal node impossible and has failed on futures-research-worker since it landed without either half (30097d55); half a session (sales-bot's original ~/.claude without ~/.claude.json) is still red. Also pins scene-studio-bot to the Antigravity login alone (no Codex or Claude session, no config-seed), because that node runs store-package code with agy's sandboxed command grant.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | concierge-bot replaces scene-studio-bot: the package-node checks and the Antigravity-login-only pin now name it (agent d97fe8e7-d2d6-4b18-b8df-f15e15820d79), and a new case pins BOT_NODE_SERVES to exactly one service, concierge-bot. A second multi-agent node, or the key copied onto an ordinary node by the usual copy-paste, would let one container execute for other agents' identities; the served-agent policy limits what it may serve, and this pin limits where that policy can be switched on.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin the concierge node's registry entry to its compose identity: concierge-host carries the same AGENT_ID and BOT_NAME as concierge-bot, names that container, declares no capabilities and is operator-only, so the node can never win a call-out, appear to Jarvis or be routed to under its own identity.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { LOCAL_BOT_REGISTRY } from '@/app/extensions/swarm/swarm-bot-registry-local';
 
 const ROOT = process.cwd();
 const COMPOSE = join(ROOT, 'docker-compose.oshal-local.yml');
@@ -160,6 +162,15 @@ describe('compose bot-node identity', () => {
       configSeed: svc!.mountsConfigSeed,
     }, 'concierge-bot carries a credential it never uses').toEqual({ codex: false, claude: false, configSeed: false });
     expect(services.map((s) => s.name), 'scene-studio-bot folded into concierge-bot').not.toContain('scene-studio-bot');
+  });
+
+  // The Bot registry rule: compose, registry and heartbeat share one UUID. The entry exists for that
+  // agreement only, so it can never be selected: no capabilities, operator-only, its own container.
+  it('registers the concierge node under its compose identity and never as a routable bot', () => {
+    const svc = services.find((s) => s.name === 'concierge-bot');
+    const entry = LOCAL_BOT_REGISTRY.find((bot) => bot.agentId === svc?.agentId);
+    expect(entry, 'concierge-bot\'s AGENT_ID must be in the local registry').toBeDefined();
+    expect(entry).toMatchObject({ name: svc!.botName, container: 'concierge-bot', capabilities: [], accessRoles: ['operator'] });
   });
 
   // Exactly one node may execute for other agents' identities, and only in the one mode the

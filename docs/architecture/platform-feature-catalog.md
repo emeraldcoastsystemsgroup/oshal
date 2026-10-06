@@ -426,7 +426,7 @@ cannot be counted from the tree does not belong here.
 
 | Metric | Value |
 |--------|-------|
-| Registry bots (default lineup) | 60 |
+| Registry bots (default lineup) | 61 |
 | Persona definitions | 96 |
 | Kernel app manifests (`swarm-apps/*.yaml`) | 10 |
 | LLM providers | 40 |
