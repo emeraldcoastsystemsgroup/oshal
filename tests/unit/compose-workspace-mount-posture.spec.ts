@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the compose through loadComposeYaml (@/shared/config). The bare js-yaml load failed on the library's default merge-key limit once #869 took docker-compose.oshal-local.yml past 10000 units; the shared loader carries the repository's explicit budget and still resolves every `<<:` merge.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | futures-research-worker (30097d55, 2026-09-25) joined the shared read-write workspace without a CKR-20 review, turning the 39/40 count pin red for nine days. Reviewed 2026-10-04 under the operator's delegation: it does not trip reversal trigger 2 (core image and runtime, package supplies persona YAML only, reason-only tool-less dispatch, profile-gated off by default). The count pin becomes a NAME pin (REVIEWED_WORKSPACE_BOTS) so the next bot to join names itself in the failure and must be reviewed rather than re-counted.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | scene-studio-bot (the Scene Studio director's node, 2026-10-06) reviewed under CKR-20: it runs a store package's bot WITH a tool surface (the oshal-tools MCP bridge, plus agy's sandboxed command grant on every bridged turn), which is reversal trigger 2 if it shares the read-write workspace. So it mounts no workspace at all and its agy task folders are container-local. The mounting set is now the inheritors minus WORKSPACE_FREE_BOTS, plus code-server, and the free set is pinned by name, so giving that node the volume later goes red here instead of passing as one more reviewed bot.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | concierge-bot replaces scene-studio-bot (2026-10-06) and is reviewed under CKR-20 the same way: BOT_NODE_SERVES=inline-app-bots makes it run the turns of every installed inline application bot the operator's CLI login answers for, including the Scene Studio director that folds into it, which is store-package work and so reversal trigger 2 if it shared the read-write workspace. It mounts no workspace; its agy task folders are container-local. WORKSPACE_FREE_BOTS now names it, so giving it the volume later goes red here.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -100,12 +101,12 @@ const REVIEWED_WORKSPACE_BOTS = [
 
 /**
  * Anchor inheritors that deliberately mount NO shared workspace, by NAME. Reviewed 2026-10-06:
- * scene-studio-bot runs a store package's bot with a tool surface (the oshal-tools MCP bridge and
- * agy's sandboxed command grant), the shape CKR-20 reversal trigger 2 names, so it stays out of the
- * volume instead of joining it. Its task folders are created in the container's own
- * /app/workspace-shared.
+ * concierge-bot (which replaced scene-studio-bot, reviewed the same day for the same reason) runs
+ * the turns of installed inline application bots, store-package work with the shape CKR-20 reversal
+ * trigger 2 names, so it stays out of the volume instead of joining it. Its task folders are created
+ * in the container's own /app/workspace-shared.
  */
-const WORKSPACE_FREE_BOTS: readonly string[] = ['scene-studio-bot'];
+const WORKSPACE_FREE_BOTS: readonly string[] = ['concierge-bot'];
 
 describe('persona capabilities do not gate the shell tool', () => {
   it('execute_command is a core runtime tool, so capability matching never sees it', async () => {
