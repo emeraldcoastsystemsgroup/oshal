@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ops-rails tool-budgets read surface: GET /api/budgets/state must reject an unauthenticated caller (401 via requiresAuth) AND an authed non-operator (403 via requiresOperator) BEFORE touching BudgetService, and hand a full read-only snapshot to an operator. Pins that the enforcement/spend service method is never invoked for a denied caller (no data leak past the gate).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the snapshot fixture carries the runaway thresholds and the event cooldown the state now reports.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +21,8 @@ const PLAIN = { sub: 'plain-user-sub', email: 'plain@example.test' };
 
 const SNAPSHOT: BudgetGovernanceState = {
   windowHours: 24,
+  runaway: { max: 50, windowMin: 10 },
+  eventCooldownMin: 30,
   budgets: [
     {
       id: 1, scopeType: 'user', scopeKey: 'u1', dailyUsd: 5, hard: true,
