@@ -272,8 +272,16 @@ confirmation — a print job on your own printer.
    layer height) and the warnings. Download STL, OBJ, the third-angle SVG sheet and the report.
 6. **Open in CAD Studio →** hands the front / top / right outlines to CAD Studio in world
    millimetres, where they become a real CAD part with holes, fillets and a STEP export.
-7. To print: **Register a printer** (label, kind, base URL, API key — OctoPrint, Moonraker/Klipper or
-   PrusaLink), then **Send to printer…** and confirm.
+7. To print, open **Printers** at the top of the object list and **Register a printer**. That is
+   either an OctoPrint, Moonraker/Klipper or PrusaLink host (label, base URL, API key), or a Bambu
+   Lab printer on your home network (its address and 8-character LAN access code; the app reads its
+   serial and model from the printer and slices for it in its OrcaSlicer engine). Then **Send to
+   printer…** and confirm.
+8. Agents can print too. Jarvis, or the app's Scan to Print bot, can list your printers and objects,
+   read a printer's live state and send a printable object with the print tools. Every send asks you
+   first. A print starts by itself only on a printer whose **auto-start** you turned on; otherwise the
+   file waits on the printer for you to press Print. A Bambu Lab printer also needs **LAN Only** and
+   **Developer Mode** on (Settings → Settings → LAN Only) before oshal can start it.
 
 ### Real vs simulated
 
@@ -282,12 +290,15 @@ the geometry path. The honest limits: the photo lane produces the **visual hull*
 undercuts and holes that no view sees are filled solid (the depth/LiDAR lane is what recovers them);
 photos are assumed square-on, and skew is reported as a residual rather than corrected; an extent no
 view shows is assumed equal to the measured one and flagged; the print checks are advice, not a
-slicer.
+slicer. Printing: the OctoPrint, Moonraker and PrusaLink hosts are proven against a fake network; a
+Bambu Lab P2S is proven live for registration, status and upload; a print *started* by oshal has not
+yet been proven on a real printer (the package's BACKLOG B19).
 
 ### Where the artifacts land
 
-Jobs, images, printers and submissions are rows in Postgres scoped to you; printer API keys are stored
-as owner-key ciphertext, never plaintext. The job files sit under the shared workspace at
+Jobs, images, printers and submissions are rows in Postgres scoped to you; printer API keys and Bambu
+Lab access codes are stored as owner-key ciphertext, never plaintext. Slicing for a Bambu Lab printer
+runs in the package's own engine container, `oshal-scan-to-print-engine`. The job files sit under the shared workspace at
 `<workspace>/scan-to-print` (override with `SCAN_TO_PRINT_DATA_DIR`).
 
 ### What it needs that is not there yet
