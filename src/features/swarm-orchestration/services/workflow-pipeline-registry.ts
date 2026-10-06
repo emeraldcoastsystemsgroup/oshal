@@ -4,9 +4,11 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial WorkflowPipelineRegistry — merges built-in pipelines with app-contributed workflows (ADR 2026-04-20 Phase 1 close)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): registerFromApp also refuses, through superadmin's privilegedWorkflowRefusal, a workflow that claims a privileged ticket type from any app but its owner (before this a later registration simply overwrote the oshal-dev lane, e.g. with the graph pipeline, which runs no super-admin check) and a workflow for another type that names the privileged worker anywhere (workerBot, reviewerBot or a graph node binding). Refused the same way a built-in collision is: false, and a warning naming the reason.
  */
 
 import { createChildLogger } from '@/shared/logger';
+import { privilegedWorkflowRefusal, workflowNamedWorkers } from '@/shared/middleware/superadmin';
 import { WORKFLOW_PIPELINES, type WorkflowDefinition } from './queue-manager-service';
 
 const logger = createChildLogger({ module: 'workflow-pipeline-registry' });
@@ -55,10 +57,12 @@ export class WorkflowPipelineRegistry {
 
   /**
    * @description Registers an app-contributed workflow. Rejects overlap
-   * with built-ins so apps cannot override framework behavior.
+   * with built-ins so apps cannot override framework behavior, and (ADR-081)
+   * a privileged ticket type from any app but its owner, or a workflow for
+   * another type that names the privileged worker.
    * @param appName - manifest.name (used for unregister)
    * @param workflow - workflow definition from manifest
-   * @returns true if registered, false if blocked (built-in collision)
+   * @returns true if registered, false if blocked (built-in collision or privileged-lane refusal)
    */
   registerFromApp(appName: string, workflow: WorkflowDefinition): boolean {
     if (this.builtInTicketTypes.has(workflow.ticketType)) {
@@ -66,6 +70,11 @@ export class WorkflowPipelineRegistry {
         { appName, ticketType: workflow.ticketType },
         'App cannot override built-in workflow — registration rejected',
       );
+      return false;
+    }
+    const refusal = privilegedWorkflowRefusal({ appName, ticketType: workflow.ticketType, pipeline: workflow.pipeline, workers: workflowNamedWorkers(workflow) });
+    if (refusal) {
+      logger.warn({ appName, ticketType: workflow.ticketType, pipeline: workflow.pipeline, refusal }, 'App workflow registration refused (ADR-081 privileged lane)');
       return false;
     }
     this.appWorkflows.set(workflow.ticketType, { appName, workflow });

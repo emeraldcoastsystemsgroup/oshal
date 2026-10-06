@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Pass the canonical runtime resolver into protected queue shaping so explicit `bot-default` resolves and signs its record even when the legacy push-on-dispatch compatibility flag is off.
  * 26 | maintainer@emeraldcoastsystemsgroup.com | The privileged ticket-type set now comes from @/shared/middleware/superadmin (isPrivilegedTicketType), the same definition the ticket route uses to refuse a non-super-admin filer, so the door and this queue gate cannot disagree about which types are privileged.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | The dispatch-time ticket gates moved to dispatch-ticket-gates.ts (this file is past the 800-code-line stop, so it shrinks). The ADR-081 privileged-type refusal keeps its reason, message, next action and log text. Plan Z-08 joins it: a metadata.targetAgentId pin must pass the owner's CURRENT direct entitlement before it outranks the call-out, unless a strictly parsed provider intent overrides it. Otherwise the ticket escalates terminally as pinned_agent_not_entitled and is never claimed.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): the dispatch gate also judges the workflow's declared workerBot and reviewerBot (DispatchGateInput.workers), and refusePrivilegedResolvedWorker runs once the worker agent id is final, so a privileged worker reached by pin, call-out or declaration is sent nothing unless the ticket's type is privileged and its owner a super-admin; the refusal escalates terminally like the other gates.
  */
 
 import * as http from 'node:http';
@@ -48,7 +49,7 @@ import {
 } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
 import { serviceSecretHeaders, trustedServiceUserHeaders } from '@/shared/middleware/authz';
-import { refuseTicketAtDispatch } from './dispatch-ticket-gates';
+import { escalateDispatchRefusal, refusePrivilegedResolvedWorker, refuseTicketAtDispatch } from './dispatch-ticket-gates';
 import { resolveSkillProfileByTicketType, composeSkillProfilePrompt } from '@/shared/skill-profiles';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { RefusalError } from '@/shared/refusal-events';
@@ -635,7 +636,9 @@ export async function dispatchManifestWorkerTicket(
 
   // Dispatch-time ticket gates (ADR-081 privileged type, Z-08 pin authorization): escalate
   // terminally rather than defer, so a refused ticket never re-dispatches every poll.
-  const gate = refuseTicketAtDispatch({ ticketType: workflow.ticketType, ownerSub: ticket.ownerSub, pinnedAgentId, providerAgentId });
+  const gate = refuseTicketAtDispatch({
+    ticketType: workflow.ticketType, ownerSub: ticket.ownerSub, pinnedAgentId, providerAgentId, workers: [workflow.workerBot, workflow.reviewerBot],
+  });
   if (gate) {
     logger.warn({ ticketId, ticketType: workflow.ticketType, ownerSub: ticket.ownerSub ?? null, pinnedAgentId }, gate.logMessage);
     await deps.ticketService.updateStatus(ticketId, 'escalated', gate.escalation).catch((updateErr) => {
@@ -725,6 +728,10 @@ export async function dispatchManifestWorkerTicket(
     pinnedAgentId ??
     callOutAgentId ??
     (deps.resolveAgentIdByName ? await deps.resolveAgentIdByName(workflow.workerBot) : null);
+
+  // ADR-081, last line: the resolved id is judged once more, whichever path chose it.
+  const privilegedWorker = workerAgentId ? refusePrivilegedResolvedWorker({ ticketType: workflow.ticketType, ownerSub: ticket.ownerSub, agentId: workerAgentId }) : null;
+  if (privilegedWorker) { await escalateDispatchRefusal(deps, ticketId, privilegedWorker, { ticketType: workflow.ticketType, ownerSub: ticket.ownerSub ?? null, workerAgentId }); return; }
 
   if (!workerAgentId) {
     logger.error(

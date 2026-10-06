@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Made normalizeCandidates async with optional AgentProfileRepository for DB-sourced agent candidates
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added seeded routing metadata and factory-bot guardrails so generic tickets stop selecting agent-factory by default
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added runtime online-agent filtering and direct-channel execution envelopes for targeted swarm delivery
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): normalizeCandidates never returns a privileged worker (withoutPrivilegedWorkers), whichever source the candidates came from (explicit list, bids or the roster), so swarm routing cannot choose the developer bot; only its own workflow names it.
  */
 
 import {
@@ -24,6 +25,7 @@ import { createChildLogger } from '@/shared/logger';
 import type { SwarmEscalationTarget } from './swarm-cycle-policy';
 import type { SwarmExecutionPolicyOutcome } from './swarm-execution-policy-runner';
 import type { DecomposedWorkUnit } from './ticket-decomposition-service';
+import { withoutPrivilegedWorkers } from './swarm-privileged-worker-gate';
 
 const logger = createChildLogger({ module: 'swarm-ticket-processing-support' });
 
@@ -62,7 +64,8 @@ export class InMemoryMeshTransport implements MeshTransport {
 export type SwarmOnlineAgentIdsResolver = () => Promise<string[]>;
 
 /**
- * @description Normalizes route candidates from optional explicit candidates, bids, or the agents table.
+ * @description Normalizes route candidates from optional explicit candidates, bids, or the agents table. A privileged
+ * worker is never a candidate (ADR-081): routing cannot choose the developer bot, which only its own workflow names.
  * @param candidates - Optional static candidate list
  * @param bids - Optional bid list that can seed candidate defaults
  * @param title - Ticket title for reason text generation
@@ -200,10 +203,11 @@ export function buildExecutionEnvelope(
 }
 
 async function filterCandidatesByRuntimeAvailability(
-  candidates: RouteCandidate[],
+  sourced: RouteCandidate[],
   resolveOnlineAgentIds: SwarmOnlineAgentIdsResolver | undefined,
   title: string,
 ): Promise<RouteCandidate[]> {
+  const candidates = withoutPrivilegedWorkers(sourced);
   if (!resolveOnlineAgentIds || candidates.length === 0) {
     return candidates;
   }

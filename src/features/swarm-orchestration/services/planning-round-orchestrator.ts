@@ -18,6 +18,7 @@
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | The PM planning round carries the root ticket's owner and persisted verified issuer (readRoundOwner) so it can run in-process on the owner's hosted ladder (docs/security/http-delegation.md, "Build-lane planning runs in-process").
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | When the last planning round ran in-process, decomposition reads its reply from memory (planning-output-source.ts): no shared-volume fallback, the plan is recorded as IMPLEMENTATION-PLAN.md only when absent, and a failed round throws PlanningDecompositionError for the queue manager to escalate. Mesh rounds keep the existing parse path.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | parseInProcessPlan takes the round's start time: a reply without the decomposition section is decomposed from the IMPLEMENTATION-PLAN.md the planning node wrote during the round (readFreshPlanFile); an older file is still never read, and a reply that carries the section is recorded and parsed as before.
+ * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): a PM assignment naming a privileged worker is dropped before phase-4 routing (routablePmAssignment), which takes the assignment first, so routing chooses an ordinary agent; the role hint stays.
  */
 
 import { existsSync } from 'fs';
@@ -43,6 +44,7 @@ import type { SwarmTicketLifecycleSnapshot } from './ticket-cycle-state-machine'
 import { resolveSharedWorkspaceRoot } from '@/shared/workspace-root';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 import { hasSubtaskDecomposition, readFreshPlanFile, readInProcessPlanText, recordImplementationPlan } from './planning-output-source';
+import { routablePmAssignment } from './swarm-privileged-worker-gate';
 import {
   TECHNICAL_SPECIFICATION_FILE,
   buildArchitectureWorkUnit,
@@ -465,7 +467,7 @@ export class PlanningRoundOrchestrator {
         currentPhase: SWARM_PHASES.EXECUTION,
         ticketDepth: context.ticketDepth,
         complexity: input.phaseGate.complexity,
-        pmAssignedAgentId: assignment?.suggestedAgentId,
+        pmAssignedAgentId: routablePmAssignment(input.item.externalId, assignment?.suggestedAgentId),
         pmAssignedRole: assignment?.suggestedRole,
       },
     );
