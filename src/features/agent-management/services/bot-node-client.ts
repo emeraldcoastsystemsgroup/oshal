@@ -35,6 +35,7 @@
  * 30 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.imageTurn (ADR-130 amendment 2026-10-02): the storyboard render executor marks its dispatch as an image turn so a render on the Antigravity harness hands back the image generate_image wrote. Optional; absent means an ordinary turn.
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.renderInstruction (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02): the server-authored render instruction an image turn carries beside `text`, which on that turn is the user's brief and stays untrusted data. Written only by the storyboard render executor; the bot files it under TRUSTED CONFIGURATION and names the harness's image tool in the rebind.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Carry verified replay producer subject and issuer for caller-scoped spending and cost attribution.
+ * 33 | maintainer@emeraldcoastsystemsgroup.com | Protected bot-persona carrier. BotNodeRequest gains the reserved, controller-set `botPersona`: a caller-supplied value is refused (bot_persona_carrier_reserved) beside the existing applicationExecutionId reservation, and sendAuthorized adds the persona the owning application registered for the prepared binding's app and agentId (resolveBotPersonaByApp) to the protected body BEFORE buildDelegatedDispatch, so it is inside body_sha256 and the durable bind. Unprotected dispatches never carry it.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -42,6 +43,7 @@ import { getApplicationRemoteExecutionAuthority, type ApplicationRemoteExecution
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { captureRemoteExecutionResult } from '@/shared/remote-execution-results';
 import { getSpecialistContextRegistry } from '@/shared/specialist-context';
+import { resolveBotPersonaByApp } from '@/shared/protected-bot-personas';
 import type { BrainFallbackMarker } from '@/shared/types';
 
 import * as http from 'node:http';
@@ -291,6 +293,15 @@ export interface BotNodeRequest {
    * harness's own image tool in the authority rebind. Never set on any other turn.
    */
   renderInstruction?: string;
+  /**
+   * RESERVED, controller-set only. The composed persona (identity, personality, screened
+   * perspective, no-authority sentence) the target bot's owning application registered for it.
+   * BotNodeClient adds it to a protected dispatch before signing, so it is inside the signed body and
+   * the durable bind; a caller that supplies it is refused with `bot_persona_carrier_reserved`. The
+   * node accepts it only on a protected direct, non-agentic dispatch and files it first under
+   * TRUSTED CONFIGURATION. It grants no tool, scope or credential.
+   */
+  botPersona?: string;
 }
 
 /**
@@ -456,6 +467,7 @@ export class BotNodeClient {
 
   private async prepareRemoteDispatch(agentId: string, request: BotNodeRequest): Promise<RemoteDispatchAuthority> {
     if (request.applicationExecutionId !== undefined) throw new Error('authorization_execution_reference_reserved');
+    if (request.botPersona !== undefined) throw new Error('bot_persona_carrier_reserved');
     const authority = this.remoteExecutionAuthority ?? getApplicationRemoteExecutionAuthority();
     const actor = getApplicationAuthorizationActor();
     const prepared = authority ? await authority.prepare(actor ?? { sub: '', issuer: '', isActive: false, isSwarmAdmin: false },
@@ -483,10 +495,15 @@ export class BotNodeClient {
 
   private async sendAuthorized(agentId: string, url: string, request: BotNodeRequest,
     { authority, actor, prepared }: RemoteDispatchAuthority, assertFresh?: () => void): Promise<BotNodeResponse> {
-    const delegated = this.buildDelegatedDispatch(agentId, prepared ? { ...request, applicationExecutionId: prepared.executionId } : request);
+    // The persona is resolved from the controller's own prepared binding, never from the request, and
+    // joins the body before signing so body_sha256 and the durable bind cover it.
+    const persona = prepared ? resolveBotPersonaByApp(prepared.binding.app, prepared.binding.agentId) : null;
+    const delegated = this.buildDelegatedDispatch(agentId, prepared
+      ? { ...request, applicationExecutionId: prepared.executionId, ...(persona ? { botPersona: persona } : {}) }
+      : request);
     if (prepared) await authority!.bind(prepared.executionId, delegated.receipt!, delegated.request as unknown as Record<string, unknown>);
     logger.info(
-      { agentId, url, taskId: request.taskId, textLength: request.text.length },
+      { agentId, url, taskId: request.taskId, textLength: request.text.length, botPersona: persona !== null },
       'Dispatching work to bot node',
     );
 

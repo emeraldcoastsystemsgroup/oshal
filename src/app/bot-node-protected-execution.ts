@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Admit either branch of the controller-resolved user brain: a hosted endpoint or a signed authoritative provider/model stamp. The boundary remains vendor-neutral; CLI eligibility is still enforced by the existing demo/operator preflight and final spawn guard, while every protected turn stays direct, non-agentic, native-registry-tool-less and current-permit checked.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the already-verified original dispatch token in the runtime-only protected context for controller-revalidated, per-call application tools.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind the validated fallbackOrder into protected provider authority and the signed-body/envelope continuity digest so an HTTP hop cannot omit or rewrite a configured fallback chain.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Bind the controller-composed botPersona across the signed body and the envelope: a protected execution whose envelope persona differs from the signed one (added, dropped or rewritten after verification) is refused as authorization_remote_envelope_mismatch.
  */
 import type { Pool } from 'pg';
 import type { MeshEnvelope } from '@/features/agent-management';
@@ -103,6 +104,7 @@ function assertConfiguredReasoningRequest(dispatch: VerifiedRemoteDispatch, enve
     || payload.externalId !== dispatch.claims.task_id || payload.workspaceFolderId !== canonicalBotWorkspaceId(body.workspaceFolderId)
     || payload.text !== body.text || payload.direct !== true || payload.agenticMode !== false
     || Object.hasOwn(payload, 'creds') || Object.hasOwn(payload, 'providerIntent')
+    || payload.botPersona !== body.botPersona
     || (hostedShape && delegationHostedDigest(payload.byoLlmConnection) !== delegationHostedDigest(hosted))
     || (providerShape && delegationProviderDigest(payload) !== delegationProviderDigest(body))) deny('authorization_remote_envelope_mismatch');
 }

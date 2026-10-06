@@ -38,6 +38,7 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Forward the payload's imageTurn marker into the TaskController options (ADR-130 amendment 2026-10-02). Only a literal true is forwarded. It is set by the storyboard render executor; the Antigravity wrapper uses it to collect generate_image's output from its private HOME into the task workspace before the HOME is removed, and refuses it on a host-tools-only or bridged turn. Every other provider ignores it. An image turn's prompt is also assembled verbatim, like a direct call (no persona layers, swarm memory, handover or ticket scaffolding, which told the render to write handovers and deliverables while its own prompt forbids creating files), but it is NOT marked hostToolsOnly: the image tool is the CLI's own.
  * 34 | maintainer@emeraldcoastsystemsgroup.com | SEC-05 carve for image turns, server-authored instruction only (operator decision 2026-10-02 b; ADR-130 amendment). The live render of 2026-10-02 19:00 was refused by the model: the only text naming generate_image sat inside the data-only UNTRUSTED_CONTENT record, under an authority rebind of ["attempt_completion"], so the model read the render as an injection and never called the tool (the same text rendered in a repro after three turns of deliberation: variance, not a rule). On an image turn the render instruction now arrives in its own carrier (payload.renderInstruction, written by the storyboard providers in the api process and validated at the HTTP boundary), is placed under TRUSTED CONFIGURATION as [trusted-config source="image-render-instruction"], and the harness's own image tool (anyBotImageTurnToolFor: generate_image on antigravity-cli) joins attempt_completion in that turn's allowed_tools and authorized_scopes. The brief, the one user-originated field, still travels as payload.text and stays inside the UNTRUSTED record; the instruction tells the model to read it from there as data. An image turn without the carrier is refused before any task exists, and no other turn reads either field. Guard: tests/unit/image-turn-prompt-framing.spec.ts.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Where a failed execution leaves the node, an error's untrusted diagnostic (error.diagnostic: an Antigravity image-turn refusal's image-tool error and model reply) is re-attached to the error text behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER. AntigravityProvider keeps it off the error's message and stderr so the node's provider failover never classifies tool or model text (verifier finding on core PR #1031: a throttle word in either sent the render to the fallback rung); the api's render provider splits it off again for its own callers. Every other failure's text is unchanged.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Protected bot-persona carrier. A protected direct turn reaches the any-bot direct path tool-less, and that path sends only a generic system prompt, so a node-hosted package bot (the Scene Studio director) answered without its identity or voice. readProtectedBotPersona reads the controller-composed payload.botPersona on a protected execution only (signed into the body, checked against it by the protected boundary): an unprotected execution that carries one is WARNed and ignored, a protected one without it is INFO and runs without, and a present non-string or blank value throws before any task exists. The persona is filed FIRST under TRUSTED CONFIGURATION as [trusted-config source="bot-persona"], before the image instruction and the skill profile, still before the untrusted body and the final authority rebind; it changes no allowed_tools or scopes. The prompt-assembly comment no longer claims the provider loads the persona on a direct turn: only the any-bot agentic loop prefixes BOT_PERSONA_FILE, and a non-agentic, tool-less or BYO turn takes the direct path.
  */
 
 /**
@@ -98,6 +99,7 @@ import { demoModeEnabled, isDeploymentOperatorSub } from '@/shared/deployment-mo
 import { ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER, anyBotImageTurnToolFor, anyBotRuntimeToolScope } from '@/shared/llm-runtime';
 import { isUnbrokeredAutonomousProvider, resolveUsageCost } from '@/features/llm-provider';
 import { getProtectedBotExecution } from './bot-node-protected-context';
+import { BOT_PERSONA_TRUSTED_SOURCE } from '@/shared/protected-bot-personas';
 
 const logger = createChildLogger({ module: 'bot-node-execution-handler' });
 
@@ -119,6 +121,32 @@ function readImageTurnInstruction(payload: Record<string, unknown> | undefined):
   const value = payload?.renderInstruction;
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error('An image turn requires the server-authored render instruction (renderInstruction); refusing to render from the untrusted body alone');
+  }
+  return value;
+}
+
+/**
+ * @description The controller-composed persona a protected execution carries (payload.botPersona).
+ * The controller signs it into a protected direct dispatch only, the HTTP boundary validated it
+ * (parseBotNodePromptCarrier) and the protected boundary bound it to the signed body, so on a
+ * protected execution it is server configuration. Anywhere else it is not, and it is ignored.
+ * @param payload - The envelope payload.
+ * @param isProtected - Whether this execution runs under a verified protected dispatch.
+ * @param agentId - For the log lines.
+ * @returns The persona text, or null when there is none to carry.
+ */
+function readProtectedBotPersona(payload: Record<string, unknown> | undefined, isProtected: boolean, agentId: string): string | null {
+  const value = payload?.botPersona;
+  if (!isProtected) {
+    if (value !== undefined) logger.warn({ agentId }, 'Ignoring a bot persona carrier on an unprotected execution');
+    return null;
+  }
+  if (value === undefined) {
+    logger.info({ agentId }, 'Protected execution carries no bot persona; the turn runs without one');
+    return null;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('A protected bot persona carrier must be a non-empty string');
   }
   return value;
 }
@@ -349,6 +377,8 @@ export function createBotNodeExecutionHandler(
       // SEC-05 carve for image turns: the server-authored instruction is its own carrier, read here
       // and nowhere else; the brief stays the (untrusted) text. Refused before any task exists.
       const renderInstruction = imageTurn ? readImageTurnInstruction(payload) : null;
+      // The controller-signed persona of a protected direct turn; refused here, before any task, if malformed.
+      const botPersona = readProtectedBotPersona(payload, Boolean(protectedExecution), agentId);
       if (hasProviderIntent && !providerIntent) throw new Error('Invalid trusted provider intent');
       if (hasCredentialCarrier && !providerIntent) {
         throw new Error('Connector credentials require a validated deterministic provider intent');
@@ -446,11 +476,13 @@ export function createBotNodeExecutionHandler(
         };
       }
       // ── Prompt assembly ──
-      // Direct/interactive reasoning: pass ONLY the caller's text. The provider
-      // loads the bot's (lean) persona itself, so we add no swarm persona layers,
-      // no file-persona "read your context" scaffolding, and no phase/handover
-      // execution framing — all of which a reasoner reads as out-of-place noise
-      // (it flags them as a prompt injection against its real role).
+      // Direct/interactive reasoning: pass ONLY the caller's text, with no swarm persona layers, no
+      // file-persona "read your context" scaffolding and no phase/handover execution framing — a
+      // reasoner reads all of those as out-of-place noise (it flags them as a prompt injection
+      // against its real role). Nothing here loads the bot's persona. Only the any-bot agentic loop
+      // prefixes the node's BOT_PERSONA_FILE; a non-agentic, tool-less or BYO turn takes the any-bot
+      // direct path, which adds a generic system prompt only. Every protected turn is tool-less and
+      // non-agentic, so its persona is the controller-signed botPersona under TRUSTED CONFIGURATION.
       const profile = !verbatimPrompt && deps.agentProfileRepository
         ? await deps.agentProfileRepository.getAgentProfile(agentId) : null;
       const personaLayers = verbatimPrompt
@@ -500,9 +532,11 @@ export function createBotNodeExecutionHandler(
         });
       }
       const skillProfilePattern = typeof payload?.pattern === 'string' ? payload.pattern.trim() : '';
-      // Server-authored configuration, in order: the image turn's render instruction (the carve),
-      // then the controller-resolved skill profile. Both are server text; neither is the user's.
+      // Server-authored configuration, in order: the protected turn's bot persona (who it is), the
+      // image turn's render instruction (the carve), then the controller-resolved skill profile. All
+      // are server text; none is the user's, and none changes the authority rebind that follows.
       const trustedConfiguration: TrustedPromptConfiguration[] = [
+        ...(botPersona ? [{ source: BOT_PERSONA_TRUSTED_SOURCE, content: botPersona }] : []),
         ...(renderInstruction ? [{ source: IMAGE_RENDER_INSTRUCTION_SOURCE, content: renderInstruction }] : []),
         ...(skillProfilePattern ? [{ source: 'resolved-skill-profile', content: skillProfilePattern }] : []),
       ];
