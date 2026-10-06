@@ -5,7 +5,9 @@
 capture, store #192) and 0.3.0 (the `contours` artifact and "Open in CAD Studio", store #194, the
 consumer being [ADR-153](153-iterative-cad-kernel-cad-studio.md)) by 2026-09-13. The handover and
 the open backlog live with the package: `scan-to-print/docs/CONTINUATION.md` and
-`scan-to-print/BACKLOG.md` (B1–B16). Nothing in core changed; this
+`scan-to-print/BACKLOG.md` (B1–B20). [Amendment 1](#amendment-1--2026-10-06-printing-as-a-swarm-service-bambu-lab-printers-and-agents-print-tools)
+records printing as a swarm service, Bambu Lab printers and the agents' print tools (0.6.0–0.7.0,
+installed on the operator's box 2026-10-06). Nothing in core changed; this
 ADR records the decision because the occupancy-grid contract is a platform building block that
 later sensor work (ADR-111's LiDAR imports, ADR-140's device hands) will build on.
 **Related:** [ADR-111](111-spatial-mapping-3d-reconstruction.md) (room-scale video→3DGS; the
@@ -117,3 +119,31 @@ scan).
   criteria in `scan-to-print/BACKLOG.md`.
 - The as-built contract lives with the code in `scan-to-print/docs/ARCHITECTURE.md`; this ADR
   is the decision record, and it defers to that file for numbers.
+
+## Amendment 1 — 2026-10-06: printing as a swarm service, Bambu Lab printers and agents' print tools
+
+*Two operator decisions, both on 2026-10-06. First: "build it into the app as a service", the way agents call the RAG service. Second: "agents can use tools that they are assigned to and there should be a bot that can call the printer".*
+
+**Decisions.**
+
+- **Printing is a swarm service of this package**, mounted `service-or-oidc` at `/api/scan-to-print/service`. It prints a scan job or a posted model, and is not a separate printer package.
+- **What the service enforces for every caller is the printer owner's auto-start.** It is off when a printer is added, and only the owner turns it on, with a confirmation. It is re-read at the moment a start would be sent. With it off, the file is uploaded and the reply says so. A caller's own sliced archive or G-code is uploaded and never started.
+- **Bambu Lab printers are a fourth host kind, reached directly on the LAN.**
+  - Files go up over implicit FTPS (:990), and status and the start command use MQTT (:8883).
+  - No vendor cloud or plugin is involved.
+  - The printer's serial, model and a SHA-256 certificate pin are read from its own certificate when it is added. Every later connection refuses any other device before the access code is sent.
+  - Every connection offers TLS 1.2 at most, because a P2S broker on firmware 01.02.00.00 was reported to hang on TLS 1.3.
+  - A start needs the printer's LAN Only + Developer Mode; otherwise it is refused before it is sent.
+- **Slicing for Bambu Lab printers runs in a package-owned engine container**: OrcaSlicer 2.4.2, sha256-pinned for amd64 and arm64, following the store's engine-container pattern. The worker flattens the vendor profiles, because the CLI does not resolve `inherits`. It also finishes the archive with the printer model id and previews, so the printer accepts it.
+- **Agents print through in-process package tools under an ADR-149 catalog**, not through the HTTP service.
+  - Core's `api` tool executor sends only the service secret and a user header, which the enforce-mode application guard refuses for a package route.
+  - So the five tools run in the api under the verified actor, and call the same functions as the routes. `authorization.yaml` declares one `maker` role carrying the whole app.
+  - Adopting the catalog was a reviewed breaking migration that removed the `@app-admin` fallback.
+  - The app's operator bot is assigned the tools: reads auto, `print-to-3d-printer` ask.
+
+**Consequences.**
+
+- A person, Jarvis or an assigned bot can send a printable object to the person's own Bambu Lab, OctoPrint, Klipper or PrusaLink printer. Nothing starts a machine without the owner's auto-start.
+- "Print progress read-back", listed above as not built, now exists for Bambu Lab printers: state, percent, layers, minutes left and health codes.
+- Proven: the package's suites, including a fake printer on real local TLS and the real core runtime harness (`kernel.core`). Proven live on the operator's P2S: registration, status and an upload. Not yet proven: a print started by oshal on a real printer (the package's B19). The operator bot answering the operator on its own node is the package's B20.
+- No core code changed for this amendment. It uses core's existing package tools and ADR-149 catalogs. The as-built detail lives in `scan-to-print/docs/PRINTERS.md` §1, §5 and §6.

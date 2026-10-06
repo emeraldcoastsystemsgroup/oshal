@@ -227,6 +227,7 @@ Every app is a package running on the **same untouched core** — the platform p
 | [security](swarm-apps/security.yaml) | **Security Center** — active scans + runtime threat detection; HIGH/CRITICAL auto-file to the security queue. |
 | [intelligent-operations](swarm-apps/intelligent-operations.yaml) | Self-healing ops: incidents → RCA → fix **only after operator approval**. |
 | world / spaces / camera / drones | World intelligence graph, with an operator page for its schedules and pull sources · video → explorable 3D scenes · camera ops · drones as swarm nodes. |
+| scan-to-print / cad-studio | **Make a part** — photos or LiDAR → a dimensioned drawing and a watertight STL → your own 3D printer (OctoPrint, Klipper, PrusaLink or a Bambu Lab printer on your network), with a print service agents can use; every send asks you first · CAD Studio turns the outlines into a real CAD part. |
 
 That's a representative slice — the store catalog changes independently of the kernel across productivity, knowledge, finance, creative, home, and engineering shelves. Install packages from the cockpit (Explore Apps), the installer (`--apps`), or the API; consult the store catalog instead of relying on a hand-maintained package count here.
 
