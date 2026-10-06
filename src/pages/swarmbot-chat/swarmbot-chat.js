@@ -28,13 +28,14 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Use the canonical Cockpit theme resolver and keep embedded parent/profile updates from overwriting the saved global preference.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Follow shared standalone and bundled parent palettes without saving inherited bot colors.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Show failed conversation recovery and explicitly create a fresh owned thread without deleting protected history or drafts.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Delegate bootstrap failure diagnostics to the sanitized conversation handler so raw API errors cannot reenter UI logs.
  */
 
 import { initializeSharedRagWorkspacePopup } from '/chat-assets/chat-rag-workspace-popup.mjs';
 import { SwarmBotWorkspaceActions } from '/swarmbot/chat/swarmbot-workspace-actions.js';
 import { appendMessage } from '/swarmbot/chat/swarmbot-messages.js';
 import { createSurfaceProducer } from '/shared/ui/js/surface-bridge-producer.js';
-import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
+import { createUiLogger } from '../shared/ui-debug.js';
 import { bootstrapConversation, showConversationFailure, requestJson } from '/swarmbot/chat/swarmbot-conversation.js';
 import { COCKPIT_THEMES, resolveCockpitTheme } from '/cockpit/js/theme-manager.js';
 
@@ -980,8 +981,5 @@ function isEmbedded() {
 
 const app = new SwarmBotWorkspaceApp();
 void app.init().catch((error) => {
-  logger.error('Swarmbot workspace bootstrap failed', {
-    error: serializeUiError(error),
-  });
   showConversationFailure(app, error);
 });

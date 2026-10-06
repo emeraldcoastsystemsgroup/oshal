@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Hold the provider-embedded tool tier scenario to the same runner parity as the rest.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Hold the new persistence recovery card to the existing four-suite local runner without changing browser execution authority.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Pin the six protected inline concierge suites at their actual unit, HTTP/PostgreSQL and browser boundaries and retain explicit local-runner prerequisites.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Pin the scoped concierge logging guard beside its existing browser and authorization boundaries.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -57,6 +58,7 @@ describe('autonomous Test Lab registration', () => {
       { level: 'unit', path: 'tests/unit/protected-inline-stream-events.spec.ts' },
       { level: 'integration', path: 'tests/unit/protected-inline-thread-postgres.spec.ts' },
       { level: 'browser', path: 'tests/unit/swarmbot-conversation-browser.spec.ts' },
+      { level: 'unit', path: 'tests/unit/concierge-operation-logging.spec.ts' },
     ]));
     expect(scenario.steps).toHaveLength(1);
     expect(scenario.steps[0]).toMatchObject({ id: 'runner', app: 'test-lab' });

@@ -1,15 +1,16 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * DATE         | AUTHOR  | DESCRIPTION
+ * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — ported from any-bot StreamController.js
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added task update broadcast helper for chat runtime status transitions
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added task update broadcast helper for chat runtime status transitions
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Revalidate scoped SSE events in order with bounded queues and stop protected delivery when current access is revoked.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Defer protected inline output until durable completion, isolating concurrent scopes and current-authorized pending approval controls.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Observe public stream operations and every caught delivery fault with sanitized identifiers, duration and scrubbed stack frames.
  */
 
-import { createChildLogger } from '@/shared/logger';
+import { createChildLogger, observeOperation, observeAsyncOperation, logOperationError } from '@/shared/logger';
 import type { StreamEventType } from '@/shared/types';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -33,6 +34,7 @@ interface SSEClientState {
   pendingEvents: number;
 }
 
+/** @description Per-turn unpublished output; a sticky refusal prevents a caught overflow from later publishing a partial answer. */
 interface DeferredTaskEvents {
   taskId: string;
   events: Array<{ type: StreamEventType; data: Record<string, unknown> }>;
@@ -79,10 +81,17 @@ export class StreamManager {
   private heartbeatIntervalMs: number;
   private readonly deferredTaskEvents = new AsyncLocalStorage<DeferredTaskEvents>();
 
+  /**
+   * @description Set the heartbeat interval; event buffering remains local to each asynchronous turn.
+   * @param heartbeatIntervalMs Existing heartbeat interval in milliseconds.
+   * @returns An empty stream manager.
+   */
   constructor(heartbeatIntervalMs = 30000) {
+    const startedAt = Date.now();
+    logger.info({ operation: 'constructor', event: 'entry' }, 'Operation started');
     this.sseClients = new Map();
     this.heartbeatIntervalMs = heartbeatIntervalMs;
-    logger.info({ heartbeatIntervalMs }, 'Stream manager initialized');
+    logger.info({ operation: 'constructor', event: 'exit', durationMs: Date.now() - startedAt, outcome: 'completed' }, 'Operation finished');
   }
 
   /**
@@ -92,17 +101,19 @@ export class StreamManager {
    * @returns The outcome after ordered replay through unchanged per-client authorization; rejection discards all unpublished events.
    */
   async withDeferredTaskEvents<T>(taskId: string, execute: () => Promise<T>): Promise<T> {
-    const buffer: DeferredTaskEvents = { taskId, events: [], bytes: 0, closed: false, parent: this.deferredTaskEvents.getStore() };
-    try {
-      const result = await this.deferredTaskEvents.run(buffer, execute);
-      if (buffer.refusal) throw buffer.refusal;
-      buffer.closed = true;
-      for (const event of buffer.events) this.broadcast(taskId, event.type, event.data);
-      return result;
-    } finally {
-      buffer.closed = true;
-      buffer.events.length = 0;
-    }
+    return observeAsyncOperation(logger, 'withDeferredTaskEvents', { taskId }, async () => {
+      const buffer: DeferredTaskEvents = { taskId, events: [], bytes: 0, closed: false, parent: this.deferredTaskEvents.getStore() };
+      try {
+        const result = await this.deferredTaskEvents.run(buffer, execute);
+        if (buffer.refusal) throw buffer.refusal;
+        buffer.closed = true;
+        for (const event of buffer.events) this.broadcast(taskId, event.type, event.data);
+        return result;
+      } finally {
+        buffer.closed = true;
+        buffer.events.length = 0;
+      }
+    });
   }
 
   /**
@@ -112,26 +123,28 @@ export class StreamManager {
    * @param taskId - Task to subscribe to, or 'all' for session-wide
    * @param res - Writable response object
    * @param authorize - Optional trusted current-access check used for every task event.
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   registerClient(clientId: string, taskId: string, res: SSEWritable, authorize?: (taskId: string, eventType?: StreamEventType) => Promise<boolean>): void {
-    this.setupSSEHeaders(res);
-    this.sendEvent(res, 'connection', { clientId, taskId, message: 'Connected to streaming' });
+    return observeOperation(logger, 'registerClient', { clientId, taskId }, () => {
+      this.setupSSEHeaders(res);
+      this.sendEvent(res, 'connection', { clientId, taskId, message: 'Connected to streaming' });
 
-    const heartbeatTimer = this.startHeartbeat(clientId, res);
+      const heartbeatTimer = this.startHeartbeat(clientId, res);
 
-    this.sseClients.set(clientId, {
-      taskId,
-      response: res,
-      connectedAt: Date.now(),
-      knownTaskIds: new Set(),
-      heartbeatTimer,
-      authorize,
-      delivery: Promise.resolve(),
-      pendingEvents: 0,
+      this.sseClients.set(clientId, {
+        taskId,
+        response: res,
+        connectedAt: Date.now(),
+        knownTaskIds: new Set(),
+        heartbeatTimer,
+        authorize,
+        delivery: Promise.resolve(),
+        pendingEvents: 0,
+      });
+
+      this.setupCleanup(clientId, res);
     });
-
-    this.setupCleanup(clientId, res);
-    logger.info({ clientId, taskId }, 'SSE client registered');
   }
 
   /**
@@ -180,23 +193,26 @@ export class StreamManager {
    * @description Unregister an SSE client and clean up resources.
    *
    * @param clientId - Client identifier
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   unregisterClient(clientId: string): void {
-    const client = this.sseClients.get(clientId);
-    if (!client) return;
+    return observeOperation(logger, 'unregisterClient', { clientId }, () => {
+      const startedAt = Date.now();
+      const client = this.sseClients.get(clientId);
+      if (!client) return;
 
-    if (client.heartbeatTimer) {
-      clearInterval(client.heartbeatTimer);
-    }
+      if (client.heartbeatTimer) {
+        clearInterval(client.heartbeatTimer);
+      }
 
-    try {
-      client.response.end();
-    } catch (err) {
-      logger.warn({ err, clientId }, 'Error closing SSE client');
-    }
+      try {
+        client.response.end();
+      } catch (err) {
+        logOperationError(logger, 'unregisterClient', { clientId }, err, startedAt);
+      }
 
-    this.sseClients.delete(clientId);
-    logger.info({ clientId }, 'SSE client unregistered');
+      this.sseClients.delete(clientId);
+    });
   }
 
   /**
@@ -205,13 +221,15 @@ export class StreamManager {
    * (Ported from any-bot Issue #022 fix for cross-bot SSE noise.)
    *
    * @param taskId - Task to associate
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   associateTaskWithSession(taskId: string): void {
-    this.sseClients.forEach((client, clientId) => {
-      if (client.taskId === 'all' || !client.taskId) {
-        client.knownTaskIds.add(taskId);
-        logger.debug({ clientId, taskId }, 'Task associated with session client');
-      }
+    return observeOperation(logger, 'associateTaskWithSession', { taskId }, () => {
+      this.sseClients.forEach(client => {
+        if (client.taskId === 'all' || !client.taskId) {
+          client.knownTaskIds.add(taskId);
+        }
+      });
     });
   }
 
@@ -222,24 +240,35 @@ export class StreamManager {
    * @param taskId - Target task
    * @param eventType - Event type name
    * @param data - Event payload
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcast(taskId: string, eventType: StreamEventType, data: Record<string, unknown>): void {
-    const deferred = this.deferTaskEvent(taskId, eventType, data);
-    if (deferred === 'buffered') return;
-    this.sseClients.forEach((client, clientId) => {
-      if (this.shouldReceiveEvent(client, taskId)) {
-        if (client.authorize) this.queueAuthorizedEvent(clientId, client, taskId, eventType, data);
-        else if (!isApprovalControlEvent(eventType)) this.sendEvent(client.response, eventType, { ...data, taskId });
-      }
+    return observeOperation(logger, 'broadcast', { taskId }, () => {
+      const deferred = this.deferTaskEvent(taskId, eventType, data);
+      if (deferred === 'buffered') return;
+      this.sseClients.forEach((client, clientId) => {
+        if (this.shouldReceiveEvent(client, taskId)) {
+          if (client.authorize) this.queueAuthorizedEvent(clientId, client, taskId, eventType, data);
+          else if (!isApprovalControlEvent(eventType)) this.sendEvent(client.response, eventType, { ...data, taskId });
+        }
+      });
     });
-    logger.debug({ taskId, eventType }, 'Event broadcast');
   }
 
+  /**
+   * @description Retain a bounded copy of output until the trusted caller finishes current-rights verification.
+   * @param taskId Exact producing task; nested buffers for other tasks remain isolated.
+   * @param type Actual event kind, with approval controls admitted separately.
+   * @param data Event payload retained for delivery, never for logging.
+   * @returns Whether the event was buffered, is a control event, or has no active deferred scope.
+   */
   private deferTaskEvent(taskId: string, type: StreamEventType, data: Record<string, unknown>): 'buffered' | 'control' | false {
+    const startedAt = Date.now();
     let buffer = this.deferredTaskEvents.getStore();
     while (buffer && buffer.taskId !== taskId) buffer = buffer.parent;
     if (!buffer) return false;
     if (buffer.closed || buffer.refusal) throw buffer.refusal ?? new DeferredTaskStreamError();
+    // Approval controls must reach the owner during work; withholding them would deadlock the turn.
     if (isApprovalControlEvent(type)) return 'control';
     let serialized: string;
     try {
@@ -248,20 +277,31 @@ export class StreamManager {
       serialized = encoded;
     }
     catch (err) {
-      logger.error({ err }, 'Unable to retain protected inline stream event');
+      logOperationError(logger, 'deferTaskEvent', { taskId }, err, startedAt);
       buffer.refusal = new DeferredTaskStreamError(); throw buffer.refusal;
     }
     const bytes = Buffer.byteLength(serialized, 'utf8');
     if (buffer.events.length >= 128 || buffer.bytes + bytes > 1_048_576) {
       buffer.refusal = new DeferredTaskStreamError(); throw buffer.refusal;
     }
+    // Copy mutable payloads now so later producer mutations cannot alter the authorized replay.
     buffer.events.push({ type, data: JSON.parse(serialized) as Record<string, unknown> });
     buffer.bytes += bytes;
     return 'buffered';
   }
 
+  /**
+   * @description Preserve per-client ordering while rechecking access immediately before each pending delivery.
+   * @param clientId Exact subscribed connection.
+   * @param client Current connection state; replacement invalidates any queued work.
+   * @param taskId Exact event task.
+   * @param eventType Actual stream event kind.
+   * @param data Unlogged payload delivered only after current access succeeds.
+   * @returns No value; refusal removes access or closes the task-specific connection.
+   */
   private queueAuthorizedEvent(clientId: string, client: SSEClientState, taskId: string,
     eventType: StreamEventType, data: Record<string, unknown>): void {
+    const startedAt = Date.now();
     if (++client.pendingEvents > 128) { this.unregisterClient(clientId); return; }
     client.delivery = client.delivery.then(async () => {
       if (this.sseClients.get(clientId) !== client) return;
@@ -273,16 +313,30 @@ export class StreamManager {
         return;
       }
       this.sendEvent(client.response, eventType, { ...data, taskId });
-    }).catch(() => this.unregisterClient(clientId)).finally(() => { client.pendingEvents -= 1; });
+    }).catch(error => {
+      logOperationError(logger, 'queueAuthorizedEvent', { clientId, taskId }, error, startedAt);
+      this.unregisterClient(clientId);
+    }).finally(() => { client.pendingEvents -= 1; });
   }
 
+  /**
+   * @description Bound a stalled access check without allowing its late success to revive delivery.
+   * @param client Trusted subscriber authorization callback.
+   * @param taskId Exact event task.
+   * @param eventType Actual event kind, including separate pending approval controls.
+   * @returns The access decision, or false after a fault or timeout.
+   */
   private async authorizeEvent(client: SSEClientState, taskId: string, eventType: StreamEventType): Promise<boolean> {
+    const startedAt = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([client.authorize!(taskId, eventType), new Promise<boolean>(done => {
         timer = setTimeout(() => done(false), 2_000);
       })]);
-    } catch { return false; }
+    } catch (error) {
+      logOperationError(logger, 'authorizeEvent', { taskId }, error, startedAt);
+      return false;
+    }
     finally { clearTimeout(timer); }
   }
 
@@ -306,9 +360,12 @@ export class StreamManager {
    *
    * @param taskId - Task identifier
    * @param message - Message payload
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcastMessage(taskId: string, message: Record<string, unknown>): void {
-    this.broadcast(taskId, 'message', { message, timestamp: Date.now() });
+    return observeOperation(logger, 'broadcastMessage', { taskId }, () => {
+      this.broadcast(taskId, 'message', { message, timestamp: Date.now() });
+    });
   }
 
   /**
@@ -317,9 +374,12 @@ export class StreamManager {
    * @param taskId - Task identifier
    * @param chunk - Text chunk
    * @param messageId - Optional associated message ID
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcastStreamChunk(taskId: string, chunk: string, messageId?: string): void {
-    this.broadcast(taskId, 'stream_chunk', { chunk, messageId: messageId ?? null, timestamp: Date.now() });
+    return observeOperation(logger, 'broadcastStreamChunk', { taskId }, () => {
+      this.broadcast(taskId, 'stream_chunk', { chunk, messageId: messageId ?? null, timestamp: Date.now() });
+    });
   }
 
   /**
@@ -327,9 +387,12 @@ export class StreamManager {
    *
    * @param taskId - Task identifier
    * @param task - Task update payload
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcastTaskUpdate(taskId: string, task: Record<string, unknown>): void {
-    this.broadcast(taskId, 'task_update', { task, timestamp: Date.now() });
+    return observeOperation(logger, 'broadcastTaskUpdate', { taskId }, () => {
+      this.broadcast(taskId, 'task_update', { task, timestamp: Date.now() });
+    });
   }
 
   /**
@@ -338,9 +401,12 @@ export class StreamManager {
    * @param taskId - Task identifier
    * @param tool - Tool info
    * @param status - Execution status
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcastToolExecution(taskId: string, tool: Record<string, unknown>, status: string): void {
-    this.broadcast(taskId, 'tool_execution', { tool, status, timestamp: Date.now() });
+    return observeOperation(logger, 'broadcastToolExecution', { taskId }, () => {
+      this.broadcast(taskId, 'tool_execution', { tool, status, timestamp: Date.now() });
+    });
   }
 
   /**
@@ -348,9 +414,12 @@ export class StreamManager {
    *
    * @param taskId - Task identifier
    * @param result - Completion result
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcastCompletion(taskId: string, result: Record<string, unknown>): void {
-    this.broadcast(taskId, 'completion', { result, timestamp: Date.now() });
+    return observeOperation(logger, 'broadcastCompletion', { taskId }, () => {
+      this.broadcast(taskId, 'completion', { result, timestamp: Date.now() });
+    });
   }
 
   /**
@@ -358,9 +427,12 @@ export class StreamManager {
    *
    * @param taskId - Task identifier
    * @param error - Error message
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   broadcastError(taskId: string, error: string): void {
-    this.broadcast(taskId, 'error', { error, timestamp: Date.now() });
+    return observeOperation(logger, 'broadcastError', { taskId }, () => {
+      this.broadcast(taskId, 'error', { error, timestamp: Date.now() });
+    });
   }
 
   /**
@@ -371,11 +443,12 @@ export class StreamManager {
    * @param data - Event payload
    */
   private sendEvent(res: SSEWritable, eventName: string, data: Record<string, unknown>): void {
+    const startedAt = Date.now();
     try {
       res.write(`event: streaming-event\n`);
       res.write(`data: ${JSON.stringify({ type: eventName, ...data })}\n\n`);
     } catch (err) {
-      logger.error({ err, eventName }, 'Failed to send SSE event');
+      logOperationError(logger, 'sendEvent', {}, err, startedAt);
     }
   }
 
@@ -385,28 +458,32 @@ export class StreamManager {
    * @returns Stats object with client count and task count
    */
   getStats(): { clientCount: number; taskIds: string[] } {
-    const taskIds = new Set<string>();
-    this.sseClients.forEach((client) => {
-      if (client.taskId && client.taskId !== 'all') {
-        taskIds.add(client.taskId);
-      }
+    return observeOperation(logger, 'getStats', {}, () => {
+      const taskIds = new Set<string>();
+      this.sseClients.forEach((client) => {
+        if (client.taskId && client.taskId !== 'all') {
+          taskIds.add(client.taskId);
+        }
+      });
+      return { clientCount: this.sseClients.size, taskIds: Array.from(taskIds) };
     });
-    return { clientCount: this.sseClients.size, taskIds: Array.from(taskIds) };
   }
 
   /**
    * @description Close all connections for a specific task.
    *
    * @param taskId - Task to disconnect
+   * @returns No value; existing stream delivery and cleanup behavior is retained.
    */
   closeTaskConnections(taskId: string): void {
-    const toRemove: string[] = [];
-    this.sseClients.forEach((client, clientId) => {
-      if (client.taskId === taskId) {
-        toRemove.push(clientId);
-      }
+    return observeOperation(logger, 'closeTaskConnections', { taskId }, () => {
+      const toRemove: string[] = [];
+      this.sseClients.forEach((client, clientId) => {
+        if (client.taskId === taskId) {
+          toRemove.push(clientId);
+        }
+      });
+      toRemove.forEach((id) => this.unregisterClient(id));
     });
-    toRemove.forEach((id) => this.unregisterClient(id));
-    logger.info({ taskId, closedCount: toRemove.length }, 'Closed task connections');
   }
 }

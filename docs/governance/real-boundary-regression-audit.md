@@ -1060,3 +1060,46 @@ fixed `npm run test:remote-authorization` recipe. The registration guard enforce
 with that command and records unit, integration and browser levels. The Lab card names local
 Node, Docker and Chromium prerequisites and returns degraded instructions rather than claiming
 it executed host tests from a browser request. The fixture helper is not a seventh runnable spec.
+
+
+## Concierge documentation and operation logging (2026-10-05)
+
+The written `CLAUDE.md` contract requires documented public members, sequential CHANGE LOG
+entries, sanitized entry/exit timings and ERROR diagnostics for every caught exception. The
+existing native JavaScript lint/logging gates do not establish these properties: the generic
+JavaScript logging guard targets `any-bot/server`, while native page lint checks file length.
+
+This repair covers the concierge authority service, inline boundary, empty/history and pending
+control gates, stream manager and native conversation/request/recovery module. Their logs retain
+fixed operation names, allowlisted UUID bindings, bounded control metadata, duration and outcomes.
+Caught exceptions keep their existing refusal, retry and rethrow behavior; diagnostics contain
+scrubbed stack frames rather than raw messages, request bodies, principals, grants, providers,
+chat content or URL query strings. Server lifecycle records use INFO so the default configured
+production level retains them. Native UI records use the existing bounded UI logger. Comments
+explain the ownership, empty-shell, deferred-output and explicit-recovery boundaries.
+
+| Boundary | Actual coverage | Limit |
+|---|---|---|
+| `tests/unit/concierge-operation-logging.spec.ts` | Real Pino at the shipped default INFO level and redaction configuration; original result/error identity, numeric terminal timings, denied decisions and ERROR stacks; planted secret-bearing context/result/message/query inputs must not appear in serialized records. TypeScript AST checks with missing-tag, silent-catch and lost-observer negative controls cover both new read gates and the shared observer, plus the exported inline boundary contract. | The AST gate is deliberately bounded to these repaired functions. It cannot judge comment quality or certify the whole repository. |
+| `tests/unit/swarmbot-conversation-browser.spec.ts` | Actual served conversation/request/UI logger modules in owned isolated Chromium; guest profile, invalid JSON and HTTP failures retain safe ERROR records and lifecycle durations without leaking seeded secrets. | The canonical-method application adapter and recording loopback HTTP routes do not establish deployed identity, database or provider behavior. |
+
+The new guard is attached to the existing protected-execution Test Lab card and fixed local
+`test:remote-authorization` command. Final serial validation passed 2026-10-05: 261/261
+across 17 maintained/observability suites (including 22 logging guards and 11 actual served-module
+browser cases), 10/10 private PostgreSQL/HTTP/SSE conversation cases, 54/54 protected Jarvis
+cases using owned PostgreSQL, and 7/7 existing inline-entitlement/legacy-thread browser cases.
+Compiler, scoped ESLint, native syntax and whitespace checks passed. Six maintained logger mocks
+now partially import the shipped observer helpers instead of replacing the entire logger barrel;
+their existing model, identity, HTTP, SQL and browser assertions remain intact.
+
+A read-only sample of 125 production files found inherited gaps outside this delivery: the
+Office `presentations/src-routes/home-summary.ts` lacks a CHANGE LOG and exported factory tags;
+Little Monsters `src-routes/education-assignment-routes.ts` has prose without the required tags;
+14 of 40 sampled private libraries retain dated headers; `capture-crm/lib/access.js` has empty
+promise catches. These are follow-up work, not silently repaired or certified by this guard.
+A broader rollout should use changed-source negative controls and real logger capture, with
+explicit legacy scope, rather than treating existing lint success as full rule compliance.
+
+The inherited `handleSendMessage` callback still exceeds the 50-line function rule. The new
+observation adapter and other new helpers remain below that limit; this logging repair does not
+certify the older callback. Its decomposition remains separate follow-up work.

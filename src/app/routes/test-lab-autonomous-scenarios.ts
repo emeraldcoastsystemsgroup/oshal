@@ -46,6 +46,7 @@
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Register idle persistence cooldown recovery, SYSTEM retry isolation and truthful readiness with the existing isolated store-persistence runner.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Register the guest demo seed own-read regression on the protected remote application execution scenario: the rows the real seeder writes are read through the real guest chain by their guest, and refused to another guest and to the same sub from another issuer.
  * 42 | maintainer@emeraldcoastsystemsgroup.com | Register protected inline concierge authority, empty histories, pending approval streams, real PostgreSQL conversation reload and isolated native recovery browser coverage through the existing fixed runner.
+ * 43 | maintainer@emeraldcoastsystemsgroup.com   | Register concierge operation logging, secret omission and bounded documentation/catch negative controls in the existing protected-execution runner.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -199,6 +200,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/protected-inline-stream-events.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-inline-thread-postgres.spec.ts' },
     { level: 'browser', path: 'tests/unit/swarmbot-conversation-browser.spec.ts' },
+    { level: 'unit', path: 'tests/unit/concierge-operation-logging.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-controller-permit.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-protected-execution.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-remote-authorization-client.spec.ts' },

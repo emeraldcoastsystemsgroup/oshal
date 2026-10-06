@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Search the recorded bot call through plain objects only. The first execution threw "Converting circular structure to JSON": the AppContext argument carries the pg pool's timers, and its in-memory task store also holds the planted legacy row, so stringifying the whole call could never prove the turn ran clean of it. The assertion now names the missing thread id when it fails.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Give the hooks that own the isolated fixture browser the fixture's exit budget, so a confirmed but slow shutdown on a loaded box is failed by neither deadline.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Fail immediately with the served status when the page itself is unavailable, instead of timing out waiting for a handler it cannot contain; keep the turn neutral so domain handoff does not bypass the mocked answer.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Retain actual operation observers beside the existing logger spies without weakening any model, browser or entitlement assertion.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import type { Browser } from 'playwright';
@@ -16,7 +17,8 @@ import { BROWSER_HOOK_TIMEOUT_MS, launchIsolatedBrowser } from '../fixtures/isol
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
 
 const bot = vi.hoisted(() => vi.fn());
-vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/shared/logger', async importOriginal => ({
+  ...await importOriginal<typeof import('@/shared/logger')>(), createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 // Only the model turn is doubled. Routing, session ownership, persistence and the page are real.
 vi.mock('@/app/routes/jarvis-orchestrator', async importOriginal => ({ ...await importOriginal<object>(),

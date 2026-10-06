@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify exact principal and current rights for real Jarvis caches, history and durable shelf with signed result capture.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Type automatic projection witnesses against real functions and provide explicit empty legacy task fields without issuer qualification.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Keep actual operation observers through a partial logger mock without changing any protected Jarvis boundary assertion.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
@@ -21,7 +22,10 @@ const automatic = vi.hoisted(() => ({
   summaries: vi.fn<typeof import('@/app/routes/jarvis-orchestrator').maskPendingComplexSummaries>(async () => {}),
   visuals: vi.fn<typeof import('@/app/routes/jarvis-orchestrator').repairCompletedTaskTableVisuals>(async () => {}),
 }));
-vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/shared/logger', async importOriginal => ({
+  ...await importOriginal<typeof import('@/shared/logger')>(),
+  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
 vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 vi.mock('@/app/routes/jarvis-orchestrator', async importOriginal => ({ ...await importOriginal<object>(),
   runJarvisBot: bot, buildCatalogBlock: async () => '', loadEffectiveRoutes: async () => [],
