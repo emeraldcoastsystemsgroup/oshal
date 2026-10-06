@@ -216,6 +216,7 @@
  * 200 | maintainer@emeraldcoastsystemsgroup.com | Wire update status to current scoped application discovery while preserving operator refresh and apply.
  * 201 | maintainer@emeraldcoastsystemsgroup.com   | /api/personal-graph and /api/personal-graph/ingest (off unless PERSONAL_GRAPH_ROUTES=on) are operator-only: they share one in-memory store across every caller, so any signed-in user could read all users' ingested data, and ingest falls back to the deployment's connector credential (route review 2026-10-05).
  * 202 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-066 personal-graph mounts moved to server-auxiliary-routes.ts (mountPersonalGraphRoutes), unchanged and still operator-only, so server.ts is back under the 800-code-line decomposition threshold (BACKLOG #1788) it had crossed on main.
+ * 203 | maintainer@emeraldcoastsystemsgroup.com   | The sign-in routes move unchanged into server-auxiliary-routes.ts mountSignInRoutes, which also mounts the swarm admin's sign-in (/login/admin, /api/admin-auth/login, /logout/admin) right after /login and before the generic /login/:provider route, in every auth mode except MOCK_OIDC (ADR-174 slice 2b-ii). This keeps server.ts under its decomposition threshold.
  */
 
 require('dotenv').config();
@@ -354,6 +355,7 @@ import { waitForBootstrapComplete } from './composition';
 import { runServerBootstrapTasks } from './composition/server-bootstrap-tasks';
 import {
   mountPublicAndLegacyAuthRoutes,
+  mountSignInRoutes,
   mountMainUiDocumentRoutes,
   mountProvidersAndConnectorsRoutes,
   mountDevopsAndJudgeRoutes,
@@ -725,26 +727,9 @@ function createApp(): express.Application {
   // OIDC middleware (global) — uses mock mode when MOCK_OIDC env var is set
   app.use(authMiddleware);
 
-  // /login is registered here (the stock express-openid-connect route is disabled via
-  // routes.login=false) so a ?returnTo=<same-origin path> survives the IdP round-trip.
-  // Every path that restarts a login — the callback token-exchange retry, the
-  // state-mismatch restart, the cockpit's 401 auth-lapse guard — funnels through here;
-  // the stock route dropped returnTo, stranding ?app= deep links on the bare cockpit.
-  app.get('/login', loginHandler);
-  // Entra/local migration pilot: bare `/login` remains the combined invited-user page.
-  // `/login/local` is its cookie-clearing recovery alias, while the exact Microsoft route
-  // starts Entra. Register both before the generic provider route.
-  if (localLoginHandler) {
-    app.get('/login/local', localLoginHandler);
-  }
-  if (microsoftLoginHandler) {
-    app.get('/login/microsoft', microsoftLoginHandler);
-  }
-  // Provider-suffixed login entries (/login/google, /login/microsoft, …): same handler —
-  // it resolves the provider from the path. The chooser page on bare /login links here.
-  if (!microsoftLoginHandler) {
-    app.get('/login/:provider', loginHandler);
-  }
+  // /login, the swarm admin's /login/admin, the pilot's /login/local and /login/microsoft, then the generic
+  // /login/:provider: registration order matters (server-auxiliary-routes.ts mountSignInRoutes).
+  mountSignInRoutes(app, ctx, { loginHandler, localLoginHandler, microsoftLoginHandler });
 
   // TV pairing token auth: when there is no interactive OIDC session but a valid `oshal_tv`
   // cookie is present (set by the Fire TV app after device pairing), inject an authenticated
