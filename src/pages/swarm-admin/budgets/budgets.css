@@ -1,0 +1,154 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-5): the budgets screen's own styles on top of the Swarm Admin
+    | home's: the sticky status banner, the posture strip, the two tables (sideways-scrolling on a
+    | phone), the used bar coloured from the theme's --status-* tokens, the set-a-cap and inline
+    | edit forms. Nothing hard-coded. Loaded before surface-glass.css, as the glass spec requires.
+*/
+
+.sa-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0.6rem 1.5rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.sa-status[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sa-status[data-tone="success"] { opacity: 1; color: var(--status-success); }
+.sa-lead { margin-bottom: 1rem; }
+.sa-crumbs { font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.5rem; }
+.sa-crumbs a { color: var(--accent-primary); text-decoration: none; }
+
+.sb-posture-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+}
+
+.sb-posture-list li[data-state="off"] { color: var(--status-warning, var(--text-primary)); }
+
+.sb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.sb-toolbar h2 { margin: 0; }
+.sb-window { font-size: 0.9rem; opacity: 0.85; }
+
+.sb-table-wrap {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+}
+
+.sb-table {
+  width: 100%;
+  min-width: 56rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sb-table th,
+.sb-table td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.sb-table td.num { font-variant-numeric: tabular-nums; }
+.sb-table td.dash { opacity: 0.6; }
+.sb-table td.empty { opacity: 0.75; font-style: italic; }
+.sb-table td.wrap-cell { word-break: break-all; }
+
+.bar {
+  display: inline-block;
+  width: 6rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  background: var(--status-success);
+}
+
+.bar i.warn { background: var(--status-warning, var(--accent-primary)); }
+.bar i.bad { background: var(--status-error); }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+}
+
+.pill.hard { color: var(--status-error); }
+.pill.off { opacity: 0.6; }
+
+.sb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.sb-form,
+.sb-edit {
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+  max-width: 40rem;
+}
+
+.sb-edit { padding: 0.6rem 0.75rem; }
+
+.sb-form label,
+.sb-edit label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.sb-form label.sb-check,
+.sb-edit label.sb-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sb-form label[hidden] { display: none; }
+
+.sb-form select,
+.sb-form input[type="number"],
+.sb-form input[type="text"],
+.sb-edit input[type="number"] {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.6rem;
+}
+
+.sb-message { margin: 0; font-size: 0.9rem; opacity: 0.85; }
+.sb-message[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sb-message[data-tone="success"] { opacity: 1; color: var(--status-success); }

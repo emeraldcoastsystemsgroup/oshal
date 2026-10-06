@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fixes (gap-list build): (1) operator-set caps are now tamper-proof — setBudget writes set_by_operator, and a non-operator's self-scope upsert is conditional on set_by_operator=FALSE, so a capped user can no longer raise/disable an operator-imposed hard cap on themselves. (2) Windowed spend now sums the per-event oshal_cost_events ledger instead of chat_tasks rows filtered by updated_at — the old read attributed a task's LIFETIME total_cost to "today" whenever any event touched the row inside the window (blocking on phantom spend) and dropped stale-but-real per-ticket spend. (3) recordEvent dedupes: one audit row + one operator notification per (scope, action) per OSHAL_BUDGET_EVENT_COOLDOWN_MIN (default 30) — a sustained breach re-checked every poll cycle no longer floods oshal_budget_events or spams notification transports.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Ops-rails read surface: listRecentEvents() reads the oshal_budget_events enforcement trail newest-first (bounded limit), and getBudgetState() composes the operator governance snapshot — every cap with its trailing-window spend attached + the recent enforcement events — for the operator-only GET /api/budgets/state read rail. Both are read-only and fail-open (empty list on any infra gap, logged WARN), never mutate, and never enforce.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | computeSpendByUnit: the same windowed ledger read grouped by provider_id and folded into billed / price-equivalent / BYO (ADR-127 units). computeSpend stays the enforcement number — a cap is one figure — but a spend surface that shows only the sum is adding a subscription price-equivalent, a $0 BYO token count and real metered spend as if they were one unit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5, budgets API): removeBudget, one guarded DELETE. An operator removes any cap; a person removes only their own self-set 'user' row, and an operator-imposed cap on them stays (the same set_by_operator = FALSE condition setBudget's self-service arm carries), so switching a cap off no longer leaves it marked 'set by admin' forever with nobody able to clear it. getBudgetState reports the runaway thresholds and the event cooldown beside the caps, so the budgets screen can state the env-only gate honestly. The remove returns the removed row's figures (RETURNING) so the audit event describes what went.
  */
 
 import type { Pool } from 'pg';
@@ -71,6 +72,20 @@ export type SetBudgetResult =
   | { ok: true; budget: BudgetRecord }
   | { ok: false; error: 'forbidden' | 'unavailable' };
 
+/** Which cap to remove. */
+export interface RemoveBudgetInput {
+  scopeType: BudgetScopeType;
+  scopeKey: string;
+}
+
+/** The cap a remove took away, so the audit event describes it after the row is gone. */
+export interface RemovedBudget { dailyUsd: number; hard: boolean; enabled: boolean; setByOperator: boolean }
+
+/** The outcome of a remove: `removed` is false (and `cap` null) when no row the caller may remove matched. */
+export type RemoveBudgetResult =
+  | { ok: true; removed: boolean; cap: RemovedBudget | null }
+  | { ok: false; error: 'forbidden' | 'unavailable' };
+
 /**
  * @description The pre-dispatch verdict.
  *  - allowed  : false ONLY when a HARD cap (or the runaway kill switch) definitively tripped.
@@ -126,6 +141,10 @@ export interface BudgetGovernanceState {
   budgets: BudgetStateRow[];
   events: BudgetEventRecord[];
   windowHours: number;
+  /** The runaway kill switch's thresholds (env-only), stated beside the caps. */
+  runaway: { max: number; windowMin: number };
+  /** Minutes between repeated budget events for one scope (env-only). */
+  eventCooldownMin: number;
 }
 
 /**
@@ -259,7 +278,47 @@ export class BudgetService {
       budgets.push({ ...cap, spendUsd });
     }
     const events = await this.listRecentEvents(eventLimit);
-    return { budgets, events, windowHours: hours };
+    return { budgets, events, windowHours: hours, runaway: readRunawayConfig(this.env), eventCooldownMin: readEventCooldownMin(this.env) };
+  }
+
+  /**
+   * @description Removes a cap in ONE statement. An operator removes any row; a non-operator
+   * removes only their own 'user'-scope row, and only while no operator owns it (the DELETE
+   * carries set_by_operator = FALSE, as setBudget's self-service arm does), so an imposed cap
+   * can never be cleared by the person it caps. `removed` is false when nothing matched; `cap`
+   * carries the removed row's figures (RETURNING) so the audit event can describe what went.
+   * @param caller - Validated caller identity.
+   * @param input - Scope of the cap to remove.
+   * @returns ok:true with whether a row went and what it was, or ok:false with 'forbidden' | 'unavailable'.
+   */
+  async removeBudget(caller: BudgetCaller, input: RemoveBudgetInput): Promise<RemoveBudgetResult> {
+    const selfOnly = input.scopeType === 'user' && caller.sub !== null && input.scopeKey === caller.sub;
+    if (!caller.operator && !selfOnly) {
+      logger.warn({ sub: caller.sub, scopeType: input.scopeType }, 'removeBudget: non-operator attempted a cross-scope budget remove — denied');
+      return { ok: false, error: 'forbidden' };
+    }
+    if (!this.pool) {
+      logger.warn('removeBudget: no DB pool — budget store unavailable');
+      return { ok: false, error: 'unavailable' };
+    }
+    try {
+      const returning = 'RETURNING daily_usd, hard, enabled, set_by_operator';
+      const result = await this.pool.query(
+        caller.operator
+          ? `DELETE FROM oshal_budgets WHERE scope_type = $1 AND scope_key = $2 ${returning}`
+          : `DELETE FROM oshal_budgets WHERE scope_type = $1 AND scope_key = $2 AND set_by_operator = FALSE ${returning}`,
+        [input.scopeType, input.scopeKey],
+      );
+      const row = result.rows[0] as { daily_usd: unknown; hard: unknown; enabled: unknown; set_by_operator: unknown } | undefined;
+      const removed = (result.rowCount ?? 0) > 0 && row !== undefined;
+      if (!removed) {
+        logger.info({ sub: caller.sub, operator: caller.operator, scopeType: input.scopeType, scopeKey: input.scopeKey }, 'removeBudget: nothing matched (no such cap, or not one this caller may remove)');
+      }
+      return { ok: true, removed, cap: removed && row ? { dailyUsd: Number(row.daily_usd), hard: Boolean(row.hard), enabled: Boolean(row.enabled), setByOperator: Boolean(row.set_by_operator) } : null };
+    } catch (err) {
+      logger.error({ err, scopeType: input.scopeType, scopeKey: input.scopeKey }, 'removeBudget: delete failed');
+      return { ok: false, error: 'unavailable' };
+    }
   }
 
   /**

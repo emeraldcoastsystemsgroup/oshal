@@ -74,7 +74,10 @@ provider retains explicitly configured operator continuity; additional provider 
 Local disabled accounts are rejected even with an existing session. Legacy subject-only assignments
 belong only to canonical local identities. The selector includes local accounts and exact Google/Microsoft
 identities observed through verified login, preserving explicit bridge links. Unqualified historical IDs
-are never guessed or merged by email. See [principal adoption](principal-directory.md).
+are never guessed or merged by email. See [principal adoption](principal-directory.md). For swarm
+administrators, each listed account shows its verified email beside its name, so two accounts with the
+same display name (a personal and a work Google account, say) can be told apart. The email is shown only;
+it never selects, links or merges an identity.
 
 The Access screen and read tool expose [scoped applied-change history](authorization-audit.md).
 Each paginated read rechecks current authority, filters app/tenant scope before limiting results, and
@@ -85,6 +88,14 @@ whether it is granted, and the applicable record scope/field projection. “Revi
 reads the selected user's current access across the caller's visible catalog. Explicit deny removes the
 affected permission, including a deny for one action within a broader role. Create, update and delete
 are distinct named permissions even when all have the `write` effect in the catalog.
+
+The screen asks **What are you giving?** before anything else, and shows one path at a time:
+
+- **One role on one application** (the default) shows **This user's applications**, the application
+  picker and **Advanced access**.
+- **A composite role** shows only **Application composite roles**, which has its own application list.
+
+The choice is kept across a refresh in the same browser tab.
 
 Each row in **This user's applications** has **Edit roles** for callers with assignment rights.
 Choose **Add role** or **Remove direct role**, select the application's imported role and business

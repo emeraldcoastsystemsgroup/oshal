@@ -5,6 +5,13 @@ releases. The format is based on [Keep a Changelog](https://keepachangelog.com/e
 
 ## Unreleased
 
+- Access Administration shows one path at a time. It first asks **What are you giving?**: one role on
+  one application (the default), or a composite role. Only that path's controls are shown, so a
+  composite section for another application no longer sits under a single-application choice. The
+  user picker shows each account's verified email beside its name. That is an additive `email` field
+  on the administrator-only directory inventory; the shared `label` is unchanged. Guards are in
+  `authorization-admin-browser`, `principal-directory` and `experience-composite-browser` (#1104,
+  #1105).
 - Door authorization for tickets:
   - A ticket's privileged type, its bot pin and its parent are checked when it is filed or updated.
   - `/api/tickets` and the cockpit share one exact-principal read verdict.

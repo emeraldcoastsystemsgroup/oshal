@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-5): the budgets screen under Swarm Admin, served at
+    | /swarm-admin/budgets to the operator role only. No screen set a spend cap before. Every cap with
+    | the person or application named, spend in the chosen window with a used bar, 'Stops work' or
+    | 'Warns only', on or off, set by an administrator or the person; edit, switch, remove; a 'Set a
+    | cap' form (a person from the directory, an application, or one ticket); the enforcement trail;
+    | and an honest note that the LLM gate is a separate env-only switch, with the runaway thresholds.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Budgets</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/budgets/budgets.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the caps…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Budgets</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-graph"></span>
+      <h1>Budgets</h1>
+    </div>
+    <p class="sa-lead">
+      Daily spend caps for people, applications and single tickets. A cap that stops work halts the scope when it is
+      breached; one that warns only records and alerts. A cap you set here is yours: the person cannot raise, switch
+      off or remove it until you remove it.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section sb-posture" aria-labelledby="postureHeading">
+      <h2 id="postureHeading">Enforcement</h2>
+      <ul id="posture" class="sb-posture-list surface-card"></ul>
+    </section>
+
+    <section class="sa-section" aria-labelledby="capsHeading">
+      <div class="sb-toolbar">
+        <h2 id="capsHeading">Caps</h2>
+        <label class="sb-window">Window
+          <select id="windowHours">
+            <option value="24" selected>24 h</option>
+            <option value="168">7 days</option>
+            <option value="720">30 days</option>
+          </select>
+        </label>
+        <button type="button" id="reload">Reload</button>
+      </div>
+      <div class="sb-table-wrap surface-card">
+        <table class="sb-table" aria-describedby="capsHeading">
+          <thead>
+            <tr><th>Scope</th><th>Who or what</th><th>Cap / day</th><th>Spend</th><th>Used</th><th>Breach</th><th>State</th><th>Set by</th><th>Updated</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="caps"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="setHeading">
+      <h2 id="setHeading">Set a cap</h2>
+      <form id="setCapForm" class="sb-form surface-card">
+        <label>Scope
+          <select id="scopeType" name="scopeType">
+            <option value="user" selected>A person</option>
+            <option value="app">An application</option>
+            <option value="ticket">One ticket</option>
+          </select>
+        </label>
+        <label id="personField">Person
+          <select id="personSelect" name="personSelect"><option value="">Loading the directory…</option></select>
+        </label>
+        <label id="appField" hidden>Application
+          <select id="appSelect" name="appSelect"><option value="">Loading the applications…</option></select>
+        </label>
+        <label id="ticketField" hidden>Ticket id
+          <input id="ticketInput" name="ticketInput" type="text" autocomplete="off" placeholder="the ticket's id" />
+        </label>
+        <label>Cap per day (USD)
+          <input id="dailyUsd" name="dailyUsd" type="number" min="0" step="0.01" required />
+        </label>
+        <label class="sb-check"><input id="hard" name="hard" type="checkbox" checked /> Stops work when breached (otherwise warns only)</label>
+        <label class="sb-check"><input id="enabled" name="enabled" type="checkbox" checked /> On</label>
+        <div class="sl-actions"><button type="submit">Set the cap</button></div>
+        <p id="setMessage" class="sb-message" role="status"></p>
+      </form>
+    </section>
+
+    <section class="sa-section" aria-labelledby="eventsHeading">
+      <h2 id="eventsHeading">Enforcement trail</h2>
+      <div class="sb-table-wrap surface-card">
+        <table class="sb-table" aria-describedby="eventsHeading">
+          <thead><tr><th>When</th><th>Action</th><th>Scope</th><th>Who or what</th><th>Spend</th><th>Cap</th><th>Detail</th></tr></thead>
+          <tbody id="events"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <template id="editRowTemplate">
+    <tr class="sb-edit-row">
+      <td colspan="10">
+        <form class="sb-edit">
+          <label>Cap per day (USD) <input name="dailyUsd" type="number" min="0" step="0.01" required /></label>
+          <label class="sb-check"><input name="hard" type="checkbox" /> Stops work when breached</label>
+          <label class="sb-check"><input name="enabled" type="checkbox" /> On</label>
+          <div class="sl-actions"><button type="submit">Save</button><button type="button" class="sb-edit-cancel">Cancel</button></div>
+        </form>
+      </td>
+    </tr>
+  </template>
+
+  <script type="module" src="/swarm-admin/budgets/budgets.js"></script>
+</body>
+</html>

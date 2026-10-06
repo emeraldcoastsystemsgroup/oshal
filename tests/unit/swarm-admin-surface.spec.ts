@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B guards (B4, step B5-2): the /swarm-admin home and its assets are served to the operator role only (a signed-in user gets 403 and a signed-out caller is sent to sign in), through the real surface registration with the real page definitions; the navigation API refuses a user and answers an operator with the home and grouped items, every one of which is a registered standalone surface, so the list never names a page that does not exist; the real mount line in server-auxiliary-routes and the page's fetch path are pinned (review); the page's styles load before the shared glass; the page bundle exists, is named like its route (so no asset alias is mounted), and inserts values as text only. Each fails on the tree before the fix.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-3): the AI defaults screen is guarded like the home (200 operator, 403 user on the page and its script, 302 signed out), listed in the navigation, hosts the two unchanged /config panel modules (every absolute import fetched through the real registration, review) in the containers they expect, and keeps the style order the glass spec requires.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): the swarm logins screen is guarded like the home, listed in the navigation, carries the card template and containers its script fills, inserts values as text only, and keeps the style order the glass spec requires.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the budgets screen is guarded like the home, listed in the navigation, carries the containers and templates its script fills, inserts values as text only (the one innerHTML-free render path is pinned), and keeps the style order the glass spec requires.
  */
 
 import fs from 'node:fs';
@@ -143,6 +144,28 @@ describe('the /swarm-admin surface', () => {
       expect(await screen.text()).toContain('Swarm logins');
       expect((await app.get('/swarm-admin/logins/logins.js', USER)).status).toBe(403);
       expect((await app.get('/swarm-admin/logins', null)).status).toBe(302);
+    } finally { await app.close(); }
+  });
+
+  it('serves the budgets screen under the same guard, with its tables, form and edit template, text-only', async () => {
+    const page = pages().find((p) => p.routePath === '/swarm-admin/budgets');
+    expect(page?.extraGuards).toEqual([requiresOperator]);
+    expect(path.basename(page!.pageDir)).toBe('budgets');
+    const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    for (const id of ['caps', 'events', 'posture', 'setCapForm', 'editRowTemplate', 'statusBanner', 'windowHours']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/budgets/budgets.css')).toBeLessThan(html.indexOf('surface-glass.css'));
+    const script = fs.readFileSync(path.join(page!.pageDir, 'budgets.js'), 'utf8');
+    expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(script).toContain("requestJson('/api/budgets/remove'");
+    expect(script).toMatch(/window\.confirm\(/);
+    expect(SWARM_ADMIN_NAVIGATION.some((item) => item.path === '/swarm-admin/budgets' && item.group === 'swarm-admin')).toBe(true);
+    const app = await serve((a) => registerUiSurfaceRoutes({ app: a, requiresAuth, serveHtml: sendHtmlResponse, pages: pages() }));
+    try {
+      const screen = await app.get('/swarm-admin/budgets', OPERATOR);
+      expect(screen.status).toBe(200);
+      expect(await screen.text()).toContain('Set a cap');
+      expect((await app.get('/swarm-admin/budgets/budgets.js', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/budgets', null)).status).toBe(302);
     } finally { await app.close(); }
   });
 
