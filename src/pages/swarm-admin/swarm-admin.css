@@ -1,0 +1,124 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (B4, step B5-2): the Swarm Admin home's own styles on top of the shared
+    | surface theme and glass: the body paints from the theme's --bg-primary/--bg-secondary and
+    | --text-primary (as admin.css does), the status line uses --status-error, the current card
+    | --accent-primary, and the cards take the shared surface-card chrome; nothing hard-coded, so
+    | midnight, daylight, ocean and sakura all apply. Loaded before surface-glass.css, as the
+    | glass spec requires of a page with local styles.
+*/
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--text-primary);
+  background: linear-gradient(160deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+}
+
+.sa-header {
+  padding: 2rem 1.5rem 1rem;
+  max-width: 64rem;
+  margin: 0 auto;
+}
+
+.sa-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sa-title h1 {
+  margin: 0;
+  font-size: 1.75rem;
+}
+
+.sa-title .codicon {
+  font-size: 1.5rem;
+  opacity: 0.85;
+}
+
+.sa-lead {
+  max-width: 48rem;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+
+.sa-main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 0 1.5rem 3rem;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.sa-section h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+
+.sa-status {
+  margin: 0 0 0.75rem;
+  opacity: 0.75;
+}
+
+.sa-status[data-state="error"] {
+  opacity: 1;
+  color: var(--status-error);
+}
+
+.sa-nav {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.sa-group h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+.sa-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 0.75rem;
+}
+
+.sa-card {
+  display: block;
+  padding: 0.9rem 1rem;
+  border-radius: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.sa-card strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.sa-card span {
+  display: block;
+  font-size: 0.9rem;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
+.sa-card[aria-current="page"] {
+  outline: 2px solid var(--accent-primary);
+}
+
+.sa-note p {
+  opacity: 0.8;
+  line-height: 1.5;
+  max-width: 48rem;
+}

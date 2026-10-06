@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (B4, step B5-2): the Swarm Admin home. Served at /swarm-admin to the
+    | operator role only; renders the navigation GET /api/admin/navigation returns (server data, so the
+    | page never lists a screen that does not exist) and says plainly what Swarm Admin is for: portal
+    | defaults for everyone, while a person's own settings stay in their ordinary screens.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <header class="sa-header">
+    <div class="sa-title">
+      <span class="codicon codicon-shield"></span>
+      <h1>Swarm Admin</h1>
+    </div>
+    <p class="sa-lead">
+      Portal defaults for everyone in this swarm. Your own accounts, connections and choices stay in your ordinary
+      screens; what you set here is what people get when they have nothing of their own.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="sa-nav-heading">
+      <h2 id="sa-nav-heading">Administration</h2>
+      <p id="sa-status" class="sa-status" role="status">Loading the navigation…</p>
+      <nav id="sa-nav" class="sa-nav" aria-label="Swarm Admin navigation"></nav>
+    </section>
+
+    <section class="sa-section sa-note">
+      <h2>What arrives here</h2>
+      <p>
+        Swarm Admin screens are added one area at a time: AI defaults, logins and keys, connectors and budgets,
+        shared knowledge, devices, households. Each appears in the list above the moment it exists.
+      </p>
+    </section>
+  </main>
+
+  <script type="module" src="/swarm-admin/swarm-admin.js"></script>
+</body>
+</html>

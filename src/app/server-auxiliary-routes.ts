@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | mountPersonalGraphRoutes: the ADR-066 personal-graph mounts, moved here unchanged from server.ts (decomposition threshold); still operator-only and off unless PERSONAL_GRAPH_ROUTES=on.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | mountSignInRoutes: the sign-in entry points moved unchanged from server.ts (/login, the pilot's /login/local and /login/microsoft, the generic /login/:provider), plus the swarm admin's /login/admin sign-in before the generic route (ADR-174 slice 2b-ii).
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | mountSignInRoutes no longer mounts the swarm admin's sign-in (/login/admin, /api/admin-auth/login, /logout/admin): the separate configuration-only admin account is removed by Roger's admin-role decision (2026-10-06; admin is the existing operator role on a person's own account). The helper stays here, so server.ts keeps its decomposition headroom; it registers /login, the pilot's /login/local and /login/microsoft and the generic /login/:provider exactly as server.ts did before entry 10, and drops the ctx parameter only the admin mount used. /login/admin is again just a path the generic /login/:provider route answers wherever that route is mounted, as before entry 10.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-2): mount GET /api/admin/navigation, the Swarm Admin navigation as server data, behind requiresAuth + requiresOperator beside the other operator-only mounts.
  * -----------------------------------------------------------------------------
  */
 
@@ -71,6 +72,7 @@ import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-route
 import { createConfigRoutes } from './routes/config-routes';
 import { createLogsRoutes } from './routes/logs-routes';
 import { requiresOperator } from '@/shared/middleware/authz';
+import { createSwarmAdminNavigationRoutes } from './routes/swarm-admin-navigation';
 import { createGraphRoutes as createPersonalGraphRoutes } from './routes/personal-graph-routes';
 import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-routes';
 import { InMemoryGraphStore } from '@/features/personal-graph';
@@ -308,6 +310,7 @@ export function mountCoreObservabilityAndVoiceRoutes(
 ): void {
   app.use('/api/config', requiresAuth, createConfigRoutes());
   app.use('/api/logs', requiresAuth, requiresOperator, createLogsRoutes(ctx));
+  app.use('/api/admin/navigation', requiresAuth, requiresOperator, createSwarmAdminNavigationRoutes());
   registerSwarmExtensionRoutes(app, requiresAuth, ctx.swarm);
   app.use('/api/tasks', requiresAuth, createTaskRoutes(ctx));
   app.use('/api/stream', requiresAuth, createStreamRoutes(ctx));
