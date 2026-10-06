@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify real PostgreSQL/canonical ticket and result authority/current-policy completion notices remain fixed and separate from private admission; create genuine foreign-principal ticket negatives and a readable ordinary completion through maintained service contracts, with deterministic stale-summary claim and recovery witnesses.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Keep actual operation observers through a partial logger mock without changing any protected Jarvis boundary assertion.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
@@ -17,7 +18,10 @@ import { runWithRequestIdentity } from '@/shared/services/database/request-ident
 import { JARVIS_AGENT_ID, maskPendingComplexSummaries } from '@/app/routes/jarvis-orchestrator';
 
 const execute = vi.hoisted(() => vi.fn(async () => ({ response: 'Ordinary fixture summary' })));
-vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/shared/logger', async importOriginal => ({
+  ...await importOriginal<typeof import('@/shared/logger')>(),
+  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
 vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 vi.mock('@/app/routes/inline-bot-execution', async importOriginal => ({ ...await importOriginal<object>(), executeBotOrInline: execute }));
 vi.mock('@/app/routes/user-brain-resolution', async importOriginal => ({ ...await importOriginal<object>(),

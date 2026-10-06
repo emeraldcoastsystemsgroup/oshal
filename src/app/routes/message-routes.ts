@@ -28,10 +28,11 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com | The inline branch now rides runInlineTurnWithRecovery, the ONE turn body it shares with executeBotOrInline (inline-bot-execution seq 15): the same-endpoint replay moved INTO the orchestrator's provider call (options.byoLlmRetry — one saved user message, one error broadcast per turn, where the seq-22 wrapper had re-done both per attempt), rotation is unchanged, and an exhausted explicit endpoint falls, for the deployment operator only, through the readiness-gated configured chain. A fallback turn answers with the brainFallback marker; a fallback that was not ready answers 503 BYO_FALLBACK_NOT_READY whose `error` names the endpoint, the attempts and every rung's reason — the field the cockpit renders.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Keep task and actual ticket ownership separate from protected lineage, refuse unresolved existing threads and prioritize authenticated users over legacy service headers.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Record inline protected conversation lineage and defer stream publication until completion and current owner access are proved.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Diagnose protected empty-thread and inline refusals with ERROR, bounded identifiers, duration and scrubbed stacks while preserving response contracts.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
-import { createChildLogger } from '@/shared/logger';
+import { createChildLogger, logOperationError, observeOperation, observeAsyncOperation } from '@/shared/logger';
 import { DEFAULT_CHAT_AGENT_ID, resolveProjectManagerTicketExecutionContext } from '@/features/chat-orchestration';
 import { getCaller, hasAuthenticatedUserIdentity, hasValidServiceSecret, getTrustedServiceUserSub } from '@/shared/middleware/authz';
 import { assertExecuteEntitlement, CallerNotEntitledError } from '@/app/bot-node-execute-entitlement';
@@ -63,6 +64,7 @@ const botClient = new BotNodeClient(createRegistryEndpointResolver());
  * no ticket, history or protected output allow a brand-new unlinked chat thread.
  */
 async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
+  const startedAt = Date.now();
   try {
     const binding = await readMessageTaskBinding(ctx, taskId);
     if (binding.ownership) {
@@ -71,7 +73,7 @@ async function callerMayAccessTask(ctx: AppContext, req: Request, taskId: string
     }
     return !binding.stored && await mayStartUnlinkedTask(ctx, req, taskId);
   } catch (err) {
-    logger.error({ err, taskId }, 'message write ownership undetermined; failing closed');
+    logOperationError(logger, 'callerMayAccessTask', { taskId }, err, startedAt);
     return false;
   }
 }
@@ -93,14 +95,27 @@ async function mayStartUnlinkedTask(ctx: AppContext, req: Request, taskId: strin
   return !(await ctx.messageStore.getByTask(taskId)).length;
 }
 
+/**
+ * @description Allow an exact stamped owner's empty shell without manufacturing result lineage.
+ * @param ctx Canonical stores and trusted actor resolver.
+ * @param req Authenticated transport request.
+ * @param task Stored destination already admitted by the existing ownership gate.
+ * @returns The unchanged empty-shell write decision; any lookup fault remains a refusal.
+ */
 async function mayStartEmptyTask(ctx: AppContext, req: Request, task: ProtectedResultTask): Promise<boolean> {
-  try {
-    if (!ctx.applicationAuthorization || readProtectedResultExecutions(task.metadata).length
-      || await hasProtectedTaskResults(task.taskId)) return false;
-    const actor = await ctx.applicationAuthorization.resolveActor(req);
-    if (!actor.isActive || actor.sub !== task.ownerSub || actor.issuer !== readOwnerPrincipalIssuer(task.metadata)) return false;
-    return !(await ctx.messageStore.getByTask(task.taskId)).length;
-  } catch { return false; }
+  const startedAt = Date.now();
+  return observeAsyncOperation(logger, 'mayStartEmptyTask', { taskId: task.taskId }, async () => {
+    try {
+      if (!ctx.applicationAuthorization || readProtectedResultExecutions(task.metadata).length
+        || await hasProtectedTaskResults(task.taskId)) return false;
+      const actor = await ctx.applicationAuthorization.resolveActor(req);
+      if (!actor.isActive || actor.sub !== task.ownerSub || actor.issuer !== readOwnerPrincipalIssuer(task.metadata)) return false;
+      return !(await ctx.messageStore.getByTask(task.taskId)).length;
+    } catch (error) {
+      logOperationError(logger, 'mayStartEmptyTask', { taskId: task.taskId }, error, startedAt);
+      return false;
+    }
+  });
 }
 
 /**
@@ -109,11 +124,12 @@ async function mayStartEmptyTask(ctx: AppContext, req: Request, task: ProtectedR
  * visible under RLS and no ticket owner can be resolved.
  */
 async function callerMayReadMessages(ctx: AppContext, req: Request, taskId: string): Promise<boolean> {
+  const startedAt = Date.now();
   try {
     const binding = await readMessageTaskBinding(ctx, taskId);
     return Boolean(binding.ownership && await callerCanReadTaskResult(ctx, req, binding.task, binding.ownership));
   } catch (err) {
-    logger.error({ err, taskId }, 'message history ownership undetermined; failing closed');
+    logOperationError(logger, 'callerMayReadMessages', { taskId }, err, startedAt);
     return false;
   }
 }
@@ -191,15 +207,27 @@ function requireMessageWriteIdentity(req: Request, res: Response, next: NextFunc
  * @returns Express Router with message routes mounted
  */
 export function createMessageRoutes(ctx: AppContext): Router {
-  const router = Router();
-  // The explicit no-AI state is evaluated before user-row attribution so every authenticated chat
-  // write has the same 503 contract. History remains available on model-less deployments.
-  router.post('/send-message', requireAiEnabled, requireMessageWriteIdentity, handleSendMessage(ctx));
-  router.post('/tasks/:taskId/messages', requireAiEnabled, requireMessageWriteIdentity, handleSendMessage(ctx));
-  router.get('/:taskId/messages', requireTrustedServiceUserIdentity, handleGetMessages(ctx));
+  return observeOperation(logger, 'createMessageRoutes', {}, () => {
+    const router = Router();
+    // The explicit no-AI state is evaluated before user-row attribution so every authenticated chat
+    // write has the same 503 contract. History remains available on model-less deployments.
+    router.post('/send-message', requireAiEnabled, requireMessageWriteIdentity, handleSendMessage(ctx));
+    router.post('/tasks/:taskId/messages', requireAiEnabled, requireMessageWriteIdentity, handleSendMessage(ctx));
+    router.get('/:taskId/messages', requireTrustedServiceUserIdentity, handleGetMessages(ctx));
 
-  logger.info('Message routes registered');
-  return router;
+    return router;
+  });
+}
+
+/**
+ * @description Time the complete request, including early validation and access refusals, without retaining request content.
+ * @param operation Fixed route operation label.
+ * @param handle Existing request work with its current response and error contract.
+ * @returns An observed handler that retains the caller's asynchronous request identity.
+ */
+function observeMessageHandler(operation: string, handle: (req: Request, res: Response) => Promise<void>) {
+  return (req: Request, res: Response): Promise<void> => observeAsyncOperation(logger, operation,
+    { taskId: req.params.taskId as string || req.body?.taskId }, () => handle(req, res));
 }
 
 /**
@@ -208,7 +236,7 @@ export function createMessageRoutes(ctx: AppContext): Router {
  * @returns Express request handler
  */
 function handleSendMessage(ctx: AppContext) {
-  return async (req: Request, res: Response): Promise<void> => {
+  return observeMessageHandler('sendMessageRoute', async (req: Request, res: Response): Promise<void> => {
     const startTime = Date.now();
     const {
       text,
@@ -221,7 +249,6 @@ function handleSendMessage(ctx: AppContext) {
     // Accept taskId from URL param (POST /api/tasks/:taskId/messages) or body (POST /api/send-message)
     const taskId = req.params.taskId || req.body.taskId;
 
-    logger.info({ taskId, textLength: text?.length, agenticMode, source }, 'POST /api/send-message');
 
     if (!taskId || !text) {
       res.status(400).json({ error: 'taskId and text are required' });
@@ -307,17 +334,7 @@ function handleSendMessage(ctx: AppContext) {
         if (executionId && !await callerMayReadMessages(ctx, req, nodeContext.taskId)) {
           res.status(404).json({ error: 'not found' }); return;
         }
-        logger.info(
-          {
-            taskId: nodeContext.taskId,
-            requestedTaskId: taskId,
-            agentId: resolvedAgentId,
-            durationMs: Date.now() - startTime,
-            success: result.success,
-            ticketCreated: executionContext.ticketCreated,
-          },
-          'Message processed at the bot node',
-        );
+
         res.json({
           ...result,
           taskId: executionContext.taskIdUsed,
@@ -410,20 +427,7 @@ function handleSendMessage(ctx: AppContext) {
         runTurn,
       }), verifiedActor);
 
-      const durationMs = Date.now() - startTime;
-      logger.info(
-        {
-          taskId: executionContext.taskId,
-          requestedTaskId: taskId,
-          durationMs,
-          success: result.success,
-          agentId: resolvedAgentId,
-          ticketCreated: executionContext.ticketCreated,
-          ticketId: executionContext.ticketId,
-          brainFallback: fallback ?? null,
-        },
-        'Message processed',
-      );
+
       res.json({
         ...result,
         taskId: executionContext.taskIdUsed,
@@ -439,16 +443,12 @@ function handleSendMessage(ctx: AppContext) {
         ...(fallback ? { brainFallback: fallback } : {}),
       });
     } catch (error) {
+      logOperationError(logger, 'sendMessage', { taskId }, error, startTime);
       if (error instanceof ProtectedInlineTaskUnavailableError) {
         res.status(404).json({ error: 'not found' }); return;
       }
-      // A denial is an authorization outcome, not a server fault: 403 with the same machine
-      // code the bot-node gate returns, logged at WARN (the gate already logged the audit line).
+      // Typed refusals retain their actionable HTTP status; the catch above records the diagnostic separately.
       if (error instanceof CallerNotEntitledError) {
-        logger.warn(
-          { taskId, targetAgentId: error.targetAgentId, durationMs: Date.now() - startTime },
-          'send-message refused: caller is not entitled to the named agent',
-        );
         res.status(403).json({ success: false, error: error.code });
         return;
       }
@@ -456,10 +456,6 @@ function handleSendMessage(ctx: AppContext) {
       // cockpit the server broke; 402 with the machine code tells it — and the person — that
       // the daily cap is the reason, which is the only actionable version of that answer.
       if (error instanceof BudgetBlockedError) {
-        logger.warn(
-          { taskId, agentId: req.body?.agentId ?? null, verdict: error.verdict, durationMs: Date.now() - startTime },
-          'send-message refused: cost governance blocked the turn',
-        );
         res.status(error.statusCode).json({ success: false, error: error.message, code: error.code });
         return;
       }
@@ -467,10 +463,6 @@ function handleSendMessage(ctx: AppContext) {
       // field is the friendly Settings → AI Providers message — the cockpit chat panel renders
       // exactly that field (api-client throwResponseError), never the raw SEC-05 refusal.
       if (error instanceof NoHostedBrainError) {
-        logger.warn(
-          { taskId, durationMs: Date.now() - startTime },
-          'send-message refused: no hosted AI engine resolved for the caller',
-        );
         res.status(422).json({ success: false, error: error.message, code: error.code });
         return;
       }
@@ -478,14 +470,9 @@ function handleSendMessage(ctx: AppContext) {
       // the turn: a 503 whose `error` names the endpoint, the attempts, and every rung's reason
       // — the one field the cockpit chat panel renders — instead of an anonymous failure.
       if (error instanceof ByoFallbackUnavailableError) {
-        logger.warn(
-          { taskId, durationMs: Date.now() - startTime, rungs: error.rungs.map((r) => ({ providerId: r.providerId, ready: r.ready, reason: r.reason })) },
-          'send-message: the chosen endpoint was exhausted and the hot fallback was not ready',
-        );
         res.status(error.statusCode).json({ success: false, error: error.message, code: error.code });
         return;
       }
-      logger.error({ err: error, taskId, durationMs: Date.now() - startTime }, 'Failed to process message');
       if (executionContext.ticketCreated && executionContext.ticketId) {
         res.status(202).json({
           success: false,
@@ -503,7 +490,7 @@ function handleSendMessage(ctx: AppContext) {
       }
       res.status(500).json({ error: 'Failed to process message' });
     }
-  };
+  });
 }
 
 /**
@@ -519,6 +506,7 @@ function handleSendMessage(ctx: AppContext) {
  * @returns Effective agent id for orchestrator processing
  */
 async function resolveMessageAgentId(ctx: AppContext, taskId: string, requestedAgentId: string): Promise<string> {
+  const startedAt = Date.now();
   if (requestedAgentId) {
     return requestedAgentId;
   }
@@ -530,7 +518,7 @@ async function resolveMessageAgentId(ctx: AppContext, taskId: string, requestedA
       return taskAgentId;
     }
   } catch (error) {
-    logger.warn({ err: error, taskId }, 'Failed to resolve task agent id; using default chat agent');
+    logOperationError(logger, 'resolveMessageAgentId', { taskId }, error, startedAt);
   }
 
   return DEFAULT_CHAT_AGENT_ID;
@@ -542,11 +530,11 @@ async function resolveMessageAgentId(ctx: AppContext, taskId: string, requestedA
  * @returns Express request handler
  */
 function handleGetMessages(ctx: AppContext) {
-  return async (req: Request, res: Response): Promise<void> => {
+  return observeMessageHandler('getMessagesRoute', async (req: Request, res: Response): Promise<void> => {
+    const startedAt = Date.now();
     const taskId = req.params.taskId as string;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
-    logger.info({ taskId, limit }, 'GET /api/:taskId/messages');
 
     // IDOR guard: a caller may only read the history of a task they own (or an operator).
     if (!(await callerMayReadMessages(ctx, req, taskId))) {
@@ -565,8 +553,8 @@ function handleGetMessages(ctx: AppContext) {
 
       res.json({ messages, count: messages.length });
     } catch (error) {
-      logger.error({ err: error, taskId }, 'Failed to get messages');
+      logOperationError(logger, 'getMessagesRoute', { taskId }, error, startedAt);
       res.status(500).json({ error: 'Failed to get messages' });
     }
-  };
+  });
 }

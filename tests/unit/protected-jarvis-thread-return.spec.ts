@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove a SUCCESSFUL protected ticket returns its answer to the owner's Jarvis thread exactly once, with recorded lineage, and to nobody else. Crosses both boundaries the defect spans: isolated real PostgreSQL for the durable shelf and conversation, and the real ApplicationRemoteExecutionService installed through configureProtectedResultAccess for the authorization decision. Only the model rail is doubled - no boundary this file makes a claim about is mocked.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove a protected-classified task with no bindable executions returns either an answer (unprotected work product) or a stated sentence (protected work product) to the owner's thread, while an unverified reader produces nothing.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Seed actual completed canonical tickets and carry each generated ID unchanged through signed execution, task, message and shelf setup; preserve all original return and refusal assertions.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Keep actual operation observers through a partial logger mock without changing any protected Jarvis boundary assertion.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedJarvisFixture } from '../fixtures/protected-jarvis-results';
@@ -23,7 +24,10 @@ let TICKET_ID: string;
 const SESSION_ID = 'protected-return-thread';
 
 const execute = vi.hoisted(() => vi.fn(async () => ({ response: SUMMARY })));
-vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/shared/logger', async importOriginal => ({
+  ...await importOriginal<typeof import('@/shared/logger')>(),
+  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
 vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 // The model rail only. The authorization authority, the execution store, the task store, the durable
 // shelf and the conversation are all real here, because those are the boundaries under test.

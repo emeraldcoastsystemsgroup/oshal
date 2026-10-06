@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Prove protected result persistence, exact identity, current rights and per-event SSE isolation through real HTTP routes.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Exercise current ordinary task ownership, mixed-transport precedence, deactivation and history/SSE rechecks through the shipped routers.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match maintained fixture input and transport declarations without changing ownership, identity or boundary assertions.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve real operation observers through a partial logger mock while retaining every HTTP, identity and SSE boundary assertion.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createProtectedResultFixture, RESULT_AGENT } from '../fixtures/protected-results';
@@ -13,7 +14,10 @@ import { PROTECTED_RESULT_EXECUTIONS, appendProtectedResultExecution, configureP
 import { persistProtectedResultTask } from '@/app/routes/protected-result-persistence';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 
-vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+vi.mock('@/shared/logger', async importOriginal => ({
+  ...await importOriginal<typeof import('@/shared/logger')>(),
+  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
 vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 let fixture: Awaited<ReturnType<typeof createProtectedResultFixture>>;
 beforeEach(async () => { vi.stubEnv('OSHAL_OPERATOR_SUBS', 'admin'); fixture = await createProtectedResultFixture(); });
