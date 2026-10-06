@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Exercise scoped tenant discovery and source-safe revocation while refusing another tenant.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Pin exact dependency roles, explicit optional selection, existing-access preservation and blocked atomic reviews on the real Access screen.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify collapsed inactive history preserves assignment details, audit state, keyboard access and current-role edit controls.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Choose the composite-role path first: the page now shows one path at a time.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -26,8 +27,11 @@ beforeEach(async () => {
   context = await browser.newContext(); await context.addCookies([{ name: 'session', value: 'admin', url: fixture.base }]);
   await context.route('**/*', route => new URL(route.request().url()).origin === fixture.base ? route.continue() : route.abort());
   page = await context.newPage(); page.setDefaultTimeout(10000); await page.goto(fixture.base + '/access/');
+  await chooseComposite();
   await expect.poll(() => page.locator('#experience-role-status').textContent()).toContain('Choose a named role');
 });
+/** The page shows one path at a time; composite roles are the second choice. */
+async function chooseComposite() { await page.locator('input[name="access-mode"][value="composite"]').check(); }
 afterEach(async () => { await context?.close(); await fixture?.close(); });
 const review = async () => {
   await page.locator('#experience-role-reason').fill('Synthetic browser acceptance');
@@ -50,6 +54,7 @@ async function visitAsTenantDelegate() {
   await fixture.apply({ tenantId: 'tenant-one' });
   await context.addCookies([{ name: 'session', value: 'reader', url: fixture.base }]);
   await page.goto(fixture.base + '/access/');
+  await chooseComposite();
   await expect.poll(() => page.locator('#experience-role-status').textContent()).toContain('No installed application role templates');
   await page.locator('#experience-role-tenant').fill('tenant-one');
   await page.locator('#experience-role-tenant').dispatchEvent('change');

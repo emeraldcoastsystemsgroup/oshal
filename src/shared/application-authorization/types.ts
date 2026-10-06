@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | AUTH-07: the management service may list reviewable catalog migrations and approve one through the same previewId + idempotencyKey apply shape as an access change; applied-change history gains the `catalog-migration` action an installation records when it re-stamps assignments onto a new catalog revision.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Allow native applications to publish exact component role bundles and retain required dependency metadata at registration.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Directory inventory users may carry their verified email, so Access Administration can tell same-named accounts apart.
  */
 import type { AuthorizationCatalogMigrationPreview, AuthorizationCatalogMigrationReceipt } from './catalog-migration';
 /** ADR-149: versioned application permission contract. Routing metadata never grants authority. */
@@ -188,7 +189,8 @@ export interface PackageGrantPlan {
 export interface PackageGrantPlanInput { app: string; targetSub?: string; targetIssuer?: string; tenantId?: string }
 
 export interface AuthorizationInventory {
-  users: Array<{ sub: string; issuer: string; label: string }>;
+  /** email: the account's verified email, when known, so the administration screen can tell same-named accounts apart. */
+  users: Array<{ sub: string; issuer: string; label: string; email?: string }>;
   groups: Array<{ issuer: string; tenantId: string; id: string; label: string }>;
 }
 export interface AuthorizationCatalogResult extends AuthorizationInventory {

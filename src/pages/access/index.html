@@ -12,6 +12,7 @@ SEQ | AUTHOR | DESCRIPTION
 6 | maintainer@emeraldcoastsystemsgroup.com | Sole-operator self-approval on the single-change review: a change that needs approval (the caller's own sensitive access, or a sensitive group mapping) stays unappliable until the caller types "approve", and is then sent with the approval reference bound to that exact preview. The server still decides; it refuses whenever the caller is not the swarm root or another swarm administrator exists.
 7 | maintainer@emeraldcoastsystemsgroup.com | Review explicit experience member roles, atomic apply, source-safe revoke and template upgrades through the existing Access authority.
 8 | maintainer@emeraldcoastsystemsgroup.com | Carry the selected business tenant into scoped experience role discovery and review invalidation.
+9 | maintainer@emeraldcoastsystemsgroup.com | Ask first what is being given, one role on one application or a composite role, and show only that path (kept across a refresh in the same tab): the composite section (with its own application list) no longer sits under a single-application choice. The user picker shows each account's email, so two accounts with the same display name can be told apart.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -43,6 +44,9 @@ SEQ | AUTHOR | DESCRIPTION
     .layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
     .identity-selection { grid-template-columns: minmax(130px, .6fr) minmax(220px, 1.4fr) minmax(220px, 1fr); align-items: end; }
     .identity-selection label { margin-bottom: 3px; }
+    .access-mode { grid-column: 1 / -1; border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; }
+    .access-mode legend { float: left; font-weight: 650; margin-right: 8px; padding: 0; }
+    .access-mode label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 500; }
     label { display: block; font-size: 12px; font-weight: 650; margin-bottom: 5px; }
     input, select, textarea, button { font: inherit; border-radius: 7px; border: 1px solid var(--border-color, #4b5563); }
     input, select, textarea { width: 100%; background: var(--bg-primary, #111827); color: inherit; padding: 9px 10px; }
@@ -121,7 +125,12 @@ SEQ | AUTHOR | DESCRIPTION
     <section class="panel selectors identity-selection" aria-label="Access selection">
       <div><label for="target-kind">Assign access to</label><select id="target-kind"><option value="user">User</option><option value="group">Directory group</option></select></div>
       <div><label for="target">User or group</label><select id="target"></select></div>
-      <div><label for="application">Application for advanced details</label><select id="application"></select></div>
+      <div id="application-field"><label for="application">Application for advanced details</label><select id="application"></select></div>
+      <fieldset id="access-mode" class="access-mode">
+        <legend>What are you giving?</legend>
+        <label><input type="radio" name="access-mode" value="single" checked /> One role on one application</label>
+        <label><input type="radio" name="access-mode" value="composite" /> A composite role: an application with the components it includes</label>
+      </fieldset>
     </section>
     <section class="panel" id="experience-access" aria-labelledby="experience-access-title">
       <h2 id="experience-access-title">Application composite roles</h2>
@@ -282,7 +291,7 @@ function setBusy(busy) {
 }
 function renderTargets(preferred) {
   const index = targets().findIndex(entry => targetKey(entry) === preferred);
-  options($('target'), targets().map((entry, index) => ({ value: String(index), label: `${targetLabel(entry)} (${entry.issuer}${entry.tenantId ? ', ' + entry.tenantId : ''})` })), index >= 0 ? String(index) : undefined);
+  options($('target'), targets().map((entry, index) => ({ value: String(index), label: `${targetLabel(entry)}${entry.email ? ' · ' + entry.email : ''} (${entry.issuer}${entry.tenantId ? ', ' + entry.tenantId : ''})` })), index >= 0 ? String(index) : undefined);
   if (preferred && index < 0) $('target').selectedIndex = -1;
 }
 function table(headers, rows) {
@@ -768,6 +777,26 @@ async function report(error) {
     : error.message === 'authorization_approval_required' ? 'Self-approval was refused: only the swarm owner may approve this, and only while no other swarm administrator exists. A separate, verified approval is required.'
     : error.message, 'error');
 }
+/** One path at a time: a single role on one application (the user's applications and advanced access), or a composite role. */
+function renderAccessMode() {
+  const mode = document.querySelector('input[name="access-mode"]:checked')?.value || 'single';
+  const composite = mode === 'composite';
+  $('experience-access').hidden = !composite;
+  $('applications-panel').hidden = composite;
+  $('advanced-access').hidden = composite;
+  $('application-field').hidden = composite;
+  try { sessionStorage.setItem('oshal.access.mode', mode); } catch { /* storage blocked: the choice lasts until reload */ }
+}
+/** A refresh keeps the path the administrator chose in this tab. */
+function restoreAccessMode() {
+  let saved = null;
+  try { saved = sessionStorage.getItem('oshal.access.mode'); } catch { /* storage blocked: start on one role */ }
+  const radio = document.querySelector(`input[name="access-mode"][value="${saved === 'composite' ? 'composite' : 'single'}"]`);
+  if (radio) radio.checked = true;
+}
+document.querySelectorAll('input[name="access-mode"]').forEach(radio => radio.addEventListener('change', renderAccessMode));
+restoreAccessMode();
+renderAccessMode();
 $('refresh').addEventListener('click', () => { void loadCatalog(); });
 $('target-kind').addEventListener('change', () => {
   const group = $('target-kind').value === 'group';

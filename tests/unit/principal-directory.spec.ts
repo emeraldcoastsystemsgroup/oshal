@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify existing-account adoption, provider collisions and operator continuity against disposable PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound case-registration helpers without changing suite names, test order or database hook scope.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Verify the administrator inventory carries each verified account's email beside its unchanged label.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -94,6 +95,15 @@ function registerObservationCases() {
     expect((await runtime.query('SELECT * FROM oshal_verified_principals')).rows).toEqual([]);
     const restarted = createApplicationPrincipalDirectory(runtime,() => Promise.resolve(),env);
     expect((await restarted.inventory(admin)).users).toHaveLength(3);
+  });
+  it('lists each account with its verified email so two accounts with the same name can be told apart; the label is unchanged', async () => {
+    await directory.observe(req(google,'personal-sub',{ email: 'person@personal.test',name: 'Same Person' }));
+    await directory.observe(req(google,'work-sub',{ email: 'person@work.test',name: 'Same Person' }));
+    const users = (await directory.inventory(admin)).users.filter(user => user.issuer === google).sort((a,b) => a.sub.localeCompare(b.sub));
+    expect(users.map(user => [user.sub,user.email,user.label])).toEqual([
+      ['personal-sub','person@personal.test','Same Person (google; active)'],['work-sub','person@work.test','Same Person (google; active)'],
+    ]);
+    expect((await directory.inventory({ ...admin,isSwarmAdmin: false })).users).toEqual([]);
   });
 }
 
