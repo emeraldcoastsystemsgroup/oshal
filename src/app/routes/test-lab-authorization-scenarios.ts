@@ -25,6 +25,7 @@
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Register exact anonymous package reads with loader and real HTTP enforcement proofs.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Register scheduled-service activation HTTP/policy and separate disposable PostgreSQL companions, including missing-catalog admission refusal.
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Register the real-transport SMTP mailer guard (tests/unit/smtp-mailer-transport.spec.ts) beside the forgot-password proof that mocks the same rail: it drives sendTransactionalMail through the real nodemailer over a loopback SMTP conversation, added with the nodemailer 9 -> 10 bump the 2026-10-02 trivy scan required.
+ * 23 | maintainer@emeraldcoastsystemsgroup.com   | Attach local-swarm-admin-account (ADR-174 slice 2a: the reserved 'admin' account, created once, never reachable by invites or email resets; real PostgreSQL) beside local-account-administration.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -130,6 +131,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/authorization-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/principal-directory.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-account-administration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/local-swarm-admin-account.spec.ts' },
     { level: 'browser', path: 'tests/unit/users-administration-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
     { level: 'integration', path: 'tests/unit/smtp-mailer-transport.spec.ts' },

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel for the local-auth feature (ADR-117): the invited-user store behind LOCAL_AUTH mode.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export createPasswordReset (self-service reset, ADR-117 deferred item).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export createSwarmAdmin, SWARM_ADMIN_LOGIN and LocalAccountKind (ADR-174 slice 2a).
  */
 
 export {
@@ -51,11 +52,13 @@ export {
   getSessionSnapshot,
   isStoreEmpty,
   bootstrapFirstAdmin,
+  createSwarmAdmin,
+  SWARM_ADMIN_LOGIN,
   listUsers,
   setUserStatus,
   getUserById,
 } from './services/local-user-store';
-export type { LocalUser, InviteResult } from './services/local-user-store';
+export type { LocalUser, InviteResult, LocalAccountKind } from './services/local-user-store';
 export {
   LOCAL_SESSION_COOKIE,
   LOCAL_SESSION_ROLLING_MS,
