@@ -22,8 +22,10 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | The bot's swarm memory is constructed with the 'reader-helper' ledger reach. oshal_bot holds no privilege on oshal_swarm_memory at all, so recall raised permission denied inside its own catch and every bot ran with zero memory behind one warning. The helper (migration 152) returns shared memories plus the reader's own, with the owner rule enforced in SQL, so the fix does not hand a bot the table.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | The bot-node's any-bot ToolRegistry was built empty and stayed empty. registerFileTools/registerCLITools run only from any-bot/server/app.js, the retired BOT_RUNTIME=any-bot server, so on every real worker registry.getAll() returned NOTHING - captureDispatchCapabilities therefore advertised attempt_completion and nothing else, and a granted, mapped, scoped tool still had no handler to reach. buildLlmStack now returns the registry it constructed and createBotNodeRuntime registers the read-only question tools on it (bot-node-read-only-tools.ts), which is the first point in the boot where the GUC-wrapped pool, the RagService and a graph connector all exist. Registration only makes a tool a CANDIDATE: authority is still declared set n allowlist n exact operation scope, resolved before any handler is reached.
  * 19 | maintainer@emeraldcoastsystemsgroup.com | Pass the resolved local bot identity into the execution handler so captured frames name their producing node for accountable tail replay; HTTP/mesh payload identity is not the source.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com | Build the node's served-agent policy (createServedAgentPolicy over the pool and BOT_NODE_SERVES) once and expose it as runtime.servedAgents for the delegation gate. A multi-agent (concierge) node hands it to the protected-execution boundary and marks the handler multiAgentNode; a dedicated node passes neither, so its boundary and handler are exactly as before. An unknown BOT_NODE_SERVES value refuses to start.
  */
 import { createProtectedBotExecutionBoundary } from './bot-node-protected-execution';
+import { createServedAgentPolicy, type ServedAgentPolicy } from './bot-node-served-agents';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
 
 /**
@@ -84,6 +86,8 @@ export interface BotNodeRuntime {
   ticketService?: TicketService;
   /** Turns one MeshEnvelope into real LLM work (prompt assembly + any-bot execution + cost capture). */
   executionHandler: (envelope: MeshEnvelope) => Promise<EnvelopeExecutionResult>;
+  /** Which agents this node executes for (BOT_NODE_SERVES); the delegation gate reads it. */
+  servedAgents: ServedAgentPolicy;
   /** Boot-resolved snapshot. For the LIVE value after a switch, read {@link getActiveProvider}. */
   providerName: string;
   /** Boot-resolved snapshot. For the LIVE value after a switch, read {@link getActiveProvider}. */
@@ -156,9 +160,13 @@ export async function createBotNodeRuntime(options: { recoverDatabase?: boolean 
     graphConnector: createGraphConnector(),
   });
 
+  // Dedicated node: its own agent only. BOT_NODE_SERVES=inline-app-bots: the concierge node.
+  const servedAgents = createServedAgentPolicy({ localAgentId: agentId, pool, env: process.env });
+  const multiAgentServed = servedAgents.multiAgent ? servedAgents : undefined;
   const executionHandler = createBotNodeExecutionHandler({
     runtimeAgentId: agentId,
-    runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId),
+    ...(multiAgentServed ? { multiAgentNode: true } : {}),
+    runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId, undefined, multiAgentServed),
     anyBotTaskController: taskController,
     agentProfileRepository,
     personaLayerStore,
@@ -182,7 +190,7 @@ export async function createBotNodeRuntime(options: { recoverDatabase?: boolean 
     agentId, botName, role: runtimeIdentity.role, capabilities: runtimeIdentity.capabilities,
     identity: runtimeIdentity,
     pool, database, agentProfileRepository, personaLayerStore, workItemRepository,
-    costTrackingService, ticketService, executionHandler, providerName, modelName,
+    costTrackingService, ticketService, executionHandler, servedAgents, providerName, modelName,
     getActiveProvider, setActiveProvider, agenticController,
   };
 }

@@ -6,6 +6,8 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Isolate real worker HTTP delegation, signed controller permits and SQLite task reasoning without deployment services.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow a fixture to expose a direct configured provider plus the bot-node reconciliation seam, so the provider-stamped protected shape can be exercised without contacting a vendor.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the production provider-authority HTTP parser/forwarder so fallbackOrder transport and malformed-chain refusal are covered end to end, recording the parsed authority so an explicit empty chain can be distinguished from omission.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Forward the trusted prompt carrier (app, capability, pattern, renderInstruction, botPersona) through the production parseBotNodePromptCarrier, with its TypeError refusal becoming the production 400 invalid_execution_scope; record each authorized request body and its delegation token so a spec can prove what the real client signed; accept an optional `llm` override for the recorded provider's answer; and allow a spec to alter the envelope payload after verification (mutateEnvelope) so the protected boundary's signed-body binding is exercised over real HTTP.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Optional concierge shape: `localAgentId` runs the worker under a node identity other than the dispatch target, and `servedAgents` hands the delegation gate, the protected boundary and the handler (multiAgentNode) a served-agent policy, so a multi-agent node serving a protected application bot is exercised over the same real HTTP, permit and SQLite path. Omitted, the worker is the dedicated REMOTE_AGENT node exactly as before.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -31,6 +33,8 @@ import {
 } from '@/app/bot-node-provider-authority';
 import { createBotControllerPermitCheck } from '@/app/bot-node-controller-permit';
 import { createBotNodeExecutionHandler } from '@/app/bot-node-execution-handler';
+import type { ServedAgentPolicy } from '@/app/bot-node-served-agents';
+import { parseBotNodePromptCarrier } from '@/app/bot-node-request-scope';
 import { buildBotNodeHttpResponse } from '@/app/bot-node-http-response';
 import type { MeshEnvelope } from '@/features/agent-management';
 import type { ApplicationRemoteExecutionAuthority, RemoteExecutionCheck } from '@/shared/application-remote-execution';
@@ -60,6 +64,10 @@ export interface RemoteFixtureState {
   phases: string[];
   calls: Array<{ messages: unknown; options: Record<string, unknown>; identity: unknown; actor: unknown }>;
   providerAuthorities: BotNodeProviderAuthority[];
+  /** Every request body the worker accepted after delegation verification, with its token. */
+  received: Array<{ body: Record<string, unknown>; token: string | undefined }>;
+  /** Alters the envelope payload after verification, to prove the boundary binds it to the signed body. */
+  mutateEnvelope?: (payload: Record<string, unknown>) => void;
   mutatePermit?: (permit: RemoteExecutionPermit) => void;
   mutateSignedPermit?: (permit: RemoteExecutionPermit) => void;
   denyPhase?: string;
@@ -130,8 +138,10 @@ function realControllerRouter(authority: ApplicationRemoteExecutionAuthority, st
 }
 
 interface FixtureDirectProvider { provider: string; model: string; supportsFrameworkToolBridge?: boolean }
+/** Optional answer for the recorded provider; the call is still recorded before it runs. */
+type FixtureLlm = (input: unknown, options: Record<string, unknown>) => { content: string } | Promise<{ content: string }>;
 
-function sqliteController(directory: string, state: RemoteFixtureState, directProvider?: FixtureDirectProvider) {
+function sqliteController(directory: string, state: RemoteFixtureState, directProvider?: FixtureDirectProvider, llm?: FixtureLlm) {
   const priorWorkspace = config.filesystem.workspaceDir, priorGitlab = config.gitlab.enabled;
   config.filesystem.workspaceDir = directory; config.gitlab.enabled = false;
   const store = new TaskStore(join(directory, 'tasks.sqlite')); store.init();
@@ -143,7 +153,7 @@ function sqliteController(directory: string, state: RemoteFixtureState, directPr
     state.beforeProvider?.();
     state.calls.push({ messages: input, options, identity: getRequestIdentity(), actor: getApplicationAuthorizationActor() });
     await state.afterProvider?.();
-    return { content: 'Fixture protected answer', provider, model };
+    return { content: 'Fixture protected answer', provider, model, ...(llm ? await llm(input, options) : {}) };
   } });
   Object.assign(controller, { taskStore: store, messageStore: messages, activeTasks: new Map(), toolRegistry: new ToolRegistry(), stream: null,
     llm: directProvider ? recordingLlm(
@@ -169,28 +179,51 @@ export function remoteEnvelope(body: Record<string, unknown>): MeshEnvelope {
       workspaceTaskId: body.workspaceFolderId } };
 }
 
+const PROVIDER_FIELDS = ['providerId', 'model', 'configVersion', 'providerConfigRequired', 'fallbackOrder'];
+const CARRIER_FIELDS = ['app', 'capability', 'pattern', 'renderInstruction', 'botPersona'];
+
+/** Mirror the production ingress: the prompt carrier and provider authority are parsed, never copied raw. */
+function forwardedBody(body: Record<string, unknown>, state: RemoteFixtureState): Record<string, unknown> {
+  const forwarded = { ...body };
+  for (const field of [...PROVIDER_FIELDS, ...CARRIER_FIELDS]) delete forwarded[field];
+  const carrier = parseBotNodePromptCarrier(body);
+  const providerAuthority = parseBotNodeProviderAuthority(body);
+  state.providerAuthorities.push(providerAuthority);
+  return Object.assign(forwarded, providerAuthority, carrier);
+}
+
+function ingressRefusal(error: unknown): string | null {
+  if (error instanceof InvalidBotNodeProviderAuthorityError) return 'invalid_provider_authority';
+  return error instanceof TypeError ? 'invalid_execution_scope' : null;
+}
+
 function workerRouter(
   env: NodeJS.ProcessEnv,
   handler: ReturnType<typeof createBotNodeExecutionHandler>,
   state: RemoteFixtureState,
+  node: { localAgentId: string; servedAgents?: ServedAgentPolicy } = { localAgentId: REMOTE_AGENT },
 ) {
   const used = new Set<string>();
-  const delegation = createBotNodeDelegationRuntime({ localAgentId: REMOTE_AGENT, env, replayStore: {
+  const delegation = createBotNodeDelegationRuntime({ localAgentId: node.localAgentId, env, servedAgents: node.servedAgents, replayStore: {
     consume: async ({ issuer, jti }) => { const key = `${issuer}:${jti}`; if (used.has(key)) return false; used.add(key); return true; },
   } });
   const app = express(); app.use(express.json());
   app.post('/api/swarm-execute', (req, res, next) => {
     if (req.get('X-Service-Secret') !== SECRET) { res.sendStatus(401); return; } next();
   }, delegation.authorize, createProtectedBotDispatchContext(), async (req, res) => {
+    state.received.push({ body: structuredClone(req.body as Record<string, unknown>), token: req.get(DELEGATION_HTTP_HEADER) });
+    let forwarded: Record<string, unknown>;
     try {
-      const forwarded = { ...(req.body as Record<string, unknown>) };
-      for (const field of ['providerId', 'model', 'configVersion', 'providerConfigRequired', 'fallbackOrder']) {
-        delete forwarded[field];
-      }
-      const providerAuthority = parseBotNodeProviderAuthority(req.body as Record<string, unknown>);
-      state.providerAuthorities.push(providerAuthority);
-      Object.assign(forwarded, providerAuthority);
-      const result = await runWithSystemIdentity(() => handler(remoteEnvelope(forwarded)));
+      forwarded = forwardedBody(req.body as Record<string, unknown>, state);
+    } catch (error) {
+      const code = ingressRefusal(error);
+      res.status(code ? 400 : 503).json({ success: false, error: code ?? (error instanceof Error ? error.message : 'fixture_error') });
+      return;
+    }
+    try {
+      const envelope = remoteEnvelope(forwarded);
+      state.mutateEnvelope?.(envelope.payload as Record<string, unknown>);
+      const result = await runWithSystemIdentity(() => handler(envelope));
       res.status(result.success ? 200 : 503).json(buildBotNodeHttpResponse(result, { durationMs: 1,
         taskId: String(req.body.taskId), defaultModel: 'fixture-model', defaultProvider: 'fixture-hosted' }));
     } catch (error) {
@@ -215,33 +248,41 @@ export async function startProtectedWorkerFixture(
   createAuthority?: (signing: ReturnType<typeof signingFixture>) => ApplicationRemoteExecutionAuthority,
   options: {
     directProvider?: FixtureDirectProvider;
+    llm?: FixtureLlm;
     brokeredTools?: string[];
     dispatchConfigRuntime?: {
       getActiveProvider(): { provider: string; model: string; apiProvider?: string | null };
       setActiveProvider(provider: string, model?: string): { provider: string; model: string; apiProvider?: string | null };
     };
+    /** The worker's own identity when it is not the dispatch target (a concierge node). */
+    localAgentId?: string;
+    /** A multi-agent node's served-agent policy; omitted for the dedicated REMOTE_AGENT node. */
+    servedAgents?: ServedAgentPolicy;
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'oshal-remote-worker-'));
   const state: RemoteFixtureState = {
-    allowed: true, owner: REMOTE_APP, phases: [], calls: [], providerAuthorities: [],
+    allowed: true, owner: REMOTE_APP, phases: [], calls: [], providerAuthorities: [], received: [],
   };
   const signing = signingFixture(), records = new Map<string, DispatchRecord>();
   const authority = createAuthority?.(signing);
   const controllerHttp = await listen(authority ? realControllerRouter(authority, state) : controllerRouter(records, state, signing));
   const env = { ...signing.env, SWARM_CONTROLLER_URL: controllerHttp.url };
-  const sqlite = sqliteController(directory, state, options.directProvider);
+  const sqlite = sqliteController(directory, state, options.directProvider, options.llm);
   const pool = { query: async () => {
     await state.duringOwnership?.();
     return { rows: state.owner ? [{ app: state.owner, protected: true }] : [] };
   } } as unknown as Pick<Pool, 'query'>;
-  const handler = createBotNodeExecutionHandler({ runtimeAgentId: REMOTE_AGENT, anyBotTaskController: sqlite.controller,
+  const localAgentId = options.localAgentId ?? REMOTE_AGENT;
+  const handler = createBotNodeExecutionHandler({ runtimeAgentId: localAgentId, anyBotTaskController: sqlite.controller,
+    ...(options.servedAgents?.multiAgent ? { multiAgentNode: true } : {}),
     providerName: options.directProvider?.provider ?? 'claude-code', modelName: options.directProvider?.model ?? 'unused-cli',
     dispatchConfigRuntime: options.dispatchConfigRuntime,
     resolveBrokeredPromptAuthorization: async () => ({ allowedTools: options.brokeredTools ?? [],
       scopes: (options.brokeredTools ?? []).map(name => `tool:${name}`) }),
-    runApplicationExecution: createProtectedBotExecutionBoundary(pool, REMOTE_AGENT, createBotControllerPermitCheck({ env })) });
-  const workerHttp = await listen(workerRouter(env, handler, state));
+    runApplicationExecution: createProtectedBotExecutionBoundary(pool, localAgentId, createBotControllerPermitCheck({ env }),
+      options.servedAgents) });
+  const workerHttp = await listen(workerRouter(env, handler, state, { localAgentId, servedAgents: options.servedAgents }));
   const issue = (overrides: Record<string, unknown> = {}) => {
     const body = { agentId: REMOTE_AGENT, taskId: 'fixture-task', workspaceFolderId: 'fixture-workspace', userSub: REMOTE_SUB,
       principalIssuer: REMOTE_ISSUER, text: 'Summarize authorized context.', direct: true, agenticMode: false,

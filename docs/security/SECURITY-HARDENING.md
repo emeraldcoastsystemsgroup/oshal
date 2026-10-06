@@ -340,6 +340,22 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      naming `generate_image` sat inside the data-only record under an authority of
      `["attempt_completion"]`, behind "1 tools: attempt_completion". Guard:
      `tests/unit/image-turn-prompt-framing.spec.ts`.
+   - **Protected bot-persona carrier (2026-10-06, identity only, no authority):** a protected
+     direct turn on a bot node runs tool-less on the any-bot direct path, which supplies a generic
+     system prompt, so a node-hosted package bot answered without its persona. The controller now
+     composes each manifest bot's persona at activation (identity, scalar personality, and either
+     the explicit `protected_perspective` or a `perspective` that passes a shell/script/secret-carrier
+     screen, closed by a sentence stating that it grants no tool, scope or credential) and
+     `BotNodeClient` adds it as the reserved `botPersona` to the protected body before signing, so
+     it is inside `body_sha256` and the durable bind. A caller-supplied `botPersona` is refused; the
+     node accepts it only on a signed protected direct, non-agentic body (16 KiB, UTF-8, no control
+     characters), the protected boundary refuses an envelope that differs from the signed body, and
+     the handler files it first under `TRUSTED CONFIGURATION` as
+     `[trusted-config source="bot-persona"]`. Capabilities, tool lists, authorizations, runtime,
+     selectors and system prompts are never carried, a secret identifier refuses the whole persona,
+     and `allowed_tools` and `authorized_scopes` are unchanged. Guards:
+     `tests/unit/protected-bot-persona-carrier.spec.ts` and
+     `tests/unit/manifest-bot-persona.spec.ts`.
    - **Swarm-memory poisoning closed in code:** migration
      `117-swarm-memory-provenance.sql` adds durable trust/source/creator/approver/validation
      evidence with forced RLS. Raw/API writes and task-manager-agent review remain `untrusted`;

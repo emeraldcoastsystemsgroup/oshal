@@ -6,11 +6,14 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the compose bot-node fleet's identity invariants. A new node service is always written by copying an existing one (sales-bot came from career-bot), and the copy-paste failure that survives review is a duplicated AGENT_ID: both containers heartbeat, both answer, and every cost row and audit stamp lands under one identity. Nothing else catches it — the id is a plain env string, the container starts fine, and the wrong-attribution only shows up later in someone's billing question.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin both Claude OAuth mounts on package-owned CLI nodes. The sales node originally mounted ~/.claude but omitted the sibling ~/.claude.json account metadata, so a recreate turned a working login into a failed refresh and an honest raw fallback.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | The Claude rule is now "whole or not at all", and scene-studio-bot joins the package-node checks. Requiring both halves on EVERY node made a credential-minimal node impossible and has failed on futures-research-worker since it landed without either half (30097d55); half a session (sales-bot's original ~/.claude without ~/.claude.json) is still red. Also pins scene-studio-bot to the Antigravity login alone (no Codex or Claude session, no config-seed), because that node runs store-package code with agy's sandboxed command grant.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | concierge-bot replaces scene-studio-bot: the package-node checks and the Antigravity-login-only pin now name it (agent d97fe8e7-d2d6-4b18-b8df-f15e15820d79), and a new case pins BOT_NODE_SERVES to exactly one service, concierge-bot. A second multi-agent node, or the key copied onto an ordinary node by the usual copy-paste, would let one container execute for other agents' identities; the served-agent policy limits what it may serve, and this pin limits where that policy can be switched on.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Pin the concierge node's registry entry to its compose identity: concierge-host carries the same AGENT_ID and BOT_NAME as concierge-bot, names that container, declares no capabilities and is operator-only, so the node can never win a call-out, appear to Jarvis or be routed to under its own identity.
  */
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { LOCAL_BOT_REGISTRY } from '@/app/extensions/swarm/swarm-bot-registry-local';
 
 const ROOT = process.cwd();
 const COMPOSE = join(ROOT, 'docker-compose.oshal-local.yml');
@@ -21,6 +24,7 @@ interface BotService {
   personaFile: string | null;
   botName: string | null;
   profiles: string | null;
+  serves: string | null;
   exposes5000: boolean;
   mountsClaudeAuthVolume: boolean;
   mountsClaudeAuthJson: boolean;
@@ -54,6 +58,7 @@ function botNodeServices(): BotService[] {
         personaFile: pick(/^\s*BOT_PERSONA_FILE:\s*(.+)$/m),
         botName: pick(/^\s*BOT_NAME:\s*(.+)$/m),
         profiles: pick(/^\s*profiles:\s*(.+)$/m),
+        serves: pick(/^\s*BOT_NODE_SERVES:\s*(.+)$/m),
         exposes5000: /^\s*-\s*"?5000"?\s*$/m.test(body),
         mountsClaudeAuthVolume: /^\s*-\s*\*claude-auth-volume\s*$/m.test(body),
         mountsClaudeAuthJson: /^\s*-\s*\*claude-auth-json\s*$/m.test(body),
@@ -133,9 +138,9 @@ describe('compose bot-node identity', () => {
 
   // A package-owned node (ADR-093 Tier 2) must be opt-in, or every deployment pays its memory
   // whether or not it runs that package. career-bot established the contract; sales-bot and
-  // scene-studio-bot follow.
+  // concierge-bot (which runs installed packages' inline bots) follow.
   it('keeps package-owned nodes profile-gated and internal-only', () => {
-    for (const name of ['career-bot', 'sales-bot', 'scene-studio-bot']) {
+    for (const name of ['career-bot', 'sales-bot', 'concierge-bot']) {
       const svc = services.find((s) => s.name === name);
       expect(svc, `${name} must exist as a bot-node service`).toBeDefined();
       expect(svc!.profiles, `${name} must be profile-gated (opt-in per deployment)`).toBeTruthy();
@@ -143,17 +148,37 @@ describe('compose bot-node identity', () => {
     }
   });
 
-  // The Scene Studio director node runs store-package code, and agy holds a sandboxed command
-  // grant on every bridged turn, so the node carries the one login it uses and nothing else.
-  it('keeps the scene-studio node on the Antigravity login alone', () => {
-    const svc = services.find((s) => s.name === 'scene-studio-bot');
-    expect(svc, 'scene-studio-bot must exist as a bot-node service').toBeDefined();
-    expect(svc!.agentId).toBe('117640d5-e8a6-4a54-b8f4-c6c926172b88');
+  // The concierge node runs installed packages' bots (the Scene Studio director among them) on the
+  // operator's Antigravity login, so the node carries the one login it uses and nothing else.
+  it('keeps the concierge node on the Antigravity login alone', () => {
+    const svc = services.find((s) => s.name === 'concierge-bot');
+    expect(svc, 'concierge-bot must exist as a bot-node service').toBeDefined();
+    expect(svc!.agentId).toBe('d97fe8e7-d2d6-4b18-b8df-f15e15820d79');
+    expect(svc!.profiles).toContain('concierge-node');
     expect(svc!.mountsGeminiAuthVolume, 'agy reads its login from the .gemini mount').toBe(true);
     expect({
       codex: svc!.mountsCodexAuthVolume,
       claude: svc!.mountsClaudeAuthVolume || svc!.mountsClaudeAuthJson,
       configSeed: svc!.mountsConfigSeed,
-    }, 'scene-studio-bot carries a credential it never uses').toEqual({ codex: false, claude: false, configSeed: false });
+    }, 'concierge-bot carries a credential it never uses').toEqual({ codex: false, claude: false, configSeed: false });
+    expect(services.map((s) => s.name), 'scene-studio-bot folded into concierge-bot').not.toContain('scene-studio-bot');
+  });
+
+  // The Bot registry rule: compose, registry and heartbeat share one UUID. The entry exists for that
+  // agreement only, so it can never be selected: no capabilities, operator-only, its own container.
+  it('registers the concierge node under its compose identity and never as a routable bot', () => {
+    const svc = services.find((s) => s.name === 'concierge-bot');
+    const entry = LOCAL_BOT_REGISTRY.find((bot) => bot.agentId === svc?.agentId);
+    expect(entry, 'concierge-bot\'s AGENT_ID must be in the local registry').toBeDefined();
+    expect(entry).toMatchObject({ name: svc!.botName, container: 'concierge-bot', capabilities: [], accessRoles: ['operator'] });
+  });
+
+  // Exactly one node may execute for other agents' identities, and only in the one mode the
+  // served-agent policy accepts. A copied service carrying the key is the failure this catches.
+  it('switches BOT_NODE_SERVES on for exactly one service, concierge-bot', () => {
+    const serving = services.filter((s) => s.serves !== null).map((s) => `${s.name}=${s.serves}`);
+    expect(serving).toEqual(['concierge-bot=inline-app-bots']);
+    const raw = readFileSync(COMPOSE, 'utf8');
+    expect(raw.match(/^\s*BOT_NODE_SERVES:/gm), 'BOT_NODE_SERVES appears outside the bot-node services').toHaveLength(1);
   });
 });

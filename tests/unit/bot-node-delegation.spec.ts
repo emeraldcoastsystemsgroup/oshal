@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Pin the required independent service-secret posture whenever public-key delegation enforcement is active.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reject prompt, direct-entitlement, credential, and provider-intent mutations through the signed canonical body digest before replay consumption.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reject valid signatures carrying any method/path other than exact POST /api/swarm-execute.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Concierge (multi-agent) node cases N1-N6 over the real verifier and the real served-agent policy with a doubled ownership pool: a dedicated node handed its own policy still refuses a foreign agentId; azp naming a served agent passes and spends its nonce; azp A with body B is 401 before any ownership read and leaves the nonce unspent; a kernel, static or unowned target is 403 target_agent_not_served with the nonce unspent; a served node without verification keys refuses to start; a missing agentId is 403.
  */
 
 import { generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -25,6 +26,7 @@ import {
   getVerifiedDelegationClaims,
   prohibitUnsignedMeshExecution,
 } from '@/app/bot-node-delegation';
+import { createServedAgentPolicy } from '@/app/bot-node-served-agents';
 
 const AGENT_ID = 'agent-17';
 const TASK_ID = 'task-42';
@@ -297,5 +299,112 @@ describe('unsigned runtime bypass prohibition', () => {
       OSHAL_DELEGATION_PUBLIC_KEYS: JSON.stringify({ current: publicPem(KEY_PAIR.publicKey) }),
     })).toThrow(/prohibited/);
     expect(() => assertDelegationBatchRuntimeAllowed({})).not.toThrow();
+  });
+});
+
+describe('concierge (multi-agent) node delegation', () => {
+  const SERVED_AGENT = 'c0ffee00-0000-4000-8000-0000000000d1';
+  const OTHER_SERVED = 'c0ffee00-0000-4000-8000-0000000000d2';
+  const UNOWNED = 'c0ffee00-0000-4000-8000-0000000000d3';
+  const KERNEL_AGENT = 'a0000000-0000-0000-0000-000000000050';
+  const STATIC_AGENT = 'fd000000-0000-0000-0000-000000000001';
+  const SERVES_ENV = { BOT_NODE_SERVES: 'inline-app-bots' };
+
+  /** The real policy over an ownership pool that knows two installed application bots. */
+  function servedPolicy() {
+    const query = vi.fn(async (_sql: string, params: unknown[]) => ({
+      rows: [SERVED_AGENT, OTHER_SERVED].includes(String(params[1])) ? [{ app: 'spec-concierge-app', protected: false }] : [],
+    }));
+    const policy = createServedAgentPolicy({ localAgentId: AGENT_ID, pool: { query } as never, env: SERVES_ENV });
+    return { policy, query };
+  }
+
+  function conciergeRuntime(replayStore = acceptingReplayStore()) {
+    const { policy, query } = servedPolicy();
+    const runtime = createBotNodeDelegationRuntime({
+      localAgentId: AGENT_ID, verifier: verifier(), replayStore, env: MACHINE_ENV, servedAgents: policy,
+    });
+    return { runtime, replayStore, query };
+  }
+
+  it('N1: a dedicated node handed its own policy still refuses a foreign agentId', async () => {
+    const replayStore = acceptingReplayStore();
+    const dedicated = createServedAgentPolicy({ localAgentId: AGENT_ID, pool: null, env: {} });
+    const runtime = createBotNodeDelegationRuntime({
+      localAgentId: AGENT_ID, verifier: verifier(), replayStore, env: MACHINE_ENV, servedAgents: dedicated,
+    });
+    const foreign = body({ agentId: SERVED_AGENT });
+    const result = await invoke(runtime, foreign, token({ azp: SERVED_AGENT }, foreign));
+    expect(dedicated.multiAgent).toBe(false);
+    expect(result.res.statusCode).toBe(403);
+    expect(result.res.payload).toEqual({ success: false, error: 'target_agent_mismatch' });
+    expect(replayStore.consume).not.toHaveBeenCalled();
+    expect((await invoke(runtime, body(), token())).nextCalls).toBe(1);
+  });
+
+  it('N2: azp naming a served agent passes and spends its nonce', async () => {
+    const { runtime, replayStore, query } = conciergeRuntime();
+    const served = body({ agentId: SERVED_AGENT });
+    const result = await invoke(runtime, served, token({ azp: SERVED_AGENT }, served));
+    expect(result.nextCalls).toBe(1);
+    expect(getVerifiedDelegationClaims(result.res)).toMatchObject({ azp: SERVED_AGENT });
+    expect(replayStore.consume).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(1);
+    // The node's own agent is still served without any ownership read.
+    expect((await invoke(runtime, body(), token({ jti: 'nonce-local' }))).nextCalls).toBe(1);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('N3: azp A with body B is 401 before any ownership read and leaves the nonce unspent', async () => {
+    const { runtime, replayStore, query } = conciergeRuntime();
+    const other = body({ agentId: OTHER_SERVED });
+    const result = await invoke(runtime, other, token({ azp: SERVED_AGENT }, other));
+    expect(result.res.statusCode).toBe(401);
+    expect(result.nextCalls).toBe(0);
+    expect(replayStore.consume).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['kernel', KERNEL_AGENT, false],
+    ['static registry', STATIC_AGENT, false],
+    ['unowned', UNOWNED, true],
+  ])('N4: a %s target is 403 target_agent_not_served and leaves the nonce unspent', async (_label, target, readsOwnership) => {
+    const { runtime, replayStore, query } = conciergeRuntime();
+    const request = body({ agentId: target });
+    const result = await invoke(runtime, request, token({ azp: target }, request));
+    expect(result.res.statusCode).toBe(403);
+    expect(result.res.payload).toEqual({ success: false, error: 'target_agent_not_served' });
+    expect(replayStore.consume).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledTimes(readsOwnership ? 1 : 0);
+  });
+
+  it('N4b: an ownership read that fails refuses closed (503) and leaves the nonce unspent', async () => {
+    const replayStore = acceptingReplayStore();
+    const policy = createServedAgentPolicy({ localAgentId: AGENT_ID, env: SERVES_ENV,
+      pool: { query: vi.fn(async () => { throw new Error('database unreachable'); }) } as never });
+    const runtime = createBotNodeDelegationRuntime({
+      localAgentId: AGENT_ID, verifier: verifier(), replayStore, env: MACHINE_ENV, servedAgents: policy,
+    });
+    const request = body({ agentId: SERVED_AGENT });
+    const result = await invoke(runtime, request, token({ azp: SERVED_AGENT }, request));
+    expect(result.res.statusCode).toBe(503);
+    expect(replayStore.consume).not.toHaveBeenCalled();
+  });
+
+  it('N5: a served node without verification keys refuses to start', () => {
+    const { policy } = servedPolicy();
+    expect(() => createBotNodeDelegationRuntime({ localAgentId: AGENT_ID, env: {}, servedAgents: policy }))
+      .toThrow(/BOT_NODE_SERVES/);
+  });
+
+  it('N6: a missing or non-string agentId is 403 target_agent_mismatch', async () => {
+    const { runtime, replayStore } = conciergeRuntime();
+    const { agentId: _removed, ...missing } = body();
+    expect((await invoke(runtime, missing, token({}, missing))).res.payload)
+      .toEqual({ success: false, error: 'target_agent_mismatch' });
+    const numeric = body({ agentId: 17 });
+    expect((await invoke(runtime, numeric, token({}, numeric))).res.statusCode).toBe(403);
+    expect(replayStore.consume).not.toHaveBeenCalled();
   });
 });

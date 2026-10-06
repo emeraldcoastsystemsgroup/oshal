@@ -7,11 +7,13 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove Twilio from bot-node credential materialization; SMS credentials are confined to fixed controller operations.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Validate the trusted app/capability/pattern carrier at the bot-node HTTP boundary before promoting it into an execution envelope.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | The image-turn render instruction joins the trusted carrier (ADR-130 amendment 2026-10-02, SEC-05 carve for image turns): `renderInstruction` is the server-authored render text the storyboard providers write in the api process; it is bounded exactly as `pattern` is and accepted only beside a literal `imageTurn: true`, so a stray instruction on an ordinary turn is refused at the boundary rather than ignored. The brief stays `text`.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | The controller-composed bot persona joins the trusted carrier (`botPersona`). It is accepted only on a protected direct dispatch (a string applicationExecutionId, direct: true, agenticMode: false), where it is inside the signed body; anywhere else it is refused with a TypeError rather than ignored. It is bounded at MAX_BOT_PERSONA_BYTES with the same UTF-8 and control-character rule, so boundedTrustedPromptText now takes its byte bound as a parameter.
  */
 
 import crypto from 'crypto';
 import { optionalExactUserSubject } from '@/shared/security/exact-user-subject';
 import { isSkillCapabilityId, type SkillCapabilityId } from '@/shared/skill-profiles';
+import { MAX_BOT_PERSONA_BYTES } from '@/shared/protected-bot-personas';
 
 const SUPPORTED_BROKERED_CRED_KEYS = new Set([
   'OSHAL_CRED_GOOGLE',
@@ -41,22 +43,25 @@ export interface BotNodePromptCarrier {
   pattern?: string;
   /** The server-authored render instruction of an image turn (ADR-130); accepted only with imageTurn. */
   renderInstruction?: string;
+  /** The controller-composed persona of the target bot; accepted only on a protected direct dispatch. */
+  botPersona?: string;
 }
 
 /**
- * @description One bounded trusted prompt text: non-empty, at most MAX_TRUSTED_PATTERN_BYTES of
- * valid UTF-8, no non-text control characters. Preserved exactly otherwise.
+ * @description One bounded trusted prompt text: non-empty, at most `maxBytes` of valid UTF-8, no
+ * non-text control characters. Preserved exactly otherwise.
  * @param value - The candidate text.
  * @param field - The carrier field name, for the refusal.
+ * @param maxBytes - The field's UTF-8 byte bound.
  * @returns The exact text.
  */
-function boundedTrustedPromptText(value: unknown, field: string): string {
+function boundedTrustedPromptText(value: unknown, field: string, maxBytes = MAX_TRUSTED_PATTERN_BYTES): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new TypeError(`bot prompt carrier ${field} is invalid`);
   }
   const bytes = Buffer.from(value, 'utf8');
   if (
-    bytes.length > MAX_TRUSTED_PATTERN_BYTES
+    bytes.length > maxBytes
     || bytes.toString('utf8') !== value
     || DISALLOWED_PROMPT_CONTROLS.test(value)
   ) {
@@ -139,6 +144,15 @@ export function parseBotNodePromptCarrier(value: unknown): BotNodePromptCarrier 
       throw new TypeError('bot prompt carrier renderInstruction requires an image turn');
     }
     carrier.renderInstruction = boundedTrustedPromptText(body.renderInstruction, 'renderInstruction');
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'botPersona')) {
+    // The controller signs the persona into a protected direct dispatch only. On any other shape it
+    // is not trusted configuration, so it is refused outright rather than silently dropped.
+    if (typeof body.applicationExecutionId !== 'string' || body.direct !== true || body.agenticMode !== false) {
+      throw new TypeError('bot prompt carrier botPersona requires a protected direct dispatch');
+    }
+    carrier.botPersona = boundedTrustedPromptText(body.botPersona, 'botPersona', MAX_BOT_PERSONA_BYTES);
   }
 
   return carrier;

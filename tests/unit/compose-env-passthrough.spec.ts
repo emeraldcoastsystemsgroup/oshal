@@ -23,6 +23,7 @@
  * 2026-09-28 22:50:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_DEV_WORKSPACE_INDEX_ENABLED (the dev-workspace-index package flag) and its two ADR-077 gates together: the deploy lane set the flag in .env on 2026-09-28 and the package still answered disabled, because compose forwarded only OSHAL_DEV_CONSOLE_ENABLED and OSHAL_SUPERADMIN_SUBS.
  * 2026-10-02 10:20:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin the world classify rail knobs that replace the retired WORLD_CLASSIFY_PROVIDERS: WORLD_CLASSIFY_BOT, WORLD_CLASSIFY_OWNER_SUB, WORLD_CLASSIFY_OWNER_ISSUER, WORLD_CLASSIFY_CALL_TIMEOUT_MS, WORLD_CLASSIFY_PROVIDER_ID and WORLD_CLASSIFY_MODEL. Unforwarded, an operator who names the classify bot, its accountable owner, that owner's verified issuer, the call ceiling or an explicit provider stamp in .env is silently ignored: the compiled defaults stand, and a box left with no owner (or, on a signed bot-node hop, no verified issuer) classifies by lexicon only.
  * 2026-10-02 15:50:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin WORLD_CLASSIFY_BUDGET_PER_PULSE (the per-fire slice of the classify budget): unforwarded, the compiled default stands and an operator who tunes the slice in .env after a pulse overran its dispatch budget is silently ignored.
+ * 2026-10-06 16:00:00 | maintainer@emeraldcoastsystemsgroup.com   | Pin OSHAL_CONCIERGE_NODE_URL to the api: the concierge route (inline-bot-execution resolveBotDispatchRoute) reads it per turn, and unforwarded an operator who starts the concierge-node profile and sets the URL in .env would see every inline app bot keep answering NO_HOSTED_BRAIN.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -57,6 +58,8 @@ const REQUIRED_ON_API: ReadonlyArray<{ name: string; readBy: string }> = [
   { name: 'TRADING_YIELD_SLEEVE_SYMBOL', readBy: 'yield-sleeve yieldSleeveSymbol — the fund the sleeve parks in' },
   { name: 'JARVIS_SELECTOR_SHADOW', readBy: 'jarvis-selector-shadow buildToolsBlockWithShadow — the tool-selector shadow candidate' },
   { name: 'OSHAL_CONCIERGE_COVERAGE_MODE', readBy: 'swarm-app-loader P8 surfaced-package concierge contract' },
+  // 2026-10-06: blank turns the concierge route off; unforwarded, setting it in .env changes nothing.
+  { name: 'OSHAL_CONCIERGE_NODE_URL', readBy: 'inline-bot-execution resolveBotDispatchRoute — the concierge node that runs inline app bots on the operator\'s CLI login' },
   // Added 2026-07-30 after a browser walk of a real customer deployment. server.ts read
   // DISABLE_ONBOARDING_GATE the whole time and compose never forwarded it, so setting it in
   // .env did nothing and every invited user on a single-app box was bounced out of their app

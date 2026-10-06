@@ -24,13 +24,16 @@
  * 19 | maintainer@emeraldcoastsystemsgroup.com  | Resolve explicit `bot-default` strictly and enforce the same SEC-05 autonomous-CLI boundary as the node: a safe hosted canonical record is stamped, an unavailable or guest-ineligible CLI record degrades to the caller's hosted ladder, and resolver outages remain retryable instead of becoming a deterministic no-brain refusal.
  * 20 | maintainer@emeraldcoastsystemsgroup.com  | Treat every dedicated bot-node default as an autonomous-runtime choice, not the raw provider spelling: catalog API ids such as Gemini reconcile to Cline on the worker. A non-carved caller (including a user whose old saved choice outlives the carve) now falls to hosted before canonical resolution; the demo operator retains the per-bot record.
  * 21 | maintainer@emeraldcoastsystemsgroup.com | Bind protected inline responses and their stream events to durable controller-owned execution lineage before release.
+ * 22 | maintainer@emeraldcoastsystemsgroup.com | Concierge node route. The inline app concierges answered NO_HOSTED_BRAIN for the deployment operator whenever the hosted lane was off, because an inline turn can never run the operator's CLI login (SEC-05 refuses every controller CLI). resolveBotDispatchRoute decides each turn's transport once: the bot's own node (dedicated), the concierge node (an interactive turn by the carved operator whose resolved brain is an Antigravity CLI login, to an inline app bot, with no explicit BYO/provider/credential choice, while OSHAL_CONCIERGE_NODE_URL is set and the node's health check passes), or the existing inline path. executeBotOrInline takes an optional precomputed route; admission is unchanged; a concierge turn stamps the already-resolved brain through stampRemoteBrain, makes a protected bot non-agentic, and runs through the same remote recovery and cost settlement as a dedicated node (the protected persona rides BotNodeClient's existing botPersona carrier). An inline turn whose concierge was unhealthy and whose hosted ladder is empty refuses with NoHostedBrainError detail concierge_node_unavailable, which the chat routes include in the 422 body.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
 import { canonicalBotWorkspaceId } from '@/app/bot-node-request-scope';
 import {
+  BotNodeClient,
+  createConciergeEndpointResolver,
+  normalizeConciergeNodeUrl,
   resolveRequiredDispatchConfigFields,
-  type BotNodeClient,
   type BotNodeRequest,
   type BotNodeResponse,
   type BrainFallbackMarker,
@@ -49,6 +52,8 @@ import { cliBrainAvailable, resolveUserBrain, type ResolvedBrain } from './user-
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
 import { runProtectedInlineTurn } from './protected-inline-execution';
+import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
+import { isProtectedAgent } from '@/shared/protected-results';
 
 const logger = createChildLogger({ module: 'inline-bot-execution' });
 
@@ -61,12 +66,16 @@ export class NoHostedBrainError extends Error {
   /** Machine code the chat routes branch on. */
   readonly code = 'NO_HOSTED_BRAIN';
 
-  constructor() {
+  /** Why the turn had no brain beyond an empty ladder, when that is known (`concierge_node_unavailable`). */
+  readonly detail?: string;
+
+  constructor(detail?: string) {
     super(
       'No AI engine is connected for this account, so this assistant cannot answer yet. '
       + 'Open Settings → AI Providers to connect a hosted provider or add your own endpoint, then try again.',
     );
     this.name = 'NoHostedBrainError';
+    if (detail) this.detail = detail;
   }
 }
 
@@ -632,16 +641,154 @@ export async function assertBotInvocationAdmissible(
   if (!verdict.allowed) throw new BudgetBlockedError(verdict);
 }
 
+/** The CLI brains a concierge node runs for an inline app bot; any other brain keeps the inline path. */
+const CONCIERGE_CLI_PROVIDERS: ReadonlySet<string> = new Set(['antigravity-cli']);
+/** How long one concierge health answer stands before the next turn probes again. */
+const CONCIERGE_HEALTH_TTL_MS = 15_000;
+/** The probe's own bound, so an unreachable node costs a turn at most this long. */
+const CONCIERGE_HEALTH_TIMEOUT_MS = 2_000;
+
+/** Reads the configured concierge node URL per call; blank or unset turns the route off. */
+const conciergeNodeUrl = (): string | undefined => process.env.OSHAL_CONCIERGE_NODE_URL;
+
+/** The concierge node transport: it resolves an inline app bot only, and only while the URL is set. */
+const conciergeClient = new BotNodeClient(createConciergeEndpointResolver(conciergeNodeUrl));
+
+/** The last health answer per concierge base URL. */
+const conciergeHealth = new Map<string, { healthy: boolean; checkedAt: number }>();
+
 /**
- * @description Executes a bot request on its remote any-bot node when one exists;
- * otherwise runs controller-inline bots through the local orchestrator. Both paths sit
- * behind the cost-governance budget gate: a HARD user-scope daily cap definitively
- * exceeded throws before any LLM work starts (fail-open on infra gaps — a missing
- * budgets table or DB hiccup never blocks execution).
+ * @description The transport one bot turn takes, decided once per turn by {@link resolveBotDispatchRoute}.
+ * `dedicated`: the bot's own node. `concierge`: the concierge node, carrying the brain already resolved
+ * for the caller and the client that reaches it. `inline`: the controller orchestrator, noting when a
+ * concierge turn was eligible but its node failed the health check.
+ */
+export type BotDispatchRoute =
+  | { kind: 'dedicated' }
+  | { kind: 'concierge'; brain: Extract<ResolvedBrain, { kind: 'cli' }>; client: BotNodeClient }
+  | { kind: 'inline'; conciergeUnavailable?: boolean };
+
+/** The request facts the route decision reads. Structural, so the chat route can pass what it has. */
+export interface BotDispatchRouteFields {
+  /** The accountable caller; absent means a system turn, which always stays where it is. */
+  userSub?: string | null;
+  /** True only for an interactive identity caller (seq-9 rule in message-routes, direct:true on node calls). */
+  direct?: boolean;
+  byoLlmConnection?: unknown;
+  providerId?: string;
+  creds?: Record<string, string>;
+  providerIntent?: unknown;
+}
+
+const INLINE_ROUTE: BotDispatchRoute = Object.freeze({ kind: 'inline' as const });
+
+/**
+ * @description Decides which transport runs one bot turn. A bot with its own node keeps it. Every other
+ * turn stays inline unless ALL of these hold, cheapest first: an interactive turn by a caller the
+ * ADR-127 carve covers (synchronous, before any I/O); no caller-chosen BYO endpoint, provider stamp,
+ * credential or provider intent; a concierge URL that resolves this bot (an inline app bot); a bot whose
+ * governing harness needs a brain the controller cannot run; a resolved brain that is a CLI login the
+ * concierge runs; and a concierge node that answers its health check (cached ~15 s). A failed check
+ * keeps the turn inline and says so, so an empty hosted ladder can name the real cause.
+ * @param ctx - App context; only the pool is read (the caller's brain preference).
+ * @param botClient - The dedicated-node client of the calling route.
+ * @param agentId - The target bot.
+ * @param fields - The turn's caller and explicit-choice facts.
+ * @param overrides - Registry and brain-ladder seams for guard specs only.
+ * @returns The route; a ladder failure is logged and keeps the turn inline.
+ */
+export async function resolveBotDispatchRoute(
+  ctx: Pick<AppContext, 'pool'>,
+  botClient: BotNodeClient,
+  agentId: string,
+  fields: BotDispatchRouteFields,
+  overrides?: Pick<HostedBrainResolutionOverrides, 'loadRegistry' | 'resolveBrain'>,
+): Promise<BotDispatchRoute> {
+  if (botClient.hasEndpoint(agentId)) return { kind: 'dedicated' };
+  const userSub = fields.userSub;
+  if (!userSub || fields.direct !== true || !cliBrainAvailable(userSub)) return INLINE_ROUTE;
+  if (fields.byoLlmConnection != null || fields.providerId != null || fields.creds != null
+    || fields.providerIntent != null) return INLINE_ROUTE;
+  if (!conciergeClient.hasEndpoint(agentId)) return INLINE_ROUTE;
+  const registry = overrides?.loadRegistry ? overrides.loadRegistry() : await defaultLoadSwarmRegistry();
+  if (!agentRequiresHostedBrain(agentId, registry)) return INLINE_ROUTE;
+  let brain: ResolvedBrain;
+  try {
+    brain = overrides?.resolveBrain ? await overrides.resolveBrain(ctx.pool, userSub) : await resolveUserBrain(ctx.pool, userSub);
+  } catch (err) {
+    logger.error({ err, agentId }, 'concierge route: brain resolution failed - the turn stays inline');
+    return INLINE_ROUTE;
+  }
+  if (brain.kind !== 'cli' || !CONCIERGE_CLI_PROVIDERS.has(brain.providerId)) return INLINE_ROUTE;
+  const base = normalizeConciergeNodeUrl(conciergeNodeUrl());
+  if (!base || !(await conciergeNodeHealthy(base))) {
+    logger.warn({ agentId }, 'concierge route: the concierge node is unavailable - the turn stays inline');
+    return { kind: 'inline', conciergeUnavailable: true };
+  }
+  logger.info({ agentId, providerId: brain.providerId }, 'concierge route: inline app bot runs on the concierge node');
+  return { kind: 'concierge', brain, client: conciergeClient };
+}
+
+/**
+ * @description One bounded GET <base>/api/health, its answer cached for CONCIERGE_HEALTH_TTL_MS per
+ * base URL so a burst of turns probes once. The node answers 503 there until its database has
+ * answered, so a pool-less node is unhealthy here too.
+ * @param base - The normalized concierge base URL.
+ * @returns Whether the node answered 2xx within the probe's bound.
+ */
+async function conciergeNodeHealthy(base: string): Promise<boolean> {
+  const cached = conciergeHealth.get(base);
+  if (cached && Date.now() - cached.checkedAt < CONCIERGE_HEALTH_TTL_MS) return cached.healthy;
+  let healthy = false;
+  try {
+    const response = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(CONCIERGE_HEALTH_TIMEOUT_MS) });
+    healthy = response.ok;
+    if (!healthy) logger.warn({ status: response.status }, 'concierge node health check answered non-2xx');
+  } catch (err) {
+    logger.error({ err }, 'concierge node health check failed');
+  }
+  conciergeHealth.set(base, { healthy, checkedAt: Date.now() });
+  return healthy;
+}
+
+/**
+ * @description The inline turn's hosted brain (resolveHostedBrainMeta), naming the concierge as the
+ * cause when it is: a turn that was eligible for the concierge node but found it unhealthy, and then
+ * found the hosted ladder empty too, refuses with detail `concierge_node_unavailable` so the 422 says
+ * the node is down rather than only that no engine is connected.
+ * @param pool - pg pool for the ladder's per-user reads.
+ * @param agentId - The target bot.
+ * @param userSub - The caller.
+ * @param route - The turn's route, when one was decided.
+ * @returns The full resolved connection, or undefined for no override.
+ * @throws NoHostedBrainError, with the concierge detail when it applies.
+ */
+export async function resolveInlineHostedBrain(
+  pool: AppContext['pool'],
+  agentId: string,
+  userSub: string | undefined,
+  route?: BotDispatchRoute,
+): Promise<ByoLlmConnection | undefined> {
+  if (route?.kind !== 'inline' || route.conciergeUnavailable !== true) return resolveHostedBrainMeta(pool, agentId, userSub);
+  try {
+    return await resolveHostedBrainMeta(pool, agentId, userSub);
+  } catch (err) {
+    logger.error({ err, agentId }, 'inline hosted brain: no brain while the concierge node is unavailable');
+    throw err instanceof NoHostedBrainError ? new NoHostedBrainError('concierge_node_unavailable') : err;
+  }
+}
+
+/**
+ * @description Executes a bot request on its remote any-bot node when one exists, on the concierge
+ * node when {@link resolveBotDispatchRoute} sends an inline app bot there, and otherwise runs
+ * controller-inline bots through the local orchestrator. Every path sits behind the cost-governance
+ * budget gate: a HARD user-scope daily cap definitively exceeded throws before any LLM work starts
+ * (fail-open on infra gaps — a missing budgets table or DB hiccup never blocks execution).
  * @param ctx - App context (pool + inline orchestrator).
  * @param botClient - Bot-node client used for remote any-bot execution.
  * @param agentId - The target bot's agent UUID.
  * @param request - The execution request (userSub is the accountable spend owner).
+ * @param route - The route the caller already decided for this turn; resolved here when omitted.
  * @returns The bot-node response (remote or inline-normalized).
  * @throws CallerNotEntitledError (statusCode 403) in enforce mode when an interactive
  *   identity caller (userSub + direct:true) is not entitled to the target bot.
@@ -651,6 +798,7 @@ export async function executeBotOrInline(
   botClient: BotNodeClient,
   agentId: string,
   request: BotNodeRequest,
+  route?: BotDispatchRoute,
 ): Promise<BotNodeResponse> {
   // Execute-time entitlement (BACKLOG "Bot-endpoint privilege model"): the SAME pure decision
   // the bot-node HTTP gate runs, applied at THIS controller chokepoint because inline bots
@@ -677,7 +825,10 @@ export async function executeBotOrInline(
     ? composeSkillProfilePrompt('', request.capability, resolveSkillProfileByApp(request.app, request.capability))
     : '';
 
-  if (hasDedicatedEndpoint) {
+  const dispatch = route ?? await resolveBotDispatchRoute(ctx, botClient, agentId, request);
+  if (dispatch.kind === 'concierge') return executeOnConcierge(ctx, agentId, request, skillPattern, dispatch);
+
+  if (dispatch.kind === 'dedicated') {
     // Remote path: the resolved block rides to the bot node as request.pattern (→ envelope.payload).
     // The bot-node execution handler appends it to its assembled prompt in BOTH prompt branches —
     // the layered branch builds from persona layers + buildUserMessage, never from `text`, which is
@@ -694,21 +845,52 @@ export async function executeBotOrInline(
     return remote;
   }
 
-  return executeInlineBotWithRecovery(ctx, agentId, request, skillPattern);
+  return executeInlineBotWithRecovery(ctx, agentId, request, skillPattern, dispatch);
+}
+
+/**
+ * @description Runs one turn of an inline app bot on the concierge node. Same shape as a dedicated-node
+ * turn: the skill profile rides as request.pattern, the caller's brain is stamped as the authoritative
+ * provider (stampRemoteBrain, handed the brain the route already resolved so the ladder is not walked
+ * twice), and the node's cost task is joined to the thread's ticket. A protected bot is made
+ * non-agentic because a protected node admits only direct configured reasoning; its persona rides
+ * BotNodeClient's own signed botPersona carrier, so nothing here adds one.
+ * @param ctx - App context.
+ * @param agentId - The inline app bot.
+ * @param request - The accountable request; stamped in place.
+ * @param skillPattern - The calling application's resolved skill profile block, or ''.
+ * @param route - The concierge route with its resolved brain and client.
+ * @returns The node's response.
+ */
+async function executeOnConcierge(ctx: AppContext, agentId: string, request: BotNodeRequest, skillPattern: string,
+  route: Extract<BotDispatchRoute, { kind: 'concierge' }>): Promise<BotNodeResponse> {
+  if (skillPattern) request.pattern = skillPattern;
+  if (await isApplicationExecutionProtected({ kind: 'bots', operation: agentId }) || await isProtectedAgent(agentId)) {
+    request.agenticMode = false;
+  }
+  await stampRemoteBrain(ctx.pool, agentId, request, {
+    resolveBrain: async () => route.brain,
+    runtimeParamsResolver: ctx.swarm?.runtimeParamsResolver,
+  });
+  const remote = await executeRemoteWithRecovery(route.client, agentId, request);
+  await settleBotNodeCostTask(ctx, agentId, request, remote);
+  return remote;
 }
 
 /** @description Resolve the existing hosted lane and run one inline recovery turn under durable result authority.
  * @param ctx Controller stores/provider resolution. @param agentId Exact target. @param request Accountable request.
- * @param skillPattern Existing calling-application capability context. @returns Normalized completed bot response.
+ * @param skillPattern Existing calling-application capability context.
+ * @param route The decided route; an unavailable concierge names itself when the ladder is empty.
+ * @returns Normalized completed bot response.
  */
 async function executeInlineBotWithRecovery(ctx: AppContext, agentId: string, request: BotNodeRequest,
-  skillPattern: string): Promise<BotNodeResponse> {
+  skillPattern: string, route: BotDispatchRoute): Promise<BotNodeResponse> {
   const start = Date.now();
   const inlineText = skillPattern ? `${request.text}${skillPattern}` : request.text;
   // An explicit caller connection preserves its billing boundary; otherwise use the existing hosted ladder.
   const resolvedBrain = request.byoLlmConnection
     ? undefined
-    : await resolveHostedBrainMeta(ctx.pool, agentId, request.userSub);
+    : await resolveInlineHostedBrain(ctx.pool, agentId, request.userSub, route);
   const runTurn = (byoLlmConnection: typeof request.byoLlmConnection, turn: InlineTurnOptions) =>
     ctx.orchestrator.processMessage(request.taskId, inlineText, {
       agenticMode: request.agenticMode ?? true,

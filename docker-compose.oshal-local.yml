@@ -53,6 +53,7 @@
 # 45 | maintainer@emeraldcoastsystemsgroup.com | Comment only: the STORYBOARD_IMAGE_PROVIDER note now states the ADR-130 amendment (2026-10-02) - antigravity-cli is a valid value, and with it unset under DEMO_MODE the render bot's own harness picks the rail; the CLI render-rail knobs serve both CLI rails. No value changes.
 # 46 | maintainer@emeraldcoastsystemsgroup.com   | WORLD_SOURCE_SWITCH_TTL_MS (default 30000) and APP_SCHEDULE_MIN_INTERVAL_MINUTES (default 5) for the World Sources & schedules page and operator schedule control. The congress token comment now says what a blank token does today: the collector reads the free community mirror.
 # 47 | maintainer@emeraldcoastsystemsgroup.com | Scene Studio director node: scene-studio-bot (profile scene-studio-node, agent 117640d5-e8a6-4a54-b8f4-c6c926172b88), so the scene-studio package can declare `container: scene-studio-bot` and run its director at a node on the caller's stamped brain. It mounts only the Antigravity login and its own output volume: no shared workspace (CKR-20 trigger 2 - store-package code with a tool surface), no Codex or Claude session, no config-seed. ANTIGRAVITY_INACTIVITY_TIMEOUT_MS defaults to 30 min on this node because the wrapper hands it to agy as --print-timeout and one director turn can chain engine calls with deadlines of nearly 300 s. The declared bot-node fleet becomes 40, so its Postgres demand is 40 x 3 = 120, exactly oshal_bot's limit. Guards: compose-workspace-mount-posture.spec.ts (WORKSPACE_FREE_BOTS), compose-bot-node-identity.spec.ts.
+# 48 | maintainer@emeraldcoastsystemsgroup.com | Concierge node: concierge-bot (profile concierge-node, agent d97fe8e7-d2d6-4b18-b8df-f15e15820d79, BOT_NODE_SERVES=inline-app-bots) REPLACES scene-studio-bot and its scene-studio-output volume. Why: the inline app concierges cannot run the operator's CLI login on the controller (SEC-05), so with the hosted lane off every in-app assistant answered NO_HOSTED_BRAIN; the controller now routes an operator's Antigravity turn for an inline app bot to this one node when OSHAL_CONCIERGE_NODE_URL is set (inline-bot-execution seq 22). The Scene Studio director is an inline app bot like the others, so it folds into this node instead of keeping a node of its own; the bot-node count stays 40, so the declared oshal_bot pool stays 40 x 3 = 120 at the role's ceiling. It keeps scene-studio-bot's posture: profile-gated, internal-only, the Antigravity login alone (no Codex or Claude session, no config-seed), no shared workspace (CKR-20 reviewed: it runs package bots' turns), its own output volume, and the least-privilege bot DSN. No provider literal: the boot pull and the per-dispatch stamp choose the provider. The persona path is deliberately absent, so the entrypoint takes its no-persona branch. oshal-api gains OSHAL_CONCIERGE_NODE_URL (blank default = the route is off). Guards: compose-workspace-mount-posture, compose-bot-node-identity, compose-env-passthrough, managed-postgres-pool-budget.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -1006,6 +1007,9 @@ services:
       APP_PACKAGE_MIGRATIONS: "1"
       OSHAL_PACKAGE_AUDIT_MODE: ${OSHAL_PACKAGE_AUDIT_MODE:-compatible}
       OSHAL_CONCIERGE_COVERAGE_MODE: ${OSHAL_CONCIERGE_COVERAGE_MODE:-enforce}
+      # The concierge node's base URL (http://concierge-bot:5000 with COMPOSE_PROFILES=concierge-node).
+      # Blank (the default) turns the route off: every inline app bot turn stays inline.
+      OSHAL_CONCIERGE_NODE_URL: ${OSHAL_CONCIERGE_NODE_URL:-}
       # Maps for the `rides` store package. All three are OPTIONAL and empty by default:
       # the surface's real map is keyless OpenStreetMap over vendored Leaflet, so it works
       # on a fresh clone with no account anywhere. GOOGLE_MAPS_BROWSER_KEY upgrades that
@@ -2419,49 +2423,56 @@ services:
       oshal-api:
         condition: service_healthy
 
-  # ── Scene Studio Director — scene-studio's dedicated node (ADR-093 Tier 2) ──────
-  # The store package's director (117640d5…) as a first-class bot-node. The scene-studio manifest
-  # names this service (`container: scene-studio-bot`), so executeBotOrInline dispatches here and
-  # the caller's resolved brain rides each dispatch (stampRemoteBrain). PROFILE-GATED like
-  # career-bot: inert until the deployment opts in with COMPOSE_PROFILES=scene-studio-node in .env.
-  # With the package installed and the service down, director turns fail visibly (sales-bot's
-  # contract above), never inline.
+  # ── Concierge node — runs installed inline app bots on the operator's CLI login ──────────
+  # An inline app concierge (an installed package's bot registered on oshal-api) can never run the
+  # operator's CLI login on the controller: SEC-05 refuses every controller CLI. With
+  # OSHAL_CONCIERGE_NODE_URL set on oshal-api (http://concierge-bot:5000), the controller routes the
+  # carved demo operator's Antigravity turns for those bots here; every other turn keeps its path.
+  # BOT_NODE_SERVES=inline-app-bots makes this ONE node serve them: a signed dispatch must name the
+  # target bot as its azp, and the node serves only an agent an installed application owns, never a
+  # kernel or static registry identity (bot-node-served-agents.ts). It requires the delegation keys
+  # (OSHAL_DELEGATION_PUBLIC_KEYS) and refuses to start without them. PROFILE-GATED: inert until the
+  # deployment opts in with COMPOSE_PROFILES=concierge-node; down or unhealthy, turns stay inline.
+  # The Scene Studio director folds in here (it is an inline app bot like the rest), which keeps
+  # the bot-node count at 40 and the declared oshal_bot pool at 40 x 3 = 120.
   #
-  # NO SHARED WORKSPACE (CKR-20, reviewed 2026-10-06). This is store-package code with a tool
-  # surface: the oshal-tools MCP bridge, and agy's sandboxed command grant on every bridged turn.
-  # Sharing the read-write workspace would be reversal trigger 2 of the accepted CKR-20 posture,
-  # so the volume is not mounted: agy's per-execution task folders are created in the image's own
-  # /app/workspace-shared (container-local, gone on recreate), and the tools execute in the api.
-  # The persona path names the installed package file; it is not present in this container, so
-  # bot-entrypoint.sh takes its no-persona branch. Pinned by
-  # tests/unit/compose-workspace-mount-posture.spec.ts (WORKSPACE_FREE_BOTS).
+  # NO SHARED WORKSPACE (CKR-20, reviewed 2026-10-06). This node runs package bots' turns, the shape
+  # reversal trigger 2 names if it shares the read-write workspace, so the volume is not mounted:
+  # agy's per-execution task folders are created in the image's own /app/workspace-shared
+  # (container-local, gone on recreate). Pinned by tests/unit/compose-workspace-mount-posture.spec.ts
+  # (WORKSPACE_FREE_BOTS).
   #
   # CREDENTIALS: the Antigravity login only (the .gemini mount every Antigravity node reads). No
   # Codex or Claude session and no config-seed, so a dispatch stamped with a CLI whose login is not
-  # here fails visibly. Code comes from the image, which bakes any-bot/server and
-  # scripts/oshal-tools-mcp.js. Pinned by tests/unit/compose-bot-node-identity.spec.ts.
-  scene-studio-bot:
+  # here fails visibly. No provider literal: the boot pull and each dispatch's stamp choose it.
+  # BOT_PERSONA_FILE names a file that deliberately does NOT exist (the identity guard requires every
+  # node to name one): bot-entrypoint.sh tests -f and takes its no-persona branch, and served bots
+  # carry their own persona when protected. Never add that file: every served bot's agentic turn would
+  # be told it is the concierge. Pinned by tests/unit/compose-bot-node-identity.spec.ts.
+  concierge-bot:
     <<: *bot-common
-    container_name: oshal-local-scene-studio-bot
-    profiles: ["scene-studio-node"]
+    container_name: oshal-local-concierge-bot
+    profiles: ["concierge-node"]
     expose: # internal-only since 2026-07-15 — see security note above x-bot-env
       - "5000"
     environment:
       <<: *bot-env
-      BOT_NAME: scene-studio-director
-      AGENT_ID: 117640d5-e8a6-4a54-b8f4-c6c926172b88
-      BOT_PERSONA_FILE: /app/workspace-shared/deployed-apps/scene-studio/personas/scene-studio-director.yaml
-      AGENT_CAPABILITIES: "godot-scene-authoring,gdscript-authoring,blender-python-modeling,preview-rendering,model-pipeline"
+      BOT_NAME: concierge-host
+      AGENT_ID: d97fe8e7-d2d6-4b18-b8df-f15e15820d79
+      BOT_PERSONA_FILE: /app/ai-lab/bot-personas/concierge-host.yaml
+      AGENT_CAPABILITIES: "inline-app-concierge-host"
+      # The one multi-agent mode (bot-node-served-agents.ts). Any other value refuses to start.
+      BOT_NODE_SERVES: inline-app-bots
+      # The Antigravity wrapper uses this as its idle kill and passes it to agy as --print-timeout,
+      # the CLI's limit on the whole headless turn. A served bot can chain long engine calls (the
+      # Scene Studio director's previews and imports reach nearly 300 s), so the fleet's 10-minute
+      # default is short here; 30 minutes stays inside the controller's 65-minute dispatch timeout.
+      ANTIGRAVITY_INACTIVITY_TIMEOUT_MS: ${CONCIERGE_AGY_TIMEOUT_MS:-1800000}
       # Least-privilege bot DSN (K5): oshal_bot, never the api's runtime role or the superuser.
       DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
-      # The Antigravity wrapper uses this as its idle kill and passes it to agy as --print-timeout,
-      # the CLI's limit on the whole headless turn. A director turn can chain engine calls whose
-      # deadlines reach nearly 300 s (preview, model import), so the fleet's 10-minute default is
-      # short here; 30 minutes stays inside the controller's 65-minute dispatch timeout. Blank = 30 min.
-      ANTIGRAVITY_INACTIVITY_TIMEOUT_MS: ${SCENE_STUDIO_AGY_TIMEOUT_MS:-1800000}
     volumes:
       - *gemini-auth-volume
-      - scene-studio-output:/app/output
+      - concierge-output:/app/output
     depends_on:
       oshal-redis:
         condition: service_healthy
@@ -3235,9 +3246,9 @@ volumes:
   # career-bot (profile `career-node`) — same one-writer rule; declared unconditionally so the
   # profile toggling on never fails on a missing volume.
   career-output:
-  # scene-studio-bot (profile `scene-studio-node`) — same one-writer rule; declared unconditionally
+  # concierge-bot (profile `concierge-node`) — same one-writer rule; declared unconditionally
   # so turning the profile on never fails on a missing volume.
-  scene-studio-output:
+  concierge-output:
   eats-output:
   rides-output:
   shopping-output:

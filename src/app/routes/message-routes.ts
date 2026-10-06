@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Record inline protected conversation lineage and defer stream publication until completion and current owner access are proved.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Diagnose protected empty-thread and inline refusals with ERROR, bounded identifiers, duration and scrubbed stacks while preserving response contracts.
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 protected node bots accept cockpit and rail chat. Every chat client posts agenticMode:true or omits it, and a protected node admits only direct configured reasoning (direct:true, agenticMode:false, one server-resolved brain), so each turn to a protected node bot was refused with authorization_remote_hosted_reasoning_required. nodeChatTurnShape decides the node request shape server-side with the inline branch's exact protection expression (isApplicationExecutionProtected OR isProtectedAgent, the ownership claim BotNodeClient's protected prepare decides from): an interactive turn to a protected bot is non-agentic whatever the body says; machine calls and unprotected bots keep their shape. The node reply the controller persists is now also published on the task stream after protected lineage, both turns and the caller read are proved, so the rail shows it without a reload; the stream route still authorizes every subscriber per event. Guards: tests/unit/protected-node-chat-turn.spec.ts, tests/unit/bot-node-protected-execution.spec.ts.
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Concierge node route. The transport is decided BEFORE ticket intake by resolveBotDispatchRoute (inline-bot-execution seq 22), with the same interactive rule nodeChatTurnShape uses (isInteractiveChatCall, now shared by both), so an inline app bot whose operator turn can run on the concierge node takes the existing node branch - server-side turn shape, ticket intake, persist, re-check, publish - and hands the decided route to executeBotOrInline so it is not recomputed. The inline branch is unchanged except that an unhealthy concierge plus an empty hosted ladder names itself: NoHostedBrainError's detail (concierge_node_unavailable) is included in the 422 body.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -42,7 +43,7 @@ import { requireTrustedServiceUserIdentity } from '@/shared/middleware/trusted-s
 import { requireAiEnabled } from '@/shared/middleware/ai-availability';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
-import { BudgetBlockedError, NoHostedBrainError, assertBotInvocationAdmissible, executeBotOrInline, hostedBrainWire, isExplicitByoTurn, resolveHostedBrainMeta, runInlineTurnWithRecovery, type InlineTurnOptions } from './inline-bot-execution';
+import { BudgetBlockedError, NoHostedBrainError, assertBotInvocationAdmissible, executeBotOrInline, hostedBrainWire, isExplicitByoTurn, resolveBotDispatchRoute, resolveInlineHostedBrain, runInlineTurnWithRecovery, type InlineTurnOptions } from './inline-bot-execution';
 import { ByoFallbackUnavailableError } from './byo-hot-fallback';
 import { BotNodeClient, createRegistryEndpointResolver } from '@/features/agent-management';
 import { persistJarvisTurn } from './jarvis-task-store';
@@ -176,6 +177,19 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
 }
 
 /**
+ * @description Whether this chat call is interactive per-user delegation: the same interactive-vs-swarm
+ * distinction assertSendMessageEntitlement applies (seq 9). Only a bare service-secret call is swarm
+ * dispatch; an independently authenticated user is direct. One rule for the node turn shape and the
+ * concierge route, so the two cannot disagree about who is interactive.
+ * @param req - The inbound request; only its identity and service-secret facts are read.
+ * @returns True for an interactive identity caller.
+ */
+function isInteractiveChatCall(req: Request): boolean {
+  const sessionSub = hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : null;
+  return !isBareServiceMessage(req) && Boolean(sessionSub);
+}
+
+/**
  * @description Decide a node-bound chat turn's request shape on the server. Every chat client posts
  * agenticMode:true or omits it, while a protected node admits only direct configured reasoning
  * (direct:true, agenticMode:false, one server-resolved brain), so an interactive turn to a protected
@@ -194,10 +208,7 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
  */
 async function nodeChatTurnShape(req: Request, agentId: string, requestedAgenticMode: boolean | undefined):
   Promise<{ agenticMode: boolean; direct: boolean }> {
-  const sessionSub = hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : null;
-  // Same interactive-vs-swarm distinction assertSendMessageEntitlement applies (seq 9): only a bare
-  // service call is swarm dispatch; independently authenticated users stay direct.
-  const direct = !isBareServiceMessage(req) && Boolean(sessionSub);
+  const direct = isInteractiveChatCall(req);
   const protectedTarget = direct
     && (await isApplicationExecutionProtected({ kind: 'bots', operation: agentId }) || await isProtectedAgent(agentId));
   return { agenticMode: protectedTarget ? false : requestedAgenticMode ?? true, direct };
@@ -338,7 +349,12 @@ function handleSendMessage(ctx: AppContext) {
       // path below resolves the hosted-ONLY ladder, which is exactly wrong for a node-backed bot:
       // it is how a career chat turn kept landing on an exhausted hosted key while a healthy CLI
       // login sat mounted at the bot's node. Ticket/chat-task bookkeeping is identical to inline.
-      if (botClient.hasEndpoint(resolvedAgentId)) {
+      // The transport, decided once and BEFORE ticket intake: the bot's own node, the concierge node
+      // (an inline app bot on the carved operator's CLI login), or inline. A node route takes the
+      // branch below and the decided route rides into executeBotOrInline so it is not recomputed.
+      const route = await resolveBotDispatchRoute(ctx, botClient, resolvedAgentId,
+        { userSub: callerSub, direct: isInteractiveChatCall(req) });
+      if (route.kind !== 'inline') {
         // Decided before ticket intake, so an ownership read that cannot be determined opens nothing.
         const turnShape = await nodeChatTurnShape(req, resolvedAgentId, agenticMode);
         const nodeContext = await resolveProjectManagerTicketExecutionContext(
@@ -368,7 +384,7 @@ function handleSendMessage(ctx: AppContext) {
           agentId: resolvedAgentId,
           ...turnShape,
           userSub: callerSub,
-        });
+        }, route);
         const executionId = (result as { applicationExecutionId?: string }).applicationExecutionId;
         if (executionId) {
           if (!ctx.applicationAuthorization) throw new Error('protected_result_identity_unavailable');
@@ -413,7 +429,7 @@ function handleSendMessage(ctx: AppContext) {
       // bot declares one, resolve the caller's hosted brain via the SAME shared helper
       // executeBotOrInline uses. Also before ticket creation: a turn with no admissible brain
       // must not open a ticket on its way to being refused (NO_HOSTED_BRAIN → 422 below).
-      const resolvedBrain = await resolveHostedBrainMeta(ctx.pool, resolvedAgentId, callerSub);
+      const resolvedBrain = await resolveInlineHostedBrain(ctx.pool, resolvedAgentId, callerSub, route);
       const resolvedContext = await resolveProjectManagerTicketExecutionContext(
         {
           taskStore: ctx.taskStore,
@@ -514,7 +530,9 @@ function handleSendMessage(ctx: AppContext) {
       // field is the friendly Settings → AI Providers message — the cockpit chat panel renders
       // exactly that field (api-client throwResponseError), never the raw SEC-05 refusal.
       if (error instanceof NoHostedBrainError) {
-        res.status(422).json({ success: false, error: error.message, code: error.code });
+        // `detail` names a known cause beyond the empty ladder (concierge_node_unavailable).
+        res.status(422).json({ success: false, error: error.message, code: error.code,
+          ...(error.detail ? { detail: error.detail } : {}) });
         return;
       }
       // The operator's chosen endpoint exhausted its retry and the hot fallback could not take

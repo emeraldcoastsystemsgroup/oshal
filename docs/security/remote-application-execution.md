@@ -42,6 +42,24 @@ cannot answer its default MCP confirmation; they do not approve another MCP serv
 command. The temporary configuration is removed after the turn. The existing per-bot usage and
 cost path is retained.
 
+A protected turn runs tool-less on the worker's direct path, which supplies only a generic system
+prompt, so the bot's persona travels from the controller. When an application activates, the
+controller reads each declared bot's persona file through the owning manifest (a path outside the
+package is refused) and composes the identity (name and role), the scalar `personality` entries, a
+perspective, and a fixed sentence stating that the persona grants no tool, scope or credential.
+The perspective is `protected_perspective` when the persona declares one; otherwise the ordinary
+`perspective` is used only when it passes a screen for shell, script and credential-carrier
+wording, and is left out (identity and personality still travel) when it does not. Capabilities,
+tool lists, authorizations, runtime, selectors and system prompts are never read. A composed
+persona that names a secret identifier, exceeds 16 KiB, is not valid UTF-8 or contains control
+characters is refused for that bot and is never truncated. `BotNodeClient` adds the text registered
+for the prepared binding's application and bot as `botPersona`; a caller that supplies the field
+is refused with `bot_persona_carrier_reserved`. The worker accepts it only on a signed protected
+direct, non-agentic body, refuses an envelope whose persona differs from the signed body, and files
+it first under `TRUSTED CONFIGURATION` as `[trusted-config source="bot-persona"]`, before the
+untrusted body. It changes no allowed tool or scope: the final authority rebind still decides what
+the model may invoke.
+
 The worker's open-ended agentic loop, provider intents, connector credentials, raw mesh/batch calls
 and Token Chase replay remain refused for protected applications. Call-time application tools are
 the bounded exception: they execute through the controller broker, not the worker's native tool
@@ -50,14 +68,67 @@ demo/operator eligibility checks and final spawn guard; this protocol does not w
 CLI. General queued agentic work does not become supported merely because a ticket has captured
 user provenance.
 
+## Concierge node for inline application bots
+
+An installed application's bot that is registered controller-inline (its manifest names no
+`container:`) runs in the controller orchestrator, and the controller never runs a CLI (SEC-05). The
+deployment operator's Antigravity login therefore cannot answer for those bots inline. Their turns
+can instead run on one bot node, the concierge node: compose service `concierge-bot` (profile
+`concierge-node`), started with `BOT_NODE_SERVES=inline-app-bots`.
+
+**Who routes.** `resolveBotDispatchRoute` decides each turn's transport once, for
+`executeBotOrInline` and for `POST /api/send-message` (before ticket intake). A bot with its own node
+keeps it. Otherwise a turn goes to the concierge node only when all of these hold: the turn is
+interactive (`direct: true`) and the caller is covered by the ADR-127 carve (`DEMO_MODE` and an exact
+`OSHAL_OPERATOR_SUBS` entry); the caller chose no BYO connection, provider, credentials or provider
+intent; `OSHAL_CONCIERGE_NODE_URL` is set on `oshal-api` and the target is an inline application bot
+(the governing registry definition is an installed package's controller-inline bot, not a static
+entry, not a kernel identity and not `requiresOwnNode`); the bot's harness needs a brain; the caller's
+resolved brain is `antigravity-cli`; and `GET <url>/api/health` answers 2xx within 2 seconds (the
+answer is cached for 15 seconds). Every other turn keeps its existing path, and a blank URL turns the
+route off. When the node is unhealthy the turn stays inline; if the hosted ladder is then empty, the
+422 `NO_HOSTED_BRAIN` body carries `detail: "concierge_node_unavailable"`. A concierge turn is sent
+like a dedicated-node turn: the resolved brain is stamped as the authoritative provider, a protected
+bot's turn is non-agentic and carries the signed `botPersona`, and its cost task is the served bot's.
+
+**Node identity rule.** The signed delegation names the served bot as `azp`, never the concierge. On a
+node started with `BOT_NODE_SERVES=inline-app-bots`, the delegation target is the body's `agentId`
+(missing: `403 target_agent_mismatch`) and the token must name it (otherwise `401`). After the
+signature verifies, and before the nonce is consumed, the node must serve the target: its own agent,
+or an agent that an installed application durably owns (`oshal_application_execution_claims`), never
+a kernel identity or a static registry entry. A refusal is `403 target_agent_not_served` and leaves
+the nonce unspent; a failed ownership read refuses with `503`. A multi-agent node without delegation
+verification keys, or with any other `BOT_NODE_SERVES` value, refuses to start. The protected
+boundary requires `azp` to equal the envelope target and the target to be served. Dedicated nodes are
+unchanged and admit only their own agent. On the concierge a served bot's turn refuses connector
+credentials and provider intents, and an unprotected turn gets an agent-scoped task, so two bots on
+one workspace never share history.
+
+**Limits.**
+
+- An unprotected application bot gets reasoning only on the concierge node. Its interactive turn
+  runs host-tools-only and the node has no package tools, so application tools are not available,
+  and it carries no bot persona (the persona carrier rides only on signed protected dispatch). Under
+  the enforce authorization mode every installed application's bots are protected, so this applies
+  only where a bot is unprotected.
+- `protected_perspective` is an author-trusted override, reviewed in the package's own PR: it skips
+  the perspective screen. The secret, size, UTF-8 and control-character refusals still apply to
+  the whole composed persona.
+- Queued manifest-worker dispatch is not routed to the concierge node yet (phase 2). Queued work for
+  an inline application bot keeps its existing path.
+- Route-backed tools still answer 401 when called from the node, until they are converted to package
+  tools.
+
 ## Controller and worker protocol
 
 1. The controller refreshes the initiating account and current application rights. It captures
    installed source/catalog/generation, exact principal, tenant, bot, task, workspace, original
    directory freshness and effective grant bounds in a durable execution record.
-2. It includes only the opaque `applicationExecutionId` in the existing Ed25519 delegated request.
-   It durably binds the complete body digest and recorded delegation claims before sending.
-   Prompts, provider keys and raw delegation tokens are not persisted in the authority record.
+2. It includes the opaque `applicationExecutionId` in the existing Ed25519 delegated request and,
+   when the owning application registered a persona for the bot, the controller-composed
+   `botPersona`, both before signing, so the body digest covers them. It durably binds the complete
+   body digest and recorded delegation claims before sending. Prompts (the persona included),
+   provider keys and raw delegation tokens are not persisted in the authority record.
 3. The worker verifies machine authentication, signature, exact request bindings and the existing
    single-use delegation nonce. Trusted async context carries this proof outside the body.
 4. The worker asks the fixed controller endpoint
