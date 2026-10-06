@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (D2, step B5-4): the swarm logins screen, served at /swarm-admin/logins to
+    | the operator role only. One card per vendor login the swarm uses for everyone without their own
+    | (Claude Code, OpenAI Codex, Gemini, Antigravity): connected or not, when it expires, import a
+    | login file pushed from a computer, sign in here for Claude, sign out with a confirm. Status
+    | comes from GET /api/admin/swarm-logins, which never carries an account identity or a token;
+    | actions use the vendors' own routes. A person's own accounts stay in their own screens.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Swarm logins</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/logins/logins.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the swarm logins…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Swarm logins</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-key"></span>
+      <h1>Swarm logins</h1>
+    </div>
+    <p class="sa-lead">
+      The vendor logins the swarm's bots use for everyone who has no login of their own. Sign in with a vendor on
+      a computer, then push or import the login file here; a person's own AI accounts stay in their own screens
+      and are never shown here.
+    </p>
+    <p id="adoptionNote" class="sa-note-line" hidden></p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="loginsHeading">
+      <h2 id="loginsHeading">Logins</h2>
+      <div id="loginCards" class="sl-cards"></div>
+    </section>
+  </main>
+
+  <template id="loginCardTemplate">
+    <article class="sl-card surface-card">
+      <header class="sl-card-head">
+        <h3 class="sl-title"></h3>
+        <span class="sl-state" data-state="unknown"></span>
+      </header>
+      <p class="sl-detail"></p>
+      <p class="sl-expiry"></p>
+      <div class="sl-actions"></div>
+      <div class="sl-import" hidden>
+        <p class="sl-help">Choose the login file the vendor's CLI saved on your computer, or paste its contents.</p>
+        <input class="sl-file" type="file" accept="application/json,.json" />
+        <textarea class="sl-paste" rows="3" placeholder="…or paste the login file's contents"></textarea>
+        <div class="sl-actions">
+          <button type="button" class="sl-import-send">Import login</button>
+          <button type="button" class="sl-import-cancel">Cancel</button>
+        </div>
+      </div>
+      <div class="sl-signin" hidden>
+        <p class="sl-help">Open the sign-in link, finish signing in, then paste the code it gives you.</p>
+        <p><a class="sl-signin-link" target="_blank" rel="noopener">Open the Claude sign-in</a></p>
+        <input class="sl-code" type="text" placeholder="Paste the code here" autocomplete="off" />
+        <div class="sl-actions">
+          <button type="button" class="sl-code-send">Finish sign-in</button>
+          <button type="button" class="sl-signin-cancel">Cancel</button>
+        </div>
+      </div>
+      <p class="sl-message" role="status"></p>
+    </article>
+  </template>
+
+  <script type="module" src="/swarm-admin/logins/logins.js"></script>
+</body>
+</html>

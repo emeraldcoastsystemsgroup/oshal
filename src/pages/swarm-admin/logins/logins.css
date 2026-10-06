@@ -1,0 +1,123 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-4): the swarm logins screen's own styles on top of the Swarm
+    | Admin home's: the sticky status banner, the login cards with a connected/expired/absent state
+    | from the theme's --status-* tokens, the import and sign-in panels, and controls that fit a
+    | phone. Loaded before surface-glass.css, as the glass spec requires of a page with local styles.
+*/
+
+.sa-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0.6rem 1.5rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.sa-status[data-tone="error"] {
+  opacity: 1;
+  color: var(--status-error);
+}
+
+.sa-status[data-tone="success"] {
+  opacity: 1;
+  color: var(--status-success);
+}
+
+.sa-lead {
+  margin-bottom: 0.75rem;
+}
+
+.sa-note-line {
+  margin: 0;
+  color: var(--status-warning, var(--text-primary));
+}
+
+.sl-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+
+.sl-card {
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sl-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sl-card-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.sl-state {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.sl-state[data-state="connected"] { color: var(--status-success); }
+.sl-state[data-state="expired"] { color: var(--status-error); }
+.sl-state[data-state="absent"] { opacity: 0.7; }
+
+.sl-detail,
+.sl-expiry,
+.sl-help,
+.sl-message {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.sl-message[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sl-message[data-tone="success"] { opacity: 1; color: var(--status-success); }
+
+.sl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sl-import,
+.sl-signin {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* The author display rule above would otherwise beat the user agent's [hidden] rule. */
+.sl-import[hidden],
+.sl-signin[hidden],
+.sl-signin-link[hidden] {
+  display: none;
+}
+
+.sl-paste,
+.sl-code,
+.sl-file {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.sl-signin-link {
+  color: var(--accent-primary);
+}
