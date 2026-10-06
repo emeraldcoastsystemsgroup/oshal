@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow a fixture to expose a direct configured provider plus the bot-node reconciliation seam, so the provider-stamped protected shape can be exercised without contacting a vendor.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Exercise the production provider-authority HTTP parser/forwarder so fallbackOrder transport and malformed-chain refusal are covered end to end, recording the parsed authority so an explicit empty chain can be distinguished from omission.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Forward the trusted prompt carrier (app, capability, pattern, renderInstruction, botPersona) through the production parseBotNodePromptCarrier, with its TypeError refusal becoming the production 400 invalid_execution_scope; record each authorized request body and its delegation token so a spec can prove what the real client signed; accept an optional `llm` override for the recorded provider's answer; and allow a spec to alter the envelope payload after verification (mutateEnvelope) so the protected boundary's signed-body binding is exercised over real HTTP.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Optional concierge shape: `localAgentId` runs the worker under a node identity other than the dispatch target, and `servedAgents` hands the delegation gate, the protected boundary and the handler (multiAgentNode) a served-agent policy, so a multi-agent node serving a protected application bot is exercised over the same real HTTP, permit and SQLite path. Omitted, the worker is the dedicated REMOTE_AGENT node exactly as before.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -32,6 +33,7 @@ import {
 } from '@/app/bot-node-provider-authority';
 import { createBotControllerPermitCheck } from '@/app/bot-node-controller-permit';
 import { createBotNodeExecutionHandler } from '@/app/bot-node-execution-handler';
+import type { ServedAgentPolicy } from '@/app/bot-node-served-agents';
 import { parseBotNodePromptCarrier } from '@/app/bot-node-request-scope';
 import { buildBotNodeHttpResponse } from '@/app/bot-node-http-response';
 import type { MeshEnvelope } from '@/features/agent-management';
@@ -199,9 +201,10 @@ function workerRouter(
   env: NodeJS.ProcessEnv,
   handler: ReturnType<typeof createBotNodeExecutionHandler>,
   state: RemoteFixtureState,
+  node: { localAgentId: string; servedAgents?: ServedAgentPolicy } = { localAgentId: REMOTE_AGENT },
 ) {
   const used = new Set<string>();
-  const delegation = createBotNodeDelegationRuntime({ localAgentId: REMOTE_AGENT, env, replayStore: {
+  const delegation = createBotNodeDelegationRuntime({ localAgentId: node.localAgentId, env, servedAgents: node.servedAgents, replayStore: {
     consume: async ({ issuer, jti }) => { const key = `${issuer}:${jti}`; if (used.has(key)) return false; used.add(key); return true; },
   } });
   const app = express(); app.use(express.json());
@@ -251,6 +254,10 @@ export async function startProtectedWorkerFixture(
       getActiveProvider(): { provider: string; model: string; apiProvider?: string | null };
       setActiveProvider(provider: string, model?: string): { provider: string; model: string; apiProvider?: string | null };
     };
+    /** The worker's own identity when it is not the dispatch target (a concierge node). */
+    localAgentId?: string;
+    /** A multi-agent node's served-agent policy; omitted for the dedicated REMOTE_AGENT node. */
+    servedAgents?: ServedAgentPolicy;
   } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'oshal-remote-worker-'));
@@ -266,13 +273,16 @@ export async function startProtectedWorkerFixture(
     await state.duringOwnership?.();
     return { rows: state.owner ? [{ app: state.owner, protected: true }] : [] };
   } } as unknown as Pick<Pool, 'query'>;
-  const handler = createBotNodeExecutionHandler({ runtimeAgentId: REMOTE_AGENT, anyBotTaskController: sqlite.controller,
+  const localAgentId = options.localAgentId ?? REMOTE_AGENT;
+  const handler = createBotNodeExecutionHandler({ runtimeAgentId: localAgentId, anyBotTaskController: sqlite.controller,
+    ...(options.servedAgents?.multiAgent ? { multiAgentNode: true } : {}),
     providerName: options.directProvider?.provider ?? 'claude-code', modelName: options.directProvider?.model ?? 'unused-cli',
     dispatchConfigRuntime: options.dispatchConfigRuntime,
     resolveBrokeredPromptAuthorization: async () => ({ allowedTools: options.brokeredTools ?? [],
       scopes: (options.brokeredTools ?? []).map(name => `tool:${name}`) }),
-    runApplicationExecution: createProtectedBotExecutionBoundary(pool, REMOTE_AGENT, createBotControllerPermitCheck({ env })) });
-  const workerHttp = await listen(workerRouter(env, handler, state));
+    runApplicationExecution: createProtectedBotExecutionBoundary(pool, localAgentId, createBotControllerPermitCheck({ env }),
+      options.servedAgents) });
+  const workerHttp = await listen(workerRouter(env, handler, state, { localAgentId, servedAgents: options.servedAgents }));
   const issue = (overrides: Record<string, unknown> = {}) => {
     const body = { agentId: REMOTE_AGENT, taskId: 'fixture-task', workspaceFolderId: 'fixture-workspace', userSub: REMOTE_SUB,
       principalIssuer: REMOTE_ISSUER, text: 'Summarize authorized context.', direct: true, agenticMode: false,

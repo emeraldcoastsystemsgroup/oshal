@@ -39,6 +39,7 @@
  * 34 | maintainer@emeraldcoastsystemsgroup.com | SEC-05 carve for image turns, server-authored instruction only (operator decision 2026-10-02 b; ADR-130 amendment). The live render of 2026-10-02 19:00 was refused by the model: the only text naming generate_image sat inside the data-only UNTRUSTED_CONTENT record, under an authority rebind of ["attempt_completion"], so the model read the render as an injection and never called the tool (the same text rendered in a repro after three turns of deliberation: variance, not a rule). On an image turn the render instruction now arrives in its own carrier (payload.renderInstruction, written by the storyboard providers in the api process and validated at the HTTP boundary), is placed under TRUSTED CONFIGURATION as [trusted-config source="image-render-instruction"], and the harness's own image tool (anyBotImageTurnToolFor: generate_image on antigravity-cli) joins attempt_completion in that turn's allowed_tools and authorized_scopes. The brief, the one user-originated field, still travels as payload.text and stays inside the UNTRUSTED record; the instruction tells the model to read it from there as data. An image turn without the carrier is refused before any task exists, and no other turn reads either field. Guard: tests/unit/image-turn-prompt-framing.spec.ts.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Where a failed execution leaves the node, an error's untrusted diagnostic (error.diagnostic: an Antigravity image-turn refusal's image-tool error and model reply) is re-attached to the error text behind ANY_BOT_IMAGE_TURN_DIAGNOSTIC_MARKER. AntigravityProvider keeps it off the error's message and stderr so the node's provider failover never classifies tool or model text (verifier finding on core PR #1031: a throttle word in either sent the render to the fallback rung); the api's render provider splits it off again for its own callers. Every other failure's text is unchanged.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Protected bot-persona carrier. A protected direct turn reaches the any-bot direct path tool-less, and that path sends only a generic system prompt, so a node-hosted package bot (the Scene Studio director) answered without its identity or voice. readProtectedBotPersona reads the controller-composed payload.botPersona on a protected execution only (signed into the body, checked against it by the protected boundary): an unprotected execution that carries one is WARNed and ignored, a protected one without it is INFO and runs without, and a present non-string or blank value throws before any task exists. The persona is filed FIRST under TRUSTED CONFIGURATION as [trusted-config source="bot-persona"], before the image instruction and the skill profile, still before the untrusted body and the final authority rebind; it changes no allowed_tools or scopes. The prompt-assembly comment no longer claims the provider loads the persona on a direct turn: only the any-bot agentic loop prefixes BOT_PERSONA_FILE, and a non-agentic, tool-less or BYO turn takes the direct path.
+ * 37 | maintainer@emeraldcoastsystemsgroup.com | Multi-agent (concierge) nodes: the multiAgentNode dep marks an execution FOREIGN when its target is not the node's own runtime agent. A foreign execution refuses a credential carrier or a provider intent before any task exists (connector operations stay on the owning bot's dedicated node), and an unprotected foreign execution uses an agent-scoped any-bot task, canonicalBotWorkspaceId(`${workspaceFolderId}--${agentId}`), so two app bots served on the same workspace never share one task's history or owner stamp. The cost task id (`${workspaceFolderId}::${agentId}`) is unchanged, so the controller's cost settlement still finds it; a protected execution keeps its one-execution protected workspace. Dedicated nodes never set the dep, so nothing changes for them.
  */
 
 /**
@@ -240,6 +241,8 @@ let activeExecutions = 0;
 export interface BotNodeExecutionDeps {
   /** Actual executing bot from runtime composition; absent stays unbound, never inferred from a request. */
   runtimeAgentId?: string;
+  /** True on a node that serves more than its own agent (BOT_NODE_SERVES); dedicated nodes leave it unset. */
+  multiAgentNode?: boolean;
   /** Trusted runtime wrapper; raw payloads cannot install protected execution authority. */
   runApplicationExecution?: (envelope: MeshEnvelope, operation: () => Promise<EnvelopeExecutionResult>) => Promise<EnvelopeExecutionResult>;
   /** Runtime-owned guard over local and requested bot identities, shared by HTTP/mesh/batch. */
@@ -318,6 +321,8 @@ export function createBotNodeExecutionHandler(
     const verbatimPrompt = direct || imageTurn;
     const agenticMode = payload?.agenticMode !== undefined ? Boolean(payload.agenticMode) : true;
     const runtimeAgentId = normalizeRuntimeIdentity(deps.runtimeAgentId, 256);
+    // A served agent on a multi-agent node: not this node's own identity, so it gets its own task.
+    const foreign = Boolean(deps.multiAgentNode && runtimeAgentId && agentId !== runtimeAgentId);
     // Exact authenticated owner identity. This binds memory, workspaces, and audited
     // server operations; it is not authority to place connector secrets in a CLI.
     const userSub = normalizeBotNodeUserSub(payload?.userSub);
@@ -379,6 +384,9 @@ export function createBotNodeExecutionHandler(
       const renderInstruction = imageTurn ? readImageTurnInstruction(payload) : null;
       // The controller-signed persona of a protected direct turn; refused here, before any task, if malformed.
       const botPersona = readProtectedBotPersona(payload, Boolean(protectedExecution), agentId);
+      if (foreign && (hasCredentialCarrier || hasProviderIntent)) {
+        throw new Error('A served agent on a multi-agent node accepts no connector credentials or provider intent');
+      }
       if (hasProviderIntent && !providerIntent) throw new Error('Invalid trusted provider intent');
       if (hasCredentialCarrier && !providerIntent) {
         throw new Error('Connector credentials require a validated deterministic provider intent');
@@ -561,7 +569,10 @@ export function createBotNodeExecutionHandler(
       // /api/llm-governance/check), so it covers EVERY any-bot LLM path (this
       // handler, the AgenticController loop, and the app.js one-shot ticket path)
       // at one chokepoint — and gating here too would double-count quota.
-      const effectiveTaskId = workspaceFolderId;
+      // A served agent's unprotected turn gets an agent-scoped task, so two app bots on one workspace
+      // never share history or an owner stamp. Protected work already has a one-execution workspace.
+      const effectiveTaskId = foreign && !protectedExecution
+        ? canonicalBotWorkspaceId(`${workspaceFolderId}--${agentId}`) : workspaceFolderId;
       let task: { id: string };
       try {
         await protectedExecution?.check();

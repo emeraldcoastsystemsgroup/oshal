@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the already-verified original dispatch token in the runtime-only protected context for controller-revalidated, per-call application tools.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind the validated fallbackOrder into protected provider authority and the signed-body/envelope continuity digest so an HTTP hop cannot omit or rewrite a configured fallback chain.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Bind the controller-composed botPersona across the signed body and the envelope: a protected execution whose envelope persona differs from the signed one (added, dropped or rewritten after verification) is refused as authorization_remote_envelope_mismatch.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Concierge (multi-agent) nodes. A protected execution now requires the signed azp to name the envelope's target AND the target to be this node's own agent or one the node's served-agent policy serves; a dedicated node passes no policy, so it still admits only its own agent exactly as before.
  */
 import type { Pool } from 'pg';
 import type { MeshEnvelope } from '@/features/agent-management';
@@ -18,6 +19,7 @@ import { createBotControllerPermitCheck } from './bot-node-controller-permit';
 import { getVerifiedRemoteDispatch, runWithProtectedBotExecution, type VerifiedRemoteDispatch } from './bot-node-protected-context';
 import { protectedBotWorkspaceId } from './bot-node-protected-workspace';
 import { canonicalBotWorkspaceId } from './bot-node-request-scope';
+import type { ServedAgentPolicy } from './bot-node-served-agents';
 
 type PermitCheck = ReturnType<typeof createBotControllerPermitCheck>;
 type Execute = () => Promise<EnvelopeExecutionResult>;
@@ -28,9 +30,11 @@ function deny(code: string): never { throw new BotApplicationAuthorizationError(
  * @param pool - Worker database pool used only for trusted ownership lookup.
  * @param localAgentId - Actual worker runtime identity.
  * @param checkPermit - Fixed controller check, injectable only by trusted composition or isolated fixtures.
+ * @param served - A multi-agent node's served-agent policy; a dedicated node passes none and admits only itself.
  * @returns The boundary shared by raw handler, HTTP, mesh and batch execution.
  */
-export function createProtectedBotExecutionBoundary(pool: Pick<Pool, 'query'> | null, localAgentId: string, checkPermit?: PermitCheck) {
+export function createProtectedBotExecutionBoundary(pool: Pick<Pool, 'query'> | null, localAgentId: string, checkPermit?: PermitCheck,
+  served?: ServedAgentPolicy) {
   let check = checkPermit;
   return async (envelope: MeshEnvelope, execute: Execute): Promise<EnvelopeExecutionResult> => {
     const app = await readProtectedBotApplication(pool, localAgentId, envelope.toAgentId);
@@ -39,7 +43,9 @@ export function createProtectedBotExecutionBoundary(pool: Pick<Pool, 'query'> | 
       if (dispatch) deny('authorization_remote_ownership_changed');
       return execute();
     }
-    if (!dispatch || dispatch.claims.azp !== localAgentId || envelope.toAgentId !== localAgentId) deny('authorization_remote_dispatch_required');
+    const target = envelope.toAgentId;
+    if (!dispatch || dispatch.claims.azp !== target
+      || !(target === localAgentId || await served?.serves(target))) deny('authorization_remote_dispatch_required');
     assertConfiguredReasoningRequest(dispatch, envelope);
     check ??= createBotControllerPermitCheck();
     return executeProtected(app, dispatch, execute, check, async () => {

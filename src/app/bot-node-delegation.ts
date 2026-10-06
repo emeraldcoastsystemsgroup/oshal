@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Verify the signed canonical request-body digest before replay consumption so one valid token cannot be raced with mutated execution fields.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Bind the signed delegation to the exact UTF-8 user subject, including significant whitespace, while rejecting controls and values over 512 bytes.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Require the token's exact POST /api/swarm-execute method/path metadata before replay consumption.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Multi-agent (concierge) nodes. With a served-agent policy whose multiAgent is true, the target is the body's agentId instead of the local agent, the token must carry azp = that target, and after the signature verifies the policy must serve the target (403 target_agent_not_served) BEFORE the nonce is consumed, so no database read happens before authentication and a refused dispatch leaves its jti unspent. A missing or non-string agentId is 403 target_agent_mismatch. A multi-agent node without delegation keys refuses to start: without a signed azp any caller holding the machine secret could name any agent. Dedicated nodes are unchanged.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
@@ -42,6 +43,7 @@ import {
   DelegationRequestBindingError,
   delegationRequestBodySha256,
 } from '@/shared/security/delegation-request-binding';
+import type { ServedAgentPolicy } from './bot-node-served-agents';
 
 const logger = createChildLogger({ module: 'bot-node-delegation' });
 const MAX_REPLAY_CLOCK_SKEW_SECONDS = 300;
@@ -63,6 +65,8 @@ export interface BotNodeDelegationOptions {
   verifier?: DelegationTokenVerifier;
   /** Injected atomic replay ledger so tests never require Redis. */
   replayStore?: DelegationReplayStore;
+  /** Which agents this node executes for; absent (or not multiAgent) means the local agent only. */
+  servedAgents?: ServedAgentPolicy;
 }
 
 /** @description Bot-node delegation posture and middleware assembled once at startup. */
@@ -89,15 +93,21 @@ export function createBotNodeDelegationRuntime(
   const enforcementEnabled = options.verifier !== undefined
     || hasDelegationVerificationConfiguration(env);
   if (enforcementEnabled) requireMachineCredential(env);
+  const servedAgents = options.servedAgents?.multiAgent === true ? options.servedAgents : null;
+  if (servedAgents && !enforcementEnabled) {
+    throw new DelegationHttpPolicyError(
+      'A multi-agent bot node (BOT_NODE_SERVES) requires delegation verification keys (OSHAL_DELEGATION_PUBLIC_KEYS)',
+    );
+  }
   const verifier = enforcementEnabled
     ? options.verifier ?? createDelegationTokenVerifier({ env })
     : null;
   const replayStore = enforcementEnabled
     ? options.replayStore ?? new RedisDelegationReplayStore({ redisUrl: options.redisUrl })
     : null;
-  const policy = enforcementEnabled ? buildPolicy(env, localAgentId) : null;
+  const policy = enforcementEnabled ? buildPolicy(env) : null;
   const authorize = createDelegationAuthorization({
-    enforcementEnabled, localAgentId, verifier, replayStore, policy,
+    enforcementEnabled, localAgentId, verifier, replayStore, policy, servedAgents,
   });
   logDelegationPosture(enforcementEnabled);
   return Object.freeze({
@@ -154,19 +164,25 @@ export function assertDelegationBatchRuntimeAllowed(
   }
 }
 
+/** The signed expectations fixed at startup; the subject, issuer, task, body and target come per request. */
+type DelegationPolicy = Omit<DelegationTokenExpectations, 'sub' | 'principal_iss' | 'task_id' | 'body_sha256' | 'azp'>;
+
 interface AuthorizationState {
   enforcementEnabled: boolean;
   localAgentId: string;
   verifier: DelegationTokenVerifier | null;
   replayStore: DelegationReplayStore | null;
-  policy: Omit<DelegationTokenExpectations, 'sub' | 'principal_iss' | 'task_id' | 'body_sha256'> | null;
+  policy: DelegationPolicy | null;
+  /** Present only on a multi-agent node; a dedicated node targets its local agent alone. */
+  servedAgents: ServedAgentPolicy | null;
 }
 
 function createDelegationAuthorization(state: AuthorizationState): RequestHandler {
   return async (req, res, next): Promise<void> => {
     const startedAt = Date.now();
     const body = readBody(req);
-    if (bodyAgentMismatches(body, state.localAgentId, state.enforcementEnabled)) {
+    const target = requestTarget(body, state);
+    if (target === null) {
       reject(res, 403, 'target_agent_mismatch', startedAt);
       return;
     }
@@ -176,15 +192,30 @@ function createDelegationAuthorization(state: AuthorizationState): RequestHandle
       else next();
       return;
     }
-    await verifyAndConsume(req, res, next, body, token, state, startedAt);
+    await verifyAndConsume(req, res, next, { body, target }, token, state, startedAt);
   };
+}
+
+/**
+ * @description The agent this request executes for. A dedicated node: its local agent, with the body's
+ * agentId required to match it (under enforcement) exactly as before. A multi-agent node: the body's
+ * agentId, which the signed azp must then name; a missing or non-string one is refused.
+ * @param body - The parsed request body.
+ * @param state - The node's authorization state.
+ * @returns The target agent, or null for a mismatch.
+ */
+function requestTarget(body: Record<string, unknown>, state: AuthorizationState): string | null {
+  if (!state.servedAgents) {
+    return bodyAgentMismatches(body, state.localAgentId, state.enforcementEnabled) ? null : state.localAgentId;
+  }
+  return typeof body.agentId === 'string' && body.agentId.length > 0 ? body.agentId : null;
 }
 
 async function verifyAndConsume(
   _req: Request,
   res: Response,
   next: () => void,
-  body: Record<string, unknown>,
+  request: { body: Record<string, unknown>; target: string },
   token: string | null | undefined,
   state: AuthorizationState,
   startedAt: number,
@@ -194,8 +225,14 @@ async function verifyAndConsume(
     return;
   }
   try {
-    const expected = expectedBindings(body, state.policy);
+    const expected = expectedBindings(request.body, state.policy, request.target);
     const claims = state.verifier.verify(token, expected);
+    // Authenticated first, so no ownership read happens for an unsigned or mis-signed request; refused
+    // before the nonce is spent, so a target this node does not serve leaves the token unconsumed.
+    if (state.servedAgents && !(await state.servedAgents.serves(request.target))) {
+      reject(res, 403, 'target_agent_not_served', startedAt);
+      return;
+    }
     const accepted = await state.replayStore.consume({
       issuer: claims.iss,
       jti: claims.jti,
@@ -215,10 +252,12 @@ async function verifyAndConsume(
 
 function expectedBindings(
   body: Record<string, unknown>,
-  policy: Omit<DelegationTokenExpectations, 'sub' | 'principal_iss' | 'task_id' | 'body_sha256'>,
+  policy: DelegationPolicy,
+  target: string,
 ): DelegationTokenExpectations {
   return {
     ...policy,
+    azp: target,
     task_id: requireBodyText(body.taskId, 'taskId', 256),
     body_sha256: delegationRequestBodySha256(body),
     sub: requireBodyUserSub(body.userSub),
@@ -226,14 +265,10 @@ function expectedBindings(
   };
 }
 
-function buildPolicy(
-  env: DelegationEnvironment,
-  localAgentId: string,
-): Omit<DelegationTokenExpectations, 'sub' | 'principal_iss' | 'task_id' | 'body_sha256'> {
+function buildPolicy(env: DelegationEnvironment): DelegationPolicy {
   return Object.freeze({
     iss: delegationIssuerFromEnvironment(env),
     aud: delegationAudienceFromEnvironment(env),
-    azp: localAgentId,
     method: SWARM_EXECUTE_DELEGATION_METHOD,
     path: SWARM_EXECUTE_DELEGATION_PATH,
     scope: SWARM_EXECUTE_DELEGATION_SCOPE,

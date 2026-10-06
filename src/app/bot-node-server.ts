@@ -39,6 +39,7 @@
  * 34 | maintainer@emeraldcoastsystemsgroup.com | Document the renderInstruction carrier field on the swarm-execute body (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02). It is validated and forwarded by parseBotNodePromptCarrier like app/capability/pattern, so the existing promptCarrier spread places it in the envelope; the handler files it under TRUSTED CONFIGURATION on an image turn only. The brief remains body.text.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Mount extracted caller-bound Token Chase replay cost route.
  * 36 | maintainer@emeraldcoastsystemsgroup.com | Document the botPersona carrier field on the swarm-execute body: the controller-composed persona of the target bot, signed into a protected direct dispatch only. parseBotNodePromptCarrier validates it (refused on any other shape) and the existing promptCarrier spread places it in the envelope, where the protected boundary checks it against the signed body and the handler files it first under TRUSTED CONFIGURATION.
+ * 37 | maintainer@emeraldcoastsystemsgroup.com | Hand the runtime's served-agent policy to the delegation gate, so a concierge node (BOT_NODE_SERVES=inline-app-bots) verifies azp against the body's target and refuses an agent it does not serve before the nonce is consumed. A dedicated node's policy serves only itself, so its gate is unchanged.
  */
 
 /**
@@ -157,7 +158,7 @@ async function start(): Promise<void> {
 
   // ── Redis mesh transport ────────────────────────────────────────
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-  const delegationRuntime = createBotNodeDelegationRuntime({ localAgentId: agentId, redisUrl });
+  const delegationRuntime = createBotNodeDelegationRuntime({ localAgentId: agentId, redisUrl, servedAgents: runtime.servedAgents });
 
   const meshTransport = new RedisMeshTransport({ redisUrl });
 

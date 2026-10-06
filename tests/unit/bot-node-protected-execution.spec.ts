@@ -11,12 +11,18 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Follow the moved code. Token Chase replay left bot-node-server.ts for bot-node-token-chase-replay-route.ts (4b4a7f50), so slicing the server at its app.post found nothing (-1). The guard now reads the module itself. Inside the route, the protected-transport refusal precedes executeReplay. The module's only provider call sits inside executeReplay, above the route, so the model is reachable only after that refusal. The server registers the route behind authorizeBotNodeCall. No comparison can fall back to -1.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Verify the provider call is structurally inside executeReplay so an adjacent or top-level call cannot satisfy the replay transport regression.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Real-worker companion for protected node chat turns (message-routes seq 27). stampRemoteBrain's CLI branch and the queued CLI path send exactly providerId, model and providerConfigRequired:true, with no configVersion and no fallbackOrder, and nothing pinned that key set at the protected worker. The new case signs that exact stamp and requires 200, permits start through complete, and exactly that recorded provider authority. tests/unit/protected-node-chat-turn.spec.ts doubles this worker with a stub node; this case is its real boundary.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Concierge node cases. N7: a multi-agent worker (its own identity differs from the target) serving a protected application bot admits the signed dispatch whose azp names that bot, runs it under the permit protocol on the one-execution protected workspace, and asks its policy at both the gate and the boundary. N7b: a served answer withdrawn between the gate and the boundary is refused before any permit, task or provider call. N7c: the boundary itself refuses a verified dispatch whose azp names a different agent than the envelope target. N7d: a dedicated worker still refuses a dispatch addressed to another agent at the gate. The production-wiring pin follows the runtime's new boundary call, which passes the served policy only on a multi-agent node.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import type { Request, Response } from 'express';
 import ts from 'typescript';
 import { startProtectedWorkerFixture, remoteEnvelope, REMOTE_AGENT, REMOTE_APP, REMOTE_ISSUER, REMOTE_SUB } from '../fixtures/bot-node-protected-execution';
 import { protectedBotWorkspaceId } from '@/app/bot-node-protected-workspace';
+import { createProtectedBotExecutionBoundary } from '@/app/bot-node-protected-execution';
+import { createProtectedBotDispatchContext } from '@/app/bot-node-protected-context';
+import { delegationRequestBodySha256 } from '@/shared/security/delegation-request-binding';
 
 let fixture: Awaited<ReturnType<typeof startProtectedWorkerFixture>>;
 beforeEach(async () => { fixture = await startProtectedWorkerFixture(); });
@@ -308,6 +314,83 @@ describe('protected permit races', () => {
   });
 });
 
+describe('a concierge node serving a protected application bot', () => {
+  const CONCIERGE_AGENT = 'concierge-host-fixture';
+
+  async function startConcierge(serves: (agentId: string) => Promise<boolean>): Promise<void> {
+    await fixture.close();
+    fixture = await startProtectedWorkerFixture(undefined, { localAgentId: CONCIERGE_AGENT, servedAgents: { multiAgent: true, serves } });
+  }
+
+  it('N7: admits the dispatch whose signed azp names the served bot, under the permit protocol on its protected workspace', async () => {
+    const serves = vi.fn(async (agentId: string) => agentId === REMOTE_AGENT);
+    await startConcierge(serves);
+    const request = fixture.issue();
+
+    const response = await fixture.post(request);
+
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({ success: true, applicationExecutionId: request.body.applicationExecutionId });
+    expect(fixture.state.phases[0]).toBe('start');
+    expect(fixture.state.phases.at(-1)).toBe('complete');
+    // Asked at the delegation gate and again at the protected boundary.
+    expect(serves.mock.calls).toEqual([[REMOTE_AGENT], [REMOTE_AGENT]]);
+    expect(fixture.state.calls).toHaveLength(1);
+    expect(fixture.store.listTasks()).toHaveLength(1);
+    expect(fixture.store.listTasks()[0].id).toMatch(/^protected-[a-f0-9]{64}$/);
+  });
+
+  it('N7b: a served answer withdrawn between the gate and the boundary is refused before any permit, task or provider call', async () => {
+    const serves = vi.fn(async () => false).mockResolvedValueOnce(true);
+    await startConcierge(serves);
+
+    const response = await fixture.post(fixture.issue());
+
+    expect(response.status).toBe(503);
+    expect(serves).toHaveBeenCalledTimes(2);
+    expect(fixture.state.phases).toEqual([]);
+    expect(fixture.state.calls).toEqual([]);
+    expect(fixture.store.listTasks()).toEqual([]);
+  });
+
+  it('N7c: the boundary refuses a verified dispatch whose azp names a different agent than the envelope target', async () => {
+    const pool = { query: async () => ({ rows: [{ app: REMOTE_APP, protected: true }] }) };
+    const permit = vi.fn();
+    const boundary = createProtectedBotExecutionBoundary(pool as never, CONCIERGE_AGENT, permit as never,
+      { multiAgent: true, serves: async () => true });
+    const body = { agentId: REMOTE_AGENT, taskId: 'fixture-task', workspaceFolderId: 'fixture-workspace', userSub: REMOTE_SUB,
+      principalIssuer: REMOTE_ISSUER, text: 'Summarize authorized context.', direct: true, agenticMode: false,
+      byoLlmConnection: { baseUrl: 'https://unused.fixture.test/v1', apiKey: 'fixture-only', model: 'fixture-model' },
+      applicationExecutionId: randomUUID() };
+    const claims = { azp: 'another-served-bot', sub: REMOTE_SUB, principal_iss: REMOTE_ISSUER, task_id: body.taskId,
+      body_sha256: delegationRequestBodySha256(body) };
+    const execute = vi.fn();
+    const req = { body, get: () => 'fixture-token' } as unknown as Request;
+    const res = { locals: { delegationClaims: claims } } as unknown as Response;
+
+    const outcome = await new Promise<unknown>((resolve) => {
+      createProtectedBotDispatchContext()(req, res, () => { boundary(remoteEnvelope(body), execute).then(resolve, resolve); });
+    });
+
+    expect((outcome as Error).message).toBe('authorization_remote_dispatch_required');
+    expect(permit).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('N7d: a dedicated worker still refuses a dispatch addressed to another agent at the gate', async () => {
+    await fixture.close();
+    fixture = await startProtectedWorkerFixture(undefined, { localAgentId: CONCIERGE_AGENT });
+
+    const response = await fixture.post(fixture.issue());
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ success: false, error: 'target_agent_mismatch' });
+    expect(fixture.state.phases).toEqual([]);
+    expect(fixture.store.listTasks()).toEqual([]);
+  });
+});
+
 describe('protected production ingress wiring', () => {
   it('captures authority after replay consumption and keeps raw replay guarded', () => {
     const server = readFileSync('src/app/bot-node-server.ts', 'utf8').replace(/\r\n/g, '\n');
@@ -323,7 +406,8 @@ describe('protected production ingress wiring', () => {
     expect(transport).toBeGreaterThan(-1);
     expect(replay.indexOf('executeReplay(')).toBeGreaterThan(transport);
     assertReplayProviderContained(replayModule);
-    expect(readFileSync('src/app/bot-node-runtime.ts', 'utf8')).toContain('runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId)');
+    expect(readFileSync('src/app/bot-node-runtime.ts', 'utf8'))
+      .toContain('runApplicationExecution: createProtectedBotExecutionBoundary(pool, agentId, undefined, multiAgentServed)');
   });
 });
 
