@@ -52,6 +52,7 @@
 # 44 | maintainer@emeraldcoastsystemsgroup.com   | WORLD_CLASSIFY_BUDGET_PER_PULSE (default 4): the per-fire slice of the classify budget, so one pulse cannot spend the hour's calls and overrun its dispatch budget.
 # 45 | maintainer@emeraldcoastsystemsgroup.com | Comment only: the STORYBOARD_IMAGE_PROVIDER note now states the ADR-130 amendment (2026-10-02) - antigravity-cli is a valid value, and with it unset under DEMO_MODE the render bot's own harness picks the rail; the CLI render-rail knobs serve both CLI rails. No value changes.
 # 46 | maintainer@emeraldcoastsystemsgroup.com   | WORLD_SOURCE_SWITCH_TTL_MS (default 30000) and APP_SCHEDULE_MIN_INTERVAL_MINUTES (default 5) for the World Sources & schedules page and operator schedule control. The congress token comment now says what a blank token does today: the collector reads the free community mirror.
+# 47 | maintainer@emeraldcoastsystemsgroup.com | Scene Studio director node: scene-studio-bot (profile scene-studio-node, agent 117640d5-e8a6-4a54-b8f4-c6c926172b88), so the scene-studio package can declare `container: scene-studio-bot` and run its director at a node on the caller's stamped brain. It mounts only the Antigravity login and its own output volume: no shared workspace (CKR-20 trigger 2 - store-package code with a tool surface), no Codex or Claude session, no config-seed. ANTIGRAVITY_INACTIVITY_TIMEOUT_MS defaults to 30 min on this node because the wrapper hands it to agy as --print-timeout and one director turn can chain engine calls with deadlines of nearly 300 s. The declared bot-node fleet becomes 40, so its Postgres demand is 40 x 3 = 120, exactly oshal_bot's limit. Guards: compose-workspace-mount-posture.spec.ts (WORKSPACE_FREE_BOTS), compose-bot-node-identity.spec.ts.
 # =============================================================================
 # 8-bot swarm identical to ops/deployment/kubernetes/oshal-namespace.yaml
 # Uses the prebuilt OSHAL runtime image (Dockerfile.oshal) tagged as oshal-bot:latest
@@ -2418,6 +2419,57 @@ services:
       oshal-api:
         condition: service_healthy
 
+  # ── Scene Studio Director — scene-studio's dedicated node (ADR-093 Tier 2) ──────
+  # The store package's director (117640d5…) as a first-class bot-node. The scene-studio manifest
+  # names this service (`container: scene-studio-bot`), so executeBotOrInline dispatches here and
+  # the caller's resolved brain rides each dispatch (stampRemoteBrain). PROFILE-GATED like
+  # career-bot: inert until the deployment opts in with COMPOSE_PROFILES=scene-studio-node in .env.
+  # With the package installed and the service down, director turns fail visibly (sales-bot's
+  # contract above), never inline.
+  #
+  # NO SHARED WORKSPACE (CKR-20, reviewed 2026-10-06). This is store-package code with a tool
+  # surface: the oshal-tools MCP bridge, and agy's sandboxed command grant on every bridged turn.
+  # Sharing the read-write workspace would be reversal trigger 2 of the accepted CKR-20 posture,
+  # so the volume is not mounted: agy's per-execution task folders are created in the image's own
+  # /app/workspace-shared (container-local, gone on recreate), and the tools execute in the api.
+  # The persona path names the installed package file; it is not present in this container, so
+  # bot-entrypoint.sh takes its no-persona branch. Pinned by
+  # tests/unit/compose-workspace-mount-posture.spec.ts (WORKSPACE_FREE_BOTS).
+  #
+  # CREDENTIALS: the Antigravity login only (the .gemini mount every Antigravity node reads). No
+  # Codex or Claude session and no config-seed, so a dispatch stamped with a CLI whose login is not
+  # here fails visibly. Code comes from the image, which bakes any-bot/server and
+  # scripts/oshal-tools-mcp.js. Pinned by tests/unit/compose-bot-node-identity.spec.ts.
+  scene-studio-bot:
+    <<: *bot-common
+    container_name: oshal-local-scene-studio-bot
+    profiles: ["scene-studio-node"]
+    expose: # internal-only since 2026-07-15 — see security note above x-bot-env
+      - "5000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: scene-studio-director
+      AGENT_ID: 117640d5-e8a6-4a54-b8f4-c6c926172b88
+      BOT_PERSONA_FILE: /app/workspace-shared/deployed-apps/scene-studio/personas/scene-studio-director.yaml
+      AGENT_CAPABILITIES: "godot-scene-authoring,gdscript-authoring,blender-python-modeling,preview-rendering,model-pipeline"
+      # Least-privilege bot DSN (K5): oshal_bot, never the api's runtime role or the superuser.
+      DATABASE_URL: ${BOT_DATABASE_URL:-postgresql://oshal_bot:oshal-bot-dev@oshal-db:5432/oshal}
+      # The Antigravity wrapper uses this as its idle kill and passes it to agy as --print-timeout,
+      # the CLI's limit on the whole headless turn. A director turn can chain engine calls whose
+      # deadlines reach nearly 300 s (preview, model import), so the fleet's 10-minute default is
+      # short here; 30 minutes stays inside the controller's 65-minute dispatch timeout. Blank = 30 min.
+      ANTIGRAVITY_INACTIVITY_TIMEOUT_MS: ${SCENE_STUDIO_AGY_TIMEOUT_MS:-1800000}
+    volumes:
+      - *gemini-auth-volume
+      - scene-studio-output:/app/output
+    depends_on:
+      oshal-redis:
+        condition: service_healthy
+      oshal-db:
+        condition: service_healthy
+      oshal-api:
+        condition: service_healthy
+
   # ── Eats Bot — Uber Eats concierge (real bot-node) ──────────────────────────
   # First-class oshal-bot node so the build queue HTTP-dispatches Jarvis food tickets here
   # (isolated, cost/audit under its agent_id) instead of in-process on the controller. CODEX so it
@@ -3183,6 +3235,9 @@ volumes:
   # career-bot (profile `career-node`) — same one-writer rule; declared unconditionally so the
   # profile toggling on never fails on a missing volume.
   career-output:
+  # scene-studio-bot (profile `scene-studio-node`) — same one-writer rule; declared unconditionally
+  # so turning the profile on never fails on a missing volume.
+  scene-studio-output:
   eats-output:
   rides-output:
   shopping-output:
