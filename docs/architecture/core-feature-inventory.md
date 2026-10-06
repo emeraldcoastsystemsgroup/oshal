@@ -5002,6 +5002,7 @@ Every current immediate directory is listed. “Unassigned” requires an explic
 | `src/shared/package-callbacks` | [APP-06](#app-06), [MEDIA-09](#media-09) |
 | `src/shared/package-testing` | [APP-09](#app-09) |
 | `src/shared/package-tools` | [APP-05](#app-05) |
+| `src/shared/protected-bot-personas` | **unassigned** |
 | `src/shared/protected-results` | [SEC-06](#sec-06) |
 | `src/shared/queued-application-principal` | [SEC-08](#sec-08), [EXEC-10](#exec-10) |
 | `src/shared/refusal-events` | [MON-12](#mon-12) |

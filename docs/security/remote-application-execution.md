@@ -42,6 +42,24 @@ cannot answer its default MCP confirmation; they do not approve another MCP serv
 command. The temporary configuration is removed after the turn. The existing per-bot usage and
 cost path is retained.
 
+A protected turn runs tool-less on the worker's direct path, which supplies only a generic system
+prompt, so the bot's persona travels from the controller. When an application activates, the
+controller reads each declared bot's persona file through the owning manifest (a path outside the
+package is refused) and composes the identity (name and role), the scalar `personality` entries, a
+perspective, and a fixed sentence stating that the persona grants no tool, scope or credential.
+The perspective is `protected_perspective` when the persona declares one; otherwise the ordinary
+`perspective` is used only when it passes a screen for shell, script and credential-carrier
+wording, and is left out (identity and personality still travel) when it does not. Capabilities,
+tool lists, authorizations, runtime, selectors and system prompts are never read. A composed
+persona that names a secret identifier, exceeds 16 KiB, is not valid UTF-8 or contains control
+characters is refused for that bot and is never truncated. `BotNodeClient` adds the text registered
+for the prepared binding's application and bot as `botPersona`; a caller that supplies the field
+is refused with `bot_persona_carrier_reserved`. The worker accepts it only on a signed protected
+direct, non-agentic body, refuses an envelope whose persona differs from the signed body, and files
+it first under `TRUSTED CONFIGURATION` as `[trusted-config source="bot-persona"]`, before the
+untrusted body. It changes no allowed tool or scope: the final authority rebind still decides what
+the model may invoke.
+
 The worker's open-ended agentic loop, provider intents, connector credentials, raw mesh/batch calls
 and Token Chase replay remain refused for protected applications. Call-time application tools are
 the bounded exception: they execute through the controller broker, not the worker's native tool
@@ -55,9 +73,11 @@ user provenance.
 1. The controller refreshes the initiating account and current application rights. It captures
    installed source/catalog/generation, exact principal, tenant, bot, task, workspace, original
    directory freshness and effective grant bounds in a durable execution record.
-2. It includes only the opaque `applicationExecutionId` in the existing Ed25519 delegated request.
-   It durably binds the complete body digest and recorded delegation claims before sending.
-   Prompts, provider keys and raw delegation tokens are not persisted in the authority record.
+2. It includes the opaque `applicationExecutionId` in the existing Ed25519 delegated request and,
+   when the owning application registered a persona for the bot, the controller-composed
+   `botPersona`, both before signing, so the body digest covers them. It durably binds the complete
+   body digest and recorded delegation claims before sending. Prompts (the persona included),
+   provider keys and raw delegation tokens are not persisted in the authority record.
 3. The worker verifies machine authentication, signature, exact request bindings and the existing
    single-use delegation nonce. Trusted async context carries this proof outside the body.
 4. The worker asks the fixed controller endpoint

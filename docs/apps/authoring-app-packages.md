@@ -81,6 +81,53 @@ retain their existing protections. `auth: public` alone is not that exception.
 | `ticketType` + `workflow` | | rides the kernel queue (the app doesn't own the queue) |
 | `theme` | | a registered cockpit skin id, or a bundled `ui/*.css` |
 
+## Bot personas on protected node turns (`protected_perspective`)
+
+A bot on its own node (`container:`) that belongs to a protected application answers on a direct,
+non-agentic, tool-less turn. The node does not load the persona file for that turn: the controller
+composes the persona from the package when the app activates and signs it into each protected
+dispatch. From the bot's `personas/<bot>.yaml` it carries:
+
+- `name` and `role` (falling back to the manifest's bot `name` and `role`), as "You are **name**, role.";
+- the scalar entries of `personality` (`tone: …`, `style: …`); nested values are skipped;
+- one perspective, chosen as below;
+- a closing sentence stating that the persona grants no tool, scope or credential.
+
+`capabilities`, `allowed_tools`, `authorizations`, `runtime`, selectors and `system_prompt` are never
+carried. What the bot may invoke still comes only from its authorizations, through the final
+authority record.
+
+**Choosing the perspective.** Declare `protected_perspective:` to say what the bot is on a protected
+turn; it is used as written. Without it, the ordinary `perspective:` is used only when it contains
+none of these, compared case-insensitively: `bash`, `curl `, `wget `, `execute_command`, `shell`,
+`terminal`, `run it with`, `$swarm_`, `swarm_service_secret`, `x-service-secret`,
+`oshal_application_execution_token`, `oshal_cred_`, `.oshal-cred-`, `node /app/scripts`,
+`/app/scripts/`, `sudo `, `docker `. A perspective that fails the screen is left out, with a WARN
+naming the app and bot, and the identity and personality still travel. The screen matches
+substrings, so an ordinary word such as "nutshell" also trips it; write a `protected_perspective`
+when that happens.
+
+**Refusals.** The bot's whole persona is refused, with an ERROR naming the app and bot, when its file
+is outside the package or is not a YAML mapping, or when the composed text names a secret identifier
+(`SWARM_SERVICE_SECRET`, `X-Service-Secret`, `OSHAL_APPLICATION_EXECUTION_TOKEN`, `OSHAL_CRED_*`,
+`.oshal-cred-*`, `SESSION_SECRET`, `OSHAL_DELEGATION_SIGNING_PRIVATE_KEY`), exceeds 16 KiB, is not
+valid UTF-8, or contains control characters. A refused persona is never truncated; the bot runs its
+protected turns without one.
+
+```yaml
+name: scene-studio-director
+role: Game and 3-D Scene Director
+personality:
+  tone: practical, encouraging
+  style: builds in small verified steps
+protected_perspective: |
+  You turn scene requests into calls against the Scene Studio tools in your authority record,
+  one verified step at a time, and say which files and nodes you changed.
+```
+
+See [protected remote application execution](../security/remote-application-execution.md) for how
+the persona is signed and checked.
+
 ## Routes: compiled JS, framework imports by alias
 
 Routes are the only server code a package carries. Rules:
