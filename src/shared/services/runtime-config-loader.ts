@@ -5,11 +5,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial runtime config loader for RAG and Presentron service settings
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Removed PresentronRuntimeSettings + readPresentronRuntimeSettings: the only consumer was the retired Presentron HTTP sidecar proxy route. The presentronServiceConfig global-config key itself stays live — it still feeds the separate presentron-mcp MCP server derivation in cline-runtime-config-sync-service (read there directly, not via this loader).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | readGlobalRuntimeSettings is the global settings loader for the config routes too (optional explicit path) and treats a stored '[REDACTED]' leaf as absent (warned once per process, then debug), so a value corrupted by an earlier redacted round trip never reaches a consumer and is dropped by the next settings save.
  */
 
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { shouldWarnRedactedPlaceholders, stripRedactedConfigPlaceholders } from '@/shared/config';
 
 const logger = createChildLogger({ module: 'runtime-config-loader' });
 
@@ -39,14 +41,17 @@ export interface GoogleSearchMcpRuntimeSettings {
 }
 
 /**
- * @description Reads merged runtime settings object from global settings storage.
+ * @description Reads merged runtime settings object from global settings storage. A leaf equal to
+ * the response-redaction placeholder is the residue of a redacted response saved back, never an
+ * operator value, so it is left out: the reader sees the key as absent and the next save, which
+ * merges into what this returns, no longer carries it.
  *
+ * @param settingsPath - Explicit global-config.json path; defaults to CONFIG_OUTPUT_DIR's file.
  * @returns Parsed global settings object or empty object when unavailable.
  */
-export function readGlobalRuntimeSettings(): Record<string, unknown> {
-  const configDir = process.env.CONFIG_OUTPUT_DIR || './output';
-  const settingsPath = path.join(configDir, 'global-config.json');
-
+export function readGlobalRuntimeSettings(
+  settingsPath = path.join(process.env.CONFIG_OUTPUT_DIR || './output', 'global-config.json'),
+): Record<string, unknown> {
   if (!fs.existsSync(settingsPath)) {
     logger.info({ settingsPath }, 'Global runtime settings file not found');
     return {};
@@ -56,7 +61,13 @@ export function readGlobalRuntimeSettings(): Record<string, unknown> {
     const raw = fs.readFileSync(settingsPath, 'utf-8');
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+      const { value, removedPaths } = stripRedactedConfigPlaceholders(parsed as Record<string, unknown>);
+      if (removedPaths.length > 0) {
+        const message = 'Global settings hold redaction placeholders; reading them as absent until the next settings save removes them';
+        if (shouldWarnRedactedPlaceholders(settingsPath, removedPaths)) logger.warn({ settingsPath, removedPaths }, message);
+        else logger.debug({ settingsPath, removedPaths }, message);
+      }
+      return value;
     }
     logger.warn({ settingsPath }, 'Global runtime settings file does not contain an object payload');
     return {};

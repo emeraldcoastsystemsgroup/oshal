@@ -22,11 +22,13 @@
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: runtime sync writes non-secret metadata only, overwrites legacy credential-bearing Cline files, and retires API-key/OAuth materialization into data/secrets.json.
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | ADR-128 Amendment 1 (operator directive 2026-08-13): claude-code removed as a DEFAULT — the subscription is being cancelled, so an automatic degrade onto it turns a codex outage into silent spend on a dying account. DEFAULT_PROVIDER falls back to openai-codex (was claude-code).
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read two of the six and defaulted to the LEGACY /app/workspace mount.
+ * 20 | maintainer@emeraldcoastsystemsgroup.com   | readMcpSettings (the MCP settings loader behind GET /api/config/mcp, the startup manifest and session MCP config) treats a stored '[REDACTED]' leaf, e.g. an env value saved from a redacted GET, as absent instead of handing it to an MCP server.
  */
 
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
+import { shouldWarnRedactedPlaceholders, stripRedactedConfigPlaceholders } from '@/shared/config';
 import { buildClineConfig, buildClineGlobalState } from './cline-config-builder';
 import {
   filterMcpSettingsByCapabilities,
@@ -114,12 +116,19 @@ export class ClineRuntimeConfigSyncService {
   }
 
   /**
-   * @description Reads the Cline MCP runtime settings file.
+   * @description Reads the Cline MCP runtime settings file. A leaf equal to the redaction placeholder
+   * (an env value or header saved back from a redacted GET) is left out, so no MCP server receives it
+   * and the next MCP save, which resolves against what this returns, does not keep it.
    * @returns Parsed MCP settings object
    */
   readMcpSettings(): Record<string, unknown> {
     const filePath = path.join(this.configDir, 'mcp_settings.json');
-    const existing = this.readJsonObject(filePath);
+    const { value: existing, removedPaths } = stripRedactedConfigPlaceholders(this.readJsonObject(filePath));
+    if (removedPaths.length > 0) {
+      const message = 'MCP settings hold redaction placeholders; reading them as absent until the next MCP save removes them';
+      if (shouldWarnRedactedPlaceholders(filePath, removedPaths)) logger.warn({ filePath, removedPaths }, message);
+      else logger.debug({ filePath, removedPaths }, message);
+    }
     return this.mergeDefaultMcpSettings(existing);
   }
 

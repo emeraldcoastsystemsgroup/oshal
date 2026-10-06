@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added per-user config envelope support (userId partitioning)
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Session 109: Demoted routine I/O logs from info to debug. Constructor, read/write/load/save operations no longer flood bot logs. Migration, rotation, and delete remain at info.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: remove plaintext secret mode, require encryption for every secret read/write/delete, write envelopes with owner-only permissions, and require one-way removal of legacy plaintext during explicit migration.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | A stored value equal to the config-response placeholder '[REDACTED]' (written by a save that posted a redacted GET back) reads as absent at every depth (warned once per file per process, then debug), so consumers fall back to env/defaults; every save re-encrypts the loaded envelope, so the next one removes it.
  */
 
 'use strict';
@@ -24,6 +25,11 @@ const logger = pino({ name: 'encrypted-config-manager' });
 
 const ENCRYPTED_SECRETS_FILE = 'secrets.enc.json';
 const PLAIN_SECRETS_FILE = 'secrets.json';
+// The literal config GET responses write in place of credentials. This plain-JS module cannot load
+// the TypeScript definition (REDACTED_CONFIG_PLACEHOLDER in src/shared/config); a guard pins the two.
+const REDACTED_SECRET_PLACEHOLDER = '[REDACTED]';
+// Secrets files whose current placeholder paths were already reported at warn level in this process.
+const reportedPlaceholderStores = new Set();
 
 // ---------------------------------------------------------------------------
 // File I/O Helpers
@@ -80,6 +86,37 @@ function writeJsonFile(filePath, data) {
     logger.error({ err: error, path: filePath }, 'Failed to write JSON file');
     throw error;
   }
+}
+
+/**
+ * @description Returns a copy of a decrypted secrets value without any leaf equal to the redaction
+ * placeholder. Such a leaf is the residue of a redacted config response saved back, never a secret.
+ *
+ * @param {unknown} value - Decrypted secrets value
+ * @param {string} nodePath - Dotted path of the value ('' at the envelope root)
+ * @param {string[]} removedPaths - Accumulator of removed leaf paths (paths only)
+ * @returns {unknown} The value without placeholder leaves
+ */
+function stripRedactedPlaceholders(value, nodePath, removedPaths) {
+  if (Array.isArray(value)) {
+    const kept = [];
+    value.forEach((item, index) => {
+      const itemPath = `${nodePath}[${index}]`;
+      if (item === REDACTED_SECRET_PLACEHOLDER) removedPaths.push(itemPath);
+      else kept.push(stripRedactedPlaceholders(item, itemPath, removedPaths));
+    });
+    return kept;
+  }
+  if (value && typeof value === 'object') {
+    const entries = [];
+    for (const [key, item] of Object.entries(value)) {
+      const itemPath = nodePath ? `${nodePath}.${key}` : key;
+      if (item === REDACTED_SECRET_PLACEHOLDER) removedPaths.push(itemPath);
+      else entries.push([key, stripRedactedPlaceholders(item, itemPath, removedPaths)]);
+    }
+    return Object.fromEntries(entries);
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +233,8 @@ class EncryptedConfigManager {
    * @description Loads the raw (decrypted) data from disk without user filtering.
    * Returns an empty object if the file does not exist. This is the internal
    * method used by saveSecrets and loadSecrets for envelope management.
+   * A leaf equal to the redaction placeholder is left out, so every reader sees
+   * it as absent and every save (which re-encrypts what this returns) drops it.
    *
    * @returns {object} The full raw data object from disk
    * @throws {Error} If decryption fails (wrong key or corrupted data)
@@ -213,7 +252,20 @@ class EncryptedConfigManager {
     logger.debug({ path: filePath }, 'Loading encrypted secrets');
     const envelope = readJsonFile(filePath);
     const plaintext = decrypt(envelope, this.encryptionKey);
-    return JSON.parse(plaintext);
+    const removedPaths = [];
+    const secrets = stripRedactedPlaceholders(JSON.parse(plaintext), '', removedPaths);
+    if (removedPaths.length > 0) {
+      // Warn once per file and set of paths: secrets are read on many requests until the next save cleans them.
+      const reportKey = `${filePath}\u0000${removedPaths.join(',')}`;
+      const message = 'Stored secrets hold redaction placeholders; reading them as absent until the next secrets save removes them';
+      if (reportedPlaceholderStores.has(reportKey)) {
+        logger.debug({ path: filePath, removedPaths }, message);
+      } else {
+        reportedPlaceholderStores.add(reportKey);
+        logger.warn({ path: filePath, removedPaths }, message);
+      }
+    }
+    return secrets;
   }
 
   /**
@@ -416,4 +468,5 @@ module.exports = {
   EncryptedConfigManager,
   ENCRYPTED_SECRETS_FILE,
   PLAIN_SECRETS_FILE,
+  REDACTED_SECRET_PLACEHOLDER,
 };

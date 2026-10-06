@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Restricted global configuration and runtime mutation to exact operators and recursively redacted credential-bearing responses
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05 closure: make plaintext migration one-way; the operator endpoint refuses any request to retain secrets.json and always removes it after verified encrypted persistence.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Read ENCRYPTION_KEY through the shared platform setting key used by refusal remedies.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | Config secrets survive a save. Every POST that has a redacting GET (/, /mcp, /rag, /presentron, /google-search-mcp, /llm) resolves a posted '[REDACTED]' against the SAME partition only (settings, encrypted secrets, MCP document, legacy llm file): it keeps the stored value at exactly that path, or drops the key when nothing is stored there (dropped paths logged and returned as droppedPlaceholders). POST / first drops every top-level per-user secret envelope, identified from the stored secrets the way GET merged them (plus Google-numeric and local- sub shapes), from both the body and the existing settings, so a per-user token can never reach global-config.json. Settings reads go through the shared stripping loader, so a stored placeholder reads as absent and the next save removes it.
  */
 
 import { Router, Request, Response } from 'express';
@@ -30,6 +31,13 @@ import { ClineRuntimeConfigSyncService } from '@/features/llm-provider/services'
 import { buildConfigOwnershipContract } from './config-ownership-contract';
 import { requiresOperator } from '@/shared/middleware/authz';
 import { PLATFORM_SETTING_KEYS } from '@/shared/platform-settings';
+import {
+  REDACTED_CONFIG_PLACEHOLDER,
+  isRedactedConfigPlaceholder,
+  resolveRedactedConfigPlaceholders,
+  stripRedactedConfigPlaceholders,
+} from '@/shared/config';
+import { readGlobalRuntimeSettings } from '@/shared/services/runtime-config-loader';
 
 const logger = createChildLogger({ module: 'config-routes' });
 
@@ -62,7 +70,7 @@ function isSecretKey(key: string): boolean {
 }
 
 const RESPONSE_SECRET_KEY_PATTERN = /(api[-_]?key|access[-_]?key|authorization|bearer|token|secret|password|passphrase|credential|private[-_]?key|keypem|certpem|service[-_]?account|kubeconfig|cookie)/i;
-const REDACTED_CONFIG_VALUE = '[REDACTED]';
+const REDACTED_CONFIG_VALUE = REDACTED_CONFIG_PLACEHOLDER;
 
 /**
  * @description Recursively removes credential material from configuration responses. Every leaf
@@ -90,21 +98,14 @@ export function redactConfigForResponse(value: unknown, redactLeaves = false): u
 }
 
 /**
- * @description Reads a JSON file from disk, returning an empty object if
- * the file does not exist or cannot be parsed.
+ * @description Reads the global settings partition through the shared settings loader, which reads
+ * a stored redaction placeholder as absent (so a save merging into this result drops it).
  *
- * @param filePath - Absolute path to the JSON file
- * @returns Parsed object or empty object
+ * @param context - Shared route context
+ * @returns Parsed settings object or empty object
  */
-function readJsonSafe(filePath: string): Record<string, any> {
-  try {
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    }
-  } catch (err: any) {
-    logger.error({ err, path: filePath }, 'Failed to read JSON file');
-  }
-  return {};
+function readSettings(context: ConfigRoutesContext): Record<string, any> {
+  return readGlobalRuntimeSettings(context.settingsPath);
 }
 
 /**
@@ -139,15 +140,22 @@ function isUserSecretEnvelopeEntry(key: string, value: unknown): boolean {
 }
 
 /**
+ * @description The encrypted store split the way GET /api/config reads it.
+ */
+interface SecretsEnvelopePartitions {
+  /** Entries GET merges into its global view (including envelopes of unrecognised sub shapes). */
+  globalSecrets: Record<string, any>;
+  /** Envelopes whose UUID / mock-user- / user- key GET recognises and leaves out. */
+  userEnvelopes: Record<string, any>;
+}
+
+/**
  * @description Separates global secret keys from per-user envelope entries.
  *
  * @param allSecrets - Full secrets payload as stored by EncryptedConfigManager
  * @returns Global secrets and preserved user envelope entries
  */
-function partitionSecretsEnvelope(allSecrets: Record<string, any>): {
-  globalSecrets: Record<string, any>;
-  userEnvelopes: Record<string, any>;
-} {
+function partitionSecretsEnvelope(allSecrets: Record<string, any>): SecretsEnvelopePartitions {
   const globalSecrets: Record<string, any> = {};
   const userEnvelopes: Record<string, any> = {};
 
@@ -160,6 +168,62 @@ function partitionSecretsEnvelope(allSecrets: Record<string, any>): {
   }
 
   return { globalSecrets, userEnvelopes };
+}
+
+/**
+ * @description Sub shapes the GET partition does not recognise, whose envelopes therefore appear in
+ * the merged view: Google numeric subs and local-account subs (`local-<sha256 prefix>`).
+ */
+const MERGED_VIEW_USER_SUB_PATTERNS = [/^\d+$/, /^local-[\w-]+$/i];
+
+/**
+ * @description Whether a top-level config key is a per-user secret envelope. GET /api/config merges
+ * every stored secrets entry its partition does not recognise into the global view, so a numeric or
+ * local- sub envelope comes back from the /chat page as an ordinary non-secret key that POST would
+ * route to plaintext settings. Envelopes are identified from the stored secrets exactly as GET merged
+ * them (an object under a non-secret-shaped key), as the recognised user partition, or by a known sub
+ * shape for an envelope a stale page still holds after it was removed from the store.
+ *
+ * @param key - Top-level key
+ * @param value - Value under that key in the document being filtered
+ * @param stored - The encrypted store split the way GET reads it
+ * @returns True when the key names a per-user envelope
+ */
+function isPerUserEnvelopeKey(key: string, value: unknown, stored: SecretsEnvelopePartitions): boolean {
+  if (isUserSecretEnvelopeEntry(key, value) || Object.prototype.hasOwnProperty.call(stored.userEnvelopes, key)) {
+    return true;
+  }
+  // A secret-shaped key is routed to the encrypted store, never to plaintext settings.
+  if (isSecretKey(key)) return false;
+  const storedValue = Object.prototype.hasOwnProperty.call(stored.globalSecrets, key) ? stored.globalSecrets[key] : undefined;
+  if (isPlainObject(storedValue)) return true;
+  return isPlainObject(value) && MERGED_VIEW_USER_SUB_PATTERNS.some((pattern) => pattern.test(key));
+}
+
+/**
+ * @description Removes every top-level per-user secret envelope from a config document.
+ *
+ * @param document - Posted body or existing settings
+ * @param stored - The encrypted store split the way GET reads it
+ * @returns The document without envelopes and how many were removed
+ */
+function withoutPerUserEnvelopes(
+  document: Record<string, any>,
+  stored: SecretsEnvelopePartitions,
+): { kept: Record<string, any>; removedCount: number } {
+  const entries = Object.entries(document);
+  const kept = entries.filter(([key, value]) => !isPerUserEnvelopeKey(key, value, stored));
+  return { kept: Object.fromEntries(kept), removedCount: entries.length - kept.length };
+}
+
+/**
+ * @description Whether a value is a non-array object.
+ *
+ * @param value - Candidate value
+ * @returns True for plain JSON objects
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -300,7 +364,7 @@ function handleGetMergedConfig(context: ConfigRoutesContext) {
     if (!requireEncryptedSecrets(context, res)) return;
     try {
       logger.info('GET /api/config — loading merged configuration');
-      const settings = readJsonSafe(context.settingsPath);
+      const settings = readSettings(context);
       const allSecrets = context.secretsManager.loadSecrets();
       const { globalSecrets } = partitionSecretsEnvelope(allSecrets);
       const merged = { ...settings, ...globalSecrets };
@@ -399,6 +463,8 @@ function saveGlobalSecretsPreservingUsers(
 
 /**
  * @description Build POST handler that persists split-mode config while preserving user OAuth entries.
+ * The body is usually a redacted GET posted back (the /chat API tab sends every key), so per-user
+ * envelopes are dropped first and each '[REDACTED]' is resolved inside its own partition only.
  *
  * @param context - Shared route context
  * @returns Express handler for POST /api/config
@@ -411,17 +477,24 @@ function handleSaveMergedConfig(context: ConfigRoutesContext) {
     try {
       const body = req.body || {};
       logger.info({ keyCount: Object.keys(body).length }, 'POST /api/config — saving configuration');
-      const { settings, secrets } = splitSettingsAndSecrets(body);
       // Also detects a legacy plaintext store before any non-secret settings mutation.
       const existingSecrets = context.secretsManager.loadSecrets();
+      const storedSecrets = partitionSecretsEnvelope(existingSecrets);
+      const posted = withoutPerUserEnvelopes(body, storedSecrets);
+      const split = splitSettingsAndSecrets(posted.kept);
       if (!fs.existsSync(context.configDir)) {
         fs.mkdirSync(context.configDir, { recursive: true });
       }
       // Merge into existing settings so a partial save (e.g. one provider's
       // model + active selection) preserves unrelated keys (rag/presentron/etc.).
-      const existingSettings = readJsonSafe(context.settingsPath);
-      writeJsonSafe(context.settingsPath, { ...existingSettings, ...settings });
-      const preservedCount = saveGlobalSecretsPreservingUsers(context, secrets, existingSecrets);
+      // An envelope an earlier save wrote into settings is not written back.
+      const existing = withoutPerUserEnvelopes(readSettings(context), storedSecrets);
+      // A placeholder keeps what its OWN partition stores at that path; nothing crosses partitions.
+      const settings = resolveRedactedConfigPlaceholders(split.settings, existing.kept);
+      const secrets = resolveRedactedConfigPlaceholders(split.secrets, storedSecrets.globalSecrets);
+      writeJsonSafe(context.settingsPath, { ...existing.kept, ...settings.value });
+      const preservedCount = saveGlobalSecretsPreservingUsers(context, secrets.value, existingSecrets);
+      const droppedPlaceholders = [...settings.droppedPaths, ...secrets.droppedPaths];
       const userId = getOptionalOidcUserId(req);
       const selection = context.runtimeSyncService.syncFromPersistedConfig(
         process.env.CLINE_MODEL || process.env.LLM_MODEL || 'gpt-5.3-codex',
@@ -429,9 +502,13 @@ function handleSaveMergedConfig(context: ConfigRoutesContext) {
       );
       logger.info(
         {
-          settingsCount: Object.keys(settings).length,
-          secretsCount: Object.keys(secrets).length,
+          settingsCount: Object.keys(settings.value).length,
+          secretsCount: Object.keys(secrets.value).length,
           preservedUserSecretEnvelopes: preservedCount,
+          droppedPostedUserSecretEnvelopes: posted.removedCount,
+          removedSettingsUserSecretEnvelopes: existing.removedCount,
+          restoredPlaceholders: settings.restoredPaths.length + secrets.restoredPaths.length,
+          droppedPlaceholders,
           runtimeProvider: selection.provider,
           runtimeModel: selection.model,
           runtimeMode: selection.mode,
@@ -443,8 +520,9 @@ function handleSaveMergedConfig(context: ConfigRoutesContext) {
         success: true,
         mode: 'split',
         files: { settings: context.settingsPath, secrets: context.secretsManager.getSecretsPath() },
-        settingsCount: Object.keys(settings).length,
-        secretsCount: Object.keys(secrets).length,
+        settingsCount: Object.keys(settings.value).length,
+        secretsCount: Object.keys(secrets.value).length,
+        droppedPlaceholders,
       });
     } catch (err: any) {
       logger.error({ err }, 'Failed to save configuration');
@@ -581,11 +659,21 @@ function handleSaveMcpConfig(context: ConfigRoutesContext) {
         ? body
         : { mcpServers: {} };
 
-      context.runtimeSyncService.writeMcpSettings(normalized as Record<string, unknown>);
+      // Resolve against the exact document GET /api/config/mcp redacted, so every path lines up.
+      const resolved = resolveRedactedConfigPlaceholders(
+        normalized as Record<string, unknown>,
+        context.runtimeSyncService.readMcpSettings(),
+      );
+      context.runtimeSyncService.writeMcpSettings(resolved.value);
+      logger.info(
+        { restoredPlaceholders: resolved.restoredPaths.length, droppedPlaceholders: resolved.droppedPaths },
+        'MCP configuration saved',
+      );
       res.json({
         success: true,
-        config: redactConfigForResponse(normalized),
+        config: redactConfigForResponse(resolved.value),
         path: context.runtimeSyncService.getMcpSettingsPath(),
+        droppedPlaceholders: resolved.droppedPaths,
       });
     } catch (err: any) {
       logger.error({ err }, 'Failed to save MCP configuration');
@@ -611,7 +699,7 @@ function handleGetServiceConfig(
 ) {
   return (_req: Request, res: Response): void => {
     try {
-      const settings = readJsonSafe(context.settingsPath);
+      const settings = readSettings(context);
       const value = settings[key];
       const config = value && typeof value === 'object' && !Array.isArray(value)
         ? value
@@ -646,11 +734,25 @@ function handleSaveServiceConfig(
         return;
       }
 
-      const settings = readJsonSafe(context.settingsPath);
-      const nextSettings = { ...settings, [key]: body };
+      const settings = readSettings(context);
+      // The service config lives at settings[key]; a placeholder keeps what that subtree stores.
+      const resolved = resolveRedactedConfigPlaceholders(body, settings[key]);
+      const nextSettings = { ...settings, [key]: resolved.value };
       writeJsonSafe(context.settingsPath, nextSettings);
-      logger.info({ routeLabel, keyCount: Object.keys(body).length }, 'Service configuration saved');
-      res.json({ success: true, config: redactConfigForResponse(body) });
+      logger.info(
+        {
+          routeLabel,
+          keyCount: Object.keys(resolved.value).length,
+          restoredPlaceholders: resolved.restoredPaths.length,
+          droppedPlaceholders: resolved.droppedPaths,
+        },
+        'Service configuration saved',
+      );
+      res.json({
+        success: true,
+        config: redactConfigForResponse(resolved.value),
+        droppedPlaceholders: resolved.droppedPaths,
+      });
     } catch (err: any) {
       logger.error({ err, routeLabel }, 'Failed to save service configuration');
       res.status(500).json({ success: false, error: err.message });
@@ -713,7 +815,7 @@ function buildDefaultGoogleSearchMcpConfig(): Record<string, unknown> {
 function handleGoogleSearchMcpHealth(context: ConfigRoutesContext) {
   return async (_req: Request, res: Response): Promise<void> => {
     try {
-      const settings = readJsonSafe(context.settingsPath);
+      const settings = readSettings(context);
       const raw = settings.googleSearchMcpConfig;
       const config = raw && typeof raw === 'object' && !Array.isArray(raw)
         ? raw as Record<string, unknown>
@@ -796,22 +898,44 @@ function handleSaveLegacyLlmConfig(context: ConfigRoutesContext) {
       if (!fs.existsSync(context.configDir)) {
         fs.mkdirSync(context.configDir, { recursive: true });
       }
-      const config = { provider, model, apiKey: apiKey || '' };
+      // GET /api/config/llm redacts apiKey; a posted placeholder keeps the key this file stores.
+      const resolved = resolveRedactedConfigPlaceholders({ apiKey }, readLegacyLlmConfig(context));
+      const config = { provider, model, apiKey: resolved.value.apiKey || '' };
       fs.writeFileSync(context.legacyConfigPath, JSON.stringify(config, null, 2));
-      if (provider === 'anthropic' && apiKey) {
+      // Only a key the request carried refreshes the legacy Cline file; a kept key is not copied there.
+      if (provider === 'anthropic' && apiKey && !isRedactedConfigPlaceholder(apiKey)) {
         updateLegacyClineAnthropicConfig(model, apiKey);
       }
-      logger.info({ provider, model }, 'LLM configuration saved (legacy)');
+      logger.info({ provider, model, droppedPlaceholders: resolved.droppedPaths }, 'LLM configuration saved (legacy)');
       res.json({
         success: true,
         message: 'Configuration saved successfully',
         config: redactConfigForResponse(config),
+        droppedPlaceholders: resolved.droppedPaths,
       });
     } catch (err: any) {
       logger.error({ err }, 'Failed to save LLM config');
       res.status(500).json({ error: 'Failed to save configuration' });
     }
   };
+}
+
+/**
+ * @description Reads the legacy `llm-config.json` partition with stored placeholders read as absent.
+ *
+ * @param context - Shared route context
+ * @returns Parsed legacy config, or an empty object when missing or unreadable
+ */
+function readLegacyLlmConfig(context: ConfigRoutesContext): Record<string, unknown> {
+  try {
+    if (fs.existsSync(context.legacyConfigPath)) {
+      const parsed = JSON.parse(fs.readFileSync(context.legacyConfigPath, 'utf-8')) as unknown;
+      if (isPlainObject(parsed)) return stripRedactedConfigPlaceholders(parsed).value;
+    }
+  } catch (err) {
+    logger.error({ err, path: context.legacyConfigPath }, 'Failed to read legacy LLM config');
+  }
+  return {};
 }
 
 /**
