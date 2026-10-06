@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-3): the AI defaults screen is guarded like the home (200 operator, 403 user on the page and its script, 302 signed out), listed in the navigation, hosts the two unchanged /config panel modules (every absolute import fetched through the real registration, review) in the containers they expect, and keeps the style order the glass spec requires.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): the swarm logins screen is guarded like the home, listed in the navigation, carries the card template and containers its script fills, inserts values as text only, and keeps the style order the glass spec requires.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the budgets screen is guarded like the home, listed in the navigation, carries the containers and templates its script fills, inserts values as text only (the one innerHTML-free render path is pinned), and keeps the style order the glass spec requires.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the connectors screen is guarded like the home, listed in the navigation, carries the containers its script fills, inserts values as text only, confirms a remove, and keeps the style order the glass spec requires. Every page's style-order check now also asserts its stylesheet link is present: indexOf answers -1 for a missing link, which made the order check pass vacuously.
  */
 
 import fs from 'node:fs';
@@ -68,6 +69,7 @@ describe('the /swarm-admin surface', () => {
     expect(page?.extraGuards).toEqual([requiresOperator]);
     expect(Object.isFrozen(SWARM_ADMIN_NAVIGATION[0])).toBe(true);
     const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    expect(html.indexOf('/swarm-admin/swarm-admin.css')).toBeGreaterThan(-1);
     expect(html.indexOf('/swarm-admin/swarm-admin.css')).toBeLessThan(html.indexOf('surface-glass.css'));
     expect(path.basename(page!.pageDir)).toBe('swarm-admin');
     for (const file of ['index.html', 'swarm-admin.css', 'swarm-admin.js']) expect(fs.existsSync(path.join(page!.pageDir, file)), file).toBe(true);
@@ -98,6 +100,7 @@ describe('the /swarm-admin surface', () => {
     expect(path.basename(page!.pageDir)).toBe('ai-defaults');
     const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
     for (const id of ['fleetDefaultPanel', 'capabilityProvidersPanel', 'statusBanner']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/ai-defaults/ai-defaults.css')).toBeGreaterThan(-1);
     expect(html.indexOf('/swarm-admin/ai-defaults/ai-defaults.css')).toBeLessThan(html.indexOf('surface-glass.css'));
     const script = fs.readFileSync(path.join(page!.pageDir, 'ai-defaults.js'), 'utf8');
     expect(script).toContain("from '/config-admin/config-admin-fleet-default.js'");
@@ -132,6 +135,7 @@ describe('the /swarm-admin surface', () => {
     expect(path.basename(page!.pageDir)).toBe('logins');
     const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
     for (const id of ['loginCards', 'loginCardTemplate', 'statusBanner', 'adoptionNote']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/logins/logins.css')).toBeGreaterThan(-1);
     expect(html.indexOf('/swarm-admin/logins/logins.css')).toBeLessThan(html.indexOf('surface-glass.css'));
     const script = fs.readFileSync(path.join(page!.pageDir, 'logins.js'), 'utf8');
     expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
@@ -153,6 +157,7 @@ describe('the /swarm-admin surface', () => {
     expect(path.basename(page!.pageDir)).toBe('budgets');
     const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
     for (const id of ['caps', 'events', 'posture', 'setCapForm', 'editRowTemplate', 'statusBanner', 'windowHours']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/budgets/budgets.css')).toBeGreaterThan(-1);
     expect(html.indexOf('/swarm-admin/budgets/budgets.css')).toBeLessThan(html.indexOf('surface-glass.css'));
     const script = fs.readFileSync(path.join(page!.pageDir, 'budgets.js'), 'utf8');
     expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
@@ -166,6 +171,29 @@ describe('the /swarm-admin surface', () => {
       expect(await screen.text()).toContain('Set a cap');
       expect((await app.get('/swarm-admin/budgets/budgets.js', USER)).status).toBe(403);
       expect((await app.get('/swarm-admin/budgets', null)).status).toBe(302);
+    } finally { await app.close(); }
+  });
+
+  it('serves the connectors screen under the same guard, with its totals, filters and catalog table, text-only', async () => {
+    const page = pages().find((p) => p.routePath === '/swarm-admin/connectors');
+    expect(page?.extraGuards).toEqual([requiresOperator]);
+    expect(path.basename(page!.pageDir)).toBe('connectors');
+    const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    for (const id of ['totals', 'catalog', 'search', 'stateFilter', 'riskFilter', 'categoryFilter', 'statusBanner', 'exportLink']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/connectors/connectors.css')).toBeGreaterThan(-1);
+    expect(html.indexOf('/swarm-admin/connectors/connectors.css')).toBeLessThan(html.indexOf('surface-glass.css'));
+    const script = fs.readFileSync(path.join(page!.pageDir, 'connectors.js'), 'utf8');
+    expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(script).toContain("requestJson('/api/connectors/marketplace')");
+    expect(script).toMatch(/window\.confirm\(/);
+    expect(SWARM_ADMIN_NAVIGATION.some((item) => item.path === '/swarm-admin/connectors' && item.group === 'swarm-admin')).toBe(true);
+    const app = await serve((a) => registerUiSurfaceRoutes({ app: a, requiresAuth, serveHtml: sendHtmlResponse, pages: pages() }));
+    try {
+      const screen = await app.get('/swarm-admin/connectors', OPERATOR);
+      expect(screen.status).toBe(200);
+      expect(await screen.text()).toContain('Catalog');
+      expect((await app.get('/swarm-admin/connectors/connectors.js', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/connectors', null)).status).toBe(302);
     } finally { await app.close(); }
   });
 

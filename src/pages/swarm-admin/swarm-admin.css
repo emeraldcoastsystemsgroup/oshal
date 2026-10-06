@@ -9,6 +9,9 @@
     | --accent-primary, and the cards take the shared surface-card chrome; nothing hard-coded, so
     | midnight, daylight, ocean and sakura all apply. Loaded before surface-glass.css, as the
     | glass spec requires of a page with local styles.
+  2 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-5): the page grid's one track is minmax(0, 1fr), not auto. An
+    | auto track grows to a child table's min-width, so the budgets and connectors screens
+    | overflowed the viewport sideways on a phone instead of their table wrappers scrolling.
 */
 
 body {
@@ -52,6 +55,7 @@ body {
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.5rem;
 }
 

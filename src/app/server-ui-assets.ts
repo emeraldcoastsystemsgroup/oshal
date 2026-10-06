@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-3): register /swarm-admin/ai-defaults, the AI defaults screen, under the same operator-role guard as the Swarm Admin home. Its leaf directory is named like the route, so no asset alias is mounted; as a nested route it also gives the standalone pages a /swarm-admin/shared mount of the shared helpers, behind requiresAuth like the others.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): register /swarm-admin/logins, the swarm logins screen, under the same operator-role guard as the other Swarm Admin pages.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): register /swarm-admin/budgets, the budgets screen, under the same operator-role guard as the other Swarm Admin pages.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): register /swarm-admin/connectors, the connectors screen, under the same operator-role guard as the other Swarm Admin pages.
  */
 
 import express from 'express';
@@ -247,6 +248,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const swarmAdminAiDefaultsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/ai-defaults'), path.resolve(process.cwd(), 'src/pages/swarm-admin/ai-defaults')]);
   const swarmAdminLoginsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/logins'), path.resolve(process.cwd(), 'src/pages/swarm-admin/logins')]);
   const swarmAdminBudgetsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/budgets'), path.resolve(process.cwd(), 'src/pages/swarm-admin/budgets')]);
+  const swarmAdminConnectorsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/connectors'), path.resolve(process.cwd(), 'src/pages/swarm-admin/connectors')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -297,5 +299,6 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     { routePath: '/swarm-admin/ai-defaults', pageDir: swarmAdminAiDefaultsDir, extraGuards: [requiresOperator] },
     { routePath: '/swarm-admin/logins', pageDir: swarmAdminLoginsDir, extraGuards: [requiresOperator] },
     { routePath: '/swarm-admin/budgets', pageDir: swarmAdminBudgetsDir, extraGuards: [requiresOperator] },
+    { routePath: '/swarm-admin/connectors', pageDir: swarmAdminConnectorsDir, extraGuards: [requiresOperator] },
   ];
 }
