@@ -2,7 +2,8 @@
 
 Date: 2026-10-05
 Status: **Accepted — 2026-10-05, operator decision** ("option d is right", choosing among the four B20 options laid out
-in conversation). Core half built with this ADR. The first adopter is the `embodied` store package, its B20 node rail.
+in conversation). Core half built with this ADR. The first adopter is the `embodied` store package, its B20 node rail. Amended the same day after a
+security review (Amendment 1, below).
 
 Related: [ADR-149](149-enterprise-application-authorization.md) (a service secret is not a user principal),
 [ADR-152](152-embodied-physics-and-training-lab.md) (the physics plant joins the swarm as a node, B20),
@@ -68,3 +69,24 @@ Four options were laid out:
 - Guard: `tests/unit/package-node-rail.spec.ts`. It runs the real PAT middleware, mounter and enforce-mode
   authorization runtime, and is mutation-checked: without the rail admission the bound device is refused,
   and without the guard's binding check an unbound PAT gets through.
+
+## Amendment 1 — security review of the first adoption (2026-10-05)
+
+A review of this ADR and its first adopter (`embodied` 0.18.0) found that opening a rail to device credentials changes what
+every field a node sends is worth. Fixes, each under a test that fails when the fix is removed:
+
+- **Core: a rail belongs to its app.** An `auth: node` mount must sit beneath `/api/<app>/<segment>`. The loader refuses
+  any other manifest, and the rail registry refuses any other path, so a package cannot open core routes or another app's
+  routes to device credentials.
+- **Core: a credential names its app.** A node-bound token is admitted on a rail only when its clientId starts with
+  `<app>-` (for example `embodied-plant` on embodied). Anything else is refused as `foreign-app`. A desktop worker
+  credential or another app's device is therefore not an identity on this rail.
+- **Core: no stale rails.** Every mount starts by dropping the app's rails, so a failed or partial remount leaves none
+  behind.
+- **Rule for packages: never send the swarm secret to a node.** A node declares the endpoint the api dials. Once a device
+  credential holder can heartbeat, that endpoint is attacker-chosen. A command that carries `SWARM_SERVICE_SECRET` there
+  hands an ordinary user machine trust, and the request itself is an SSRF primitive. Adopters authenticate api→node
+  commands with a per-node key returned only in that node's heartbeat reply, allowlist endpoint hosts, refuse redirects,
+  scope any node listing to the caller, and bound records per owner. `embodied` 0.18.1 (store #421) does all of these.
+- **Credential storage.** Keep a node's credential in its container's configuration (an installer can carry it over from
+  the running container), not on a volume other containers mount.

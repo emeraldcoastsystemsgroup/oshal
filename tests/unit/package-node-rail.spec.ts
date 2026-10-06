@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-175 guard: a package node rail (`auth: node`) admits a device-bound node credential for its owner and nothing else. The pure scope matrix, then the REAL createCliTokenAuthMiddleware in front of the REAL ManifestRouteMounter and application authorization runtime in enforce mode: the bound device reaches the handler as its owner with its binding stamped; the shared service secret (the refused B20 path), an unbound PAT, the same device on a non-rail route of the same app, and a device whose owner holds no grant are all refused; unmount closes the rail.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-175 amendment 1: rails register only beneath /api/<app>/<segment> (core and other-app paths refused, the loader refuses such a manifest), a token is admitted only on rails of the app its clientId names (`foreign-app` otherwise, over HTTP too), and a remount without the node route drops the rail.
  */
 import express, { type RequestHandler } from 'express';
 import type { Server } from 'node:http';
@@ -19,7 +20,8 @@ import { ManifestRouteMounterImpl } from '@/app/composition/manifest-route-mount
 import { createApplicationAuthorizationActorResolver } from '@/app/middleware/application-authorization-identity';
 import { createCliTokenAuthMiddleware } from '@/app/routes/cli-token-routes';
 import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
-import { decideNodeTokenScope, isPackageNodeRailPath, registerPackageNodeRail, unregisterPackageNodeRails } from '@/features/remote-client';
+import { decideNodeTokenScope, isPackageNodeRailPath, packageNodeRailApp, registerPackageNodeRail, unregisterPackageNodeRails } from '@/features/remote-client';
+import { readManifest } from '@/features/swarm-apps';
 import type { SwarmAppManifest, SwarmApplicationRecord } from '@/features/swarm-apps';
 import type { AuthorizationActor } from '@/shared/application-authorization';
 import { trustedServiceUserHeaders } from '@/shared/middleware/authz';
@@ -35,7 +37,8 @@ const SECRET = 'example-node-rail-fixture-service-secret';
 const ISSUER = 'https://identity.fixture.test';
 const OWNER = 'auth0|node-rail-owner';
 const STRANGER = 'auth0|node-rail-stranger';
-const DEVICE = 'embodied-plant';
+const DEVICE = `${APP}-plant`;
+const OTHER_APP_DEVICE = 'embodied-plant';
 const admin: AuthorizationActor = { sub: 'fixture-administrator', issuer: ISSUER, isActive: true, isSwarmAdmin: true };
 
 /** The package's two mounts: the node rail and an ordinary browser surface. */
@@ -127,8 +130,8 @@ afterEach(async () => {
 
 describe('package node rails - the scope matrix', () => {
   it('admits a bound token beneath a registered rail only, on whole segments', () => {
-    registerPackageNodeRail('scope-fixture', '/api/scope-fixture/nodes');
-    const at = (path: string) => decideNodeTokenScope({ boundClientId: DEVICE, path });
+    expect(registerPackageNodeRail('scope-fixture', '/api/scope-fixture/nodes')).toBe(true);
+    const at = (path: string) => decideNodeTokenScope({ boundClientId: 'scope-fixture-dev', path });
     expect(at('/api/scope-fixture/nodes/heartbeat')).toEqual({ allowed: true, reason: 'package-node-rail' });
     expect(at('/api/scope-fixture/nodes')).toEqual({ allowed: true, reason: 'package-node-rail' });
     expect(at('/api/scope-fixture/nodesX/heartbeat').allowed).toBe(false);
@@ -138,10 +141,37 @@ describe('package node rails - the scope matrix', () => {
     expect(at('/api/scope-fixture/nodes/heartbeat').allowed).toBe(false);
   });
 
-  it('never registers a bare /api or root rail', () => {
-    registerPackageNodeRail('scope-fixture', '/api');
-    registerPackageNodeRail('scope-fixture', '/');
-    expect(isPackageNodeRailPath('/api/content')).toBe(false);
+  it('registers a rail only beneath the app\'s own /api/<app>/<segment>', () => {
+    for (const mount of ['/api', '/', '/api/scope-fixture', '/api/tickets', '/api/cli-tokens/x', '/api/remote-clients/scope-fixture-dev', '/api/other-app/nodes', '/scope-fixture/nodes']) {
+      expect(registerPackageNodeRail('scope-fixture', mount), mount).toBe(false);
+    }
+    for (const path of ['/api/content', '/api/tickets/1', '/api/cli-tokens/x', '/api/other-app/nodes/heartbeat']) {
+      expect(isPackageNodeRailPath(path), path).toBe(false);
+      expect(decideNodeTokenScope({ boundClientId: 'scope-fixture-dev', path }).allowed, path).toBe(false);
+    }
+  });
+
+  it('a token is admitted only on rails of the app its clientId names', () => {
+    registerPackageNodeRail('scope-fixture', '/api/scope-fixture/nodes');
+    expect(packageNodeRailApp('/api/scope-fixture/nodes/heartbeat')).toBe('scope-fixture');
+    const at = (boundClientId: string) => decideNodeTokenScope({ boundClientId, path: '/api/scope-fixture/nodes/heartbeat' });
+    expect(at('scope-fixture-dev')).toEqual({ allowed: true, reason: 'package-node-rail' });
+    for (const other of ['embodied-plant', 'node-6f2c', 'oshal-chat-1', 'scope-fixturex-dev', 'scope-fixture']) {
+      expect(at(other), other).toEqual({ allowed: false, reason: 'foreign-app' });
+    }
+  });
+
+  it('the loader refuses an auth: node mount outside the package namespace', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oshal-node-rail-manifest-'));
+    const at = (mountPath: string) => {
+      const file = join(dir, `${Math.abs(mountPath.length * 7919)}-${mountPath.replace(/\W/g, '_')}.yaml`);
+      writeFileSync(file, `name: scope-fixture\ndisplayName: S\nroutes:\n  - module: routes/r.js\n    factory: createR\n    mountPath: ${mountPath}\n    auth: node\n`, 'utf8');
+      return () => readManifest(file);
+    };
+    try {
+      for (const bad of ['/api/tickets', '/api/scope-fixture', '/api/other-app/nodes', '/nodes']) expect(at(bad), bad).toThrow(/not beneath \/api\/scope-fixture\//);
+      expect(at('/api/scope-fixture/nodes')).not.toThrow();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('an empty binding is still refused on a rail', () => {
@@ -176,6 +206,31 @@ describe('package node rails - the real PAT middleware, mounter and authorizatio
     await boot();
     expect(await heartbeat({ authorization: `Bearer ${token}` }, `${SURFACE}/reset`)).toBe(401);
     expect(calls).toEqual([]);
+  }, 20_000);
+
+  it("another app's device credential is refused on this app's rail (foreign-app)", async () => {
+    const token = tokens.seed({ sub: OWNER, nodeClientId: OTHER_APP_DEVICE, principalIssuer: ISSUER });
+    await boot();
+    expect(await heartbeat({ authorization: `Bearer ${token}` })).toBe(401);
+    expect(calls).toEqual([]);
+  }, 20_000);
+
+  it('a remount without the node route drops the rail', async () => {
+    const token = tokens.seed({ sub: OWNER, nodeClientId: DEVICE, principalIssuer: ISSUER });
+    await boot();
+    expect(isPackageNodeRailPath(`${RAIL}/heartbeat`)).toBe(true);
+    await mounter.mount(APP, root, manifest().routes!.filter((r) => r.auth !== 'node'));
+    expect(isPackageNodeRailPath(`${RAIL}/heartbeat`)).toBe(false);
+    expect(await heartbeat({ authorization: `Bearer ${token}` })).not.toBe(200);
+  }, 20_000);
+
+  it('a strict remount that throws midway leaves no rail behind', async () => {
+    await boot();
+    expect(isPackageNodeRailPath(`${RAIL}/heartbeat`)).toBe(true);
+    const strictAuthorization = { protectedApp: () => true, packageToolDeclarations: () => [] } as unknown as ConstructorParameters<typeof ManifestRouteMounterImpl>[4];
+    const strict = new ManifestRouteMounterImpl(express(), ((_q, s) => s.status(401).end()) as RequestHandler, { calls } as unknown as AppContext, undefined, strictAuthorization);
+    await expect(strict.mount(APP, root, [{ module: 'routes/missing.js', factory: 'createRail', mountPath: RAIL, auth: 'node' }])).rejects.toThrow();
+    expect(isPackageNodeRailPath(`${RAIL}/heartbeat`), 'the rail from the earlier mount is gone').toBe(false);
   }, 20_000);
 
   it('a device whose owner holds no grant on the app is refused by the authorization guard', async () => {

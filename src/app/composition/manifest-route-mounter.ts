@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Restore pre-callback authority on signed handler fallthrough without changing anonymous route admission.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Normalize anonymous route declarations { method, path } when staging entries.
  * 17 | maintainer@emeraldcoastsystemsgroup.com  | ADR-175: `auth: node` mounts. The guard admits only a request the global PAT middleware authenticated with a device-bound node credential admitted on this rail (`req.oshalNodeToken`); the mount registers its path as a package node rail and unmount drops it.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com  | ADR-175 amendment 1: every mount starts by dropping the app's node rails, so a failed or partial remount never leaves a rail admitting node credentials where no handler is; a `node` mount outside /api/<app>/<segment> is not registered (logged), so its guard admits no one.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -171,6 +172,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     routes: SwarmAppRouteDeclaration[],
     access?: SwarmAppAccessDeclaration,
   ): Promise<void> {
+    unregisterPackageNodeRails(appName);
     const strict = this.applicationAuthorization?.protectedApp(appName) === true;
     const needsTools = Boolean(this.applicationAuthorization?.packageToolDeclarations?.(appName).length);
     if (needsTools && (!this.packageTools || !routes.length)) {
@@ -270,7 +272,9 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     else this.byApp.delete(appName);
     unregisterPackageNodeRails(appName);
     for (const entry of entries) {
-      if (entry.mode === 'node') registerPackageNodeRail(appName, entry.mountPath);
+      if (entry.mode === 'node' && !registerPackageNodeRail(appName, entry.mountPath)) {
+        logger.error({ appName, mountPath: entry.mountPath }, 'auth: node mount is outside /api/<app>/<segment> — rail not registered; node credentials are refused there');
+      }
     }
   }
 
