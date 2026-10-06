@@ -53,6 +53,7 @@
  * 47 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 48 | maintainer@emeraldcoastsystemsgroup.com | ADR-081 privileged lane (general fix): registerWorkflow records when the pipeline registry refuses a manifest's workflow (a privileged ticket type from an app that does not own it, or another type naming the privileged worker), so an app that loads without its workflow says why in the log instead of its tickets deferring silently.
  * 49 | maintainer@emeraldcoastsystemsgroup.com | activate() registers the app's composed bot personas for protected node turns (applyBotPersonas, beside the skill profiles: replace-by-app, non-fatal, retracts on failure); deactivate() retracts them (retractBotPersonas, which calls unregisterAppBotPersonas) with the other app-keyed registries, so a toggled-off app carries no persona into a protected dispatch.
+ * 50 | maintainer@emeraldcoastsystemsgroup.com | The deactivate-time artifact-action retraction moves to manifest-artifact-registration.ts (retractArtifactActions; same log and behaviour), keeping this file inside its 1000 code-line cap after the bot-persona hooks (seq 49).
  */
 
 import type { Pool } from 'pg';
@@ -84,8 +85,7 @@ import {
   registerAppSkillProfiles,
   unregisterAppSkillProfiles,
 } from '@/shared/skill-profiles';
-import { unregisterAppArtifactActions } from '@/shared/artifact-exchange';
-import { applyArtifactActions } from './manifest-artifact-registration';
+import { applyArtifactActions, retractArtifactActions } from './manifest-artifact-registration';
 import { applyBotPersonas, retractBotPersonas } from './manifest-bot-persona';
 import {
   assertGroupResolvable,
@@ -1282,11 +1282,7 @@ export class SwarmAppService {
     retractBotPersonas(record.name);
     // ADR-139: retract the app's "Send to…" artifact actions — a toggled-off app must hold zero
     // live menu entries. Idempotent.
-    try {
-      unregisterAppArtifactActions(record.name);
-    } catch (err) {
-      logger.error({ err, app: record.name }, 'Artifact-action deregistration failed (non-fatal)');
-    }
+    retractArtifactActions(record.name);
     // Retract the app's dynamically registered bots FIRST — a stale registry entry
     // would keep resolving dispatch to a deactivated app (ghost dispatch). Idempotent.
     try {
