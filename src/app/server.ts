@@ -217,6 +217,7 @@
  * 201 | maintainer@emeraldcoastsystemsgroup.com   | /api/personal-graph and /api/personal-graph/ingest (off unless PERSONAL_GRAPH_ROUTES=on) are operator-only: they share one in-memory store across every caller, so any signed-in user could read all users' ingested data, and ingest falls back to the deployment's connector credential (route review 2026-10-05).
  * 202 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-066 personal-graph mounts moved to server-auxiliary-routes.ts (mountPersonalGraphRoutes), unchanged and still operator-only, so server.ts is back under the 800-code-line decomposition threshold (BACKLOG #1788) it had crossed on main.
  * 203 | maintainer@emeraldcoastsystemsgroup.com   | The sign-in routes move unchanged into server-auxiliary-routes.ts mountSignInRoutes, which also mounts the swarm admin's sign-in (/login/admin, /api/admin-auth/login, /logout/admin) right after /login and before the generic /login/:provider route, in every auth mode except MOCK_OIDC (ADR-174 slice 2b-ii). This keeps server.ts under its decomposition threshold.
+ * 204 | maintainer@emeraldcoastsystemsgroup.com   | Mount createSwarmAdminScopeGuard (ADR-174 slice 2c) after identity resolution and the RLS identity block, before the first route (tv-pairing): the swarm admin reaches only swarm administration and every personal surface refuses it.
  */
 
 require('dotenv').config();
@@ -317,6 +318,7 @@ import { createTakeoutRoutes } from './routes/takeout-routes';
 import { createAuditCaptureMiddleware, requireAdminConsoleAccess } from '@/features/governance';
 import { createGuestSessionInjector, isGuestRequest } from '@/shared/middleware/guest-session';
 import { createGuestGuard } from '@/shared/middleware/guest-guard';
+import { createSwarmAdminScopeGuard } from '@/shared/middleware/swarm-admin-scope';
 import { createGuestRoutes } from './routes/guest-routes';
 import { createRagRoutes } from './routes/rag-routes';
 import { createGlobalSearchRoutes } from './routes/global-search-routes';
@@ -776,6 +778,10 @@ function createApp(): express.Application {
       );
     });
   }
+
+  // ADR-174: the swarm admin is not a user of the swarm. It reaches only swarm administration; every
+  // personal surface refuses it. Mounted after identity resolution and before the first route below.
+  app.use(createSwarmAdminScopeGuard());
 
   // Pairing endpoints: start/poll are public (the TV isn't signed in yet); approve + the /tv
   // approval page are requiresAuth (the user signs in normally in a real browser).
