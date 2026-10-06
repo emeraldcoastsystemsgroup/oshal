@@ -84,6 +84,12 @@ OSHAL pipelines and surfaces. One file per procedure.
 
 ## Enable / operate a feature
 
+- [in-app-assistants-on-antigravity.md](./in-app-assistants-on-antigravity.md) — each app's chat
+  assistant on the operator's own Antigravity login: where a turn runs (own node, the shared
+  concierge node, or inline), switching the concierge node on and off, the two checks and the live
+  chat check, and a table of failure signatures (422 with or without `Agent not found`, the opt-in
+  app toggle, `authorization_operation_unbound`, `authorization_app_admin_required`, tool 401s and
+  uninstalled grants, a first-boot pull that lost the race with a deploy).
 - [tenant-provisioning.md](./tenant-provisioning.md) — rendering one tenant's database and
   namespace policy with `scripts/governance/provision-tenant.sh` (isolated tier only: a database per
   tenant; `--tenancy=shared` is refused as not built), applying it with `psql` and

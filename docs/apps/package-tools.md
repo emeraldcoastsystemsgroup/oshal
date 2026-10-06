@@ -43,6 +43,36 @@ Run `npm run test:package-tools` for the isolated activation, HTTP/tool parity, 
 revocation and approval cases. AI Test Lab registers these under **Authorized application
 tools**; registration does not claim that a local runner has executed.
 
+## Bots in an adopted package
+
+A turn with one of the package's bots is an operation in its own right, like a route or a tool.
+An adopted package (one with an authorization catalog) must bind every bot it declares in
+`bindings.bots`, by agent id (ADR-149).
+Without that binding, every turn with the bot is refused with `authorization_operation_unbound`,
+whoever the caller is, and the chat panel shows it as a 500. Video up to 1.9.1 shipped this way:
+its catalog bound only HTTP routes, so its screenplay writer refused every turn. 1.9.2 binds all
+three of its bots; the screenplay writer's line is:
+
+```yaml
+bindings:
+  bots:
+    - { id: a0000000-0000-0000-0000-000000000052, allOf: [studio.generate] }
+```
+
+A bot that has to act needs package tools. A route-backed tool (`executorType: api`) calls the
+package's own HTTP route over loopback with only the service secret. Under the enforce
+authorization mode, that route's `auth: oidc` and the package guard answer 401, so the bot sees
+the tool fail while its chat still works (observed with Scene Studio's director before 0.2.0).
+Scene Studio 0.2.0 is the worked example: 22 package tools behind one `creator` role, called by
+its director from its own bot node.
+
+A bot on a node sees only its tool grants that are both `auto` and installed. The persona
+seeder writes new grants as not installed (observed for Scene Studio's director), so set the
+group to `auto` once:
+`PUT /api/agents/<agentId>/tools/groups/<group>` with body `{"groupName": "<group>", "authMode": "auto"}`
+(`groupName` is required in the body as well as the path). The operator steps for in-app
+assistants are in [the in-app assistants runbook](../runbooks/in-app-assistants-on-antigravity.md).
+
 ## Jarvis proposals
 
 Jarvis receives only currently authorized tool names, descriptions, bounded deduplicated keywords
