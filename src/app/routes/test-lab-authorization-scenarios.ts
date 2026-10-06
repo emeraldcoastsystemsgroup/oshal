@@ -30,6 +30,7 @@
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-sign-in-rail (ADR-174 slice 2b-ii: the admin's local sign-in beside an identity provider never mixes with the provider session; real PostgreSQL for the admin-only login and session).
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-scope-guard (ADR-174 slice 2c: the swarm admin reaches only swarm administration; its reach list is checked against the real mount table).
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-reach-exact (ADR-174 S02: the swarm admin's reach is exact; the never-list for the worker plane, CLI tokens and enrolment is checked first, the routes that act as the caller inside the narrowed routers are refused in any case, and the admin's own calls into them stay allowed).
+ * 28 | maintainer@emeraldcoastsystemsgroup.com   | Detach local-swarm-admin-account, local-swarm-admin-login, swarm-admin-sign-in-rail, swarm-admin-scope-guard and swarm-admin-reach-exact (entries 23 to 27): the specs are deleted with the separate configuration-only admin account they guarded (ADR-174 slices 2a to 2c), which Roger's admin-role decision (2026-10-06) replaces with the existing operator role on a person's own account. package.json test:authorization drops the same five paths, so the two lists stay equal.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -135,11 +136,6 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'unit', path: 'tests/unit/authorization-principal.spec.ts' },
     { level: 'integration', path: 'tests/unit/principal-directory.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-account-administration.spec.ts' },
-    { level: 'integration', path: 'tests/unit/local-swarm-admin-account.spec.ts' },
-    { level: 'integration', path: 'tests/unit/local-swarm-admin-login.spec.ts' },
-    { level: 'integration', path: 'tests/unit/swarm-admin-sign-in-rail.spec.ts' },
-    { level: 'unit', path: 'tests/unit/swarm-admin-scope-guard.spec.ts' },
-    { level: 'unit', path: 'tests/unit/swarm-admin-reach-exact.spec.ts' },
     { level: 'browser', path: 'tests/unit/users-administration-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
     { level: 'integration', path: 'tests/unit/smtp-mailer-transport.spec.ts' },

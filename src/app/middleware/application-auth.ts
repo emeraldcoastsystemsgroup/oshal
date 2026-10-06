@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add the opt-in Entra/local hybrid pilot composition: the established invited-user page remains at /login and offers Microsoft explicitly at /login/microsoft on the already-registered provider-suffixed callback; /login/local remains the recovery door. Door switches and logout clear sibling sessions so one browser principal is authoritative at a time.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 slice 2b-ii: identity-provider deployments (plain OIDC and the bridge cutover) gain the swarm admin's local sign-in through createSwarmAdminRail. /login/admin clears provider sessions; a provider sign-in or /logout clears the admin cookie; other requests run the provider and then an injector that admits only the swarm-admin account. The hybrid pilot treats /login/admin as a local surface. MOCK_OIDC, or no signing secret, leaves the set unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Entry 3 removed (Roger's admin-role decision, 2026-10-06: admin is the existing operator role on a person's own account, so no separate local admin sign-in sits beside the identity provider). Gone: createSwarmAdminRail, isProviderSignInPath, defaultAdminInjector, the createAdminInjector dependency and the '/login/admin' local-surface entry. Plain OIDC and the bridge cutover return the provider's own set again, so a deployment with a session-signing secret no longer accepts any local session cookie beside Google or Microsoft; LOCAL_AUTH and the hybrid pilot are exactly as before entry 3.
  */
 
 import type { Request, RequestHandler, Response } from 'express';
@@ -16,8 +17,7 @@ import {
   isEntraLocalAuthHybridEnabled,
   isEntraLocalIdentityBridgeEnabled,
 } from '@/app/middleware/entra-local-identity-bridge';
-import { createLocalAuthMiddlewareSet, createLocalSessionInjector } from '@/app/routes/local-auth-routes';
-import { swarmAdminSignInAvailable } from '@/app/routes/swarm-admin-sign-in-routes';
+import { createLocalAuthMiddlewareSet } from '@/app/routes/local-auth-routes';
 import { isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
 import {
   createOidcMiddleware,
@@ -40,8 +40,6 @@ export type ApplicationAuthDependencies = {
   createOidc?: (options?: Parameters<typeof createOidcMiddleware>[0]) => OidcMiddlewareSet;
   createLocal?: (pool: Pool) => OidcMiddlewareSet;
   createBridge?: (pool: Pool, env: NodeJS.ProcessEnv) => RequestHandler;
-  /** The swarm admin's local-session injector for identity-provider deployments, or null when unavailable (ADR-174). */
-  createAdminInjector?: (pool: Pool, env: NodeJS.ProcessEnv) => RequestHandler | null;
 };
 
 const EXTERNAL_SESSION_COOKIE_BASES = [
@@ -51,7 +49,7 @@ const EXTERNAL_SESSION_COOKIE_BASES = [
   'appSession_google',
 ] as const;
 
-const LOCAL_SURFACE_PATHS = new Set(['/login/local', '/login/admin', '/invite', '/2fa']);
+const LOCAL_SURFACE_PATHS = new Set(['/login/local', '/invite', '/2fa']);
 
 function flag(value: string | undefined): boolean {
   const normalized = (value ?? '').trim().toLowerCase();
@@ -164,45 +162,6 @@ function createHybridAuthMiddleware(
   };
 }
 
-/** Paths that begin or end an identity-provider sign-in; each is an explicit switch away from the admin's local session. */
-function isProviderSignInPath(pathname: string): boolean {
-  return pathname === '/login' || pathname === '/logout' || (pathname.startsWith('/login/') && pathname !== '/login/admin');
-}
-
-/**
- * Give an identity-provider deployment the swarm admin's local sign-in (ADR-174 D1) without letting the
- * two principals mix. Opening /login/admin discards a provider session first, so the admin's cookie is
- * the only one left. Starting a provider sign-in, or /logout, discards the admin cookie, so signing out
- * of Google can never leave the browser signed in as the admin. Everything else runs the provider, then
- * the admin-only injector, which steps aside whenever the provider already authenticated the request.
- */
-function createSwarmAdminRail(external: OidcMiddlewareSet, admin: RequestHandler): RequestHandler {
-  const externalThenAdmin = then(external.authMiddleware, admin);
-  return (req, res, next) => {
-    const pathname = req.path;
-    if (req.method === 'GET' && pathname === '/login/admin') {
-      clearExternalSessions(req, res);
-      return admin(req, res, next);
-    }
-    if (req.method === 'GET' && pathname === '/logout/admin') {
-      clearExternalSessions(req, res);
-      clearLocalSession(req, res);
-      res.redirect(302, '/login/admin');
-      return;
-    }
-    if (req.method === 'GET' && isProviderSignInPath(pathname)) {
-      clearLocalSession(req, res);
-      return external.authMiddleware(req, res, next);
-    }
-    return externalThenAdmin(req, res, next);
-  };
-}
-
-/** The default admin injector: admits only the swarm-admin account's local session, when the deployment can sign it in. */
-function defaultAdminInjector(pool: Pool, env: NodeJS.ProcessEnv): RequestHandler | null {
-  return swarmAdminSignInAvailable(env) ? createLocalSessionInjector(pool, { onlyAccountKind: 'swarm-admin' }) : null;
-}
-
 /**
  * @description Selects the deployment auth set. With the hybrid flag off this is exactly the
  * historical LOCAL_AUTH-or-OIDC choice. With it on, LOCAL_AUTH stays enabled and owns bare
@@ -217,12 +176,6 @@ export function createApplicationAuthMiddlewareSet(
   const createOidc = dependencies.createOidc ?? createOidcMiddleware;
   const createLocal = dependencies.createLocal ?? createLocalAuthMiddlewareSet;
   const createBridge = dependencies.createBridge ?? createEntraLocalIdentityBridgeMiddleware;
-  const createAdminInjector = dependencies.createAdminInjector ?? defaultAdminInjector;
-  // An identity-provider set gains the swarm admin's local sign-in beside the provider (ADR-174).
-  const withAdminRail = (set: OidcMiddlewareSet): OidcMiddlewareSet => {
-    const admin = createAdminInjector(pool, env);
-    return admin ? { ...set, authMiddleware: createSwarmAdminRail(set, admin) } : set;
-  };
 
   if (isEntraLocalAuthHybridEnabled(env)) {
     validateHybridConfiguration(env);
@@ -248,11 +201,11 @@ export function createApplicationAuthMiddlewareSet(
   if (isEntraLocalIdentityBridgeEnabled(env)) {
     const external = createOidc();
     const bridge = createBridge(pool, env);
-    return withAdminRail({
+    return {
       ...external,
       authMiddleware: then(external.authMiddleware, bridge),
-    });
+    };
   }
 
-  return flag(env.LOCAL_AUTH) ? createLocal(pool) : withAdminRail(createOidc());
+  return flag(env.LOCAL_AUTH) ? createLocal(pool) : createOidc();
 }

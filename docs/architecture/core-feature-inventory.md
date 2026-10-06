@@ -40,7 +40,7 @@ The Rust builder subsequently reported remediation of the preliminary RK finding
 
 | Record | Current source limitation |
 |---|---|
-| [AUTH-08: Configuration-only local swarm administrator](#auth-08) | Reserved account kind, dedicated admin login and global route containment are implemented. The guard admits administration plus exact dashboard GETs and denies personal routes. ADR-174 staged screen/rights transition remains incomplete; the October 5 board records admin screens planned and the account not activated at that receipt. Activation was not rechecked here. |
+| [AUTH-08: Admin role and portal defaults](#auth-08) | ADR-174 Amendment A (2026-10-06) removed the separate configuration-only local account, its /login/admin sign-in and its route containment. Admin is the existing operator role (swarm_roles root/admin rows or the operator environment allowlist) on a person's own account. Capability swarm rows already fall back to the portal default (ADR-173); the reserved portal-default owner for other settings and the admin screens that edit it are not built yet. |
 | [SEC-04: Interactive tool approvals and protected control events](#sec-04) | Tool policy interceptor, pending request resolver and timeout denial are implemented; protected SSE forwards only canonical approval controls under current pending inline authority. Source-wide search finds resolveApproval only at its declaration: the modal POSTs /api/tools/approval but the inspected tool router has no decision endpoint. Browser approve/deny completion is therefore not established; normal result events remain completion-gated. |
 | [SEC-06: Durable protected remote and inline result authority](#sec-06) | Remote permit lifecycle and controller-only startInline/completeInline share durable authority, current owner/policy/snapshot checks and original ceilings. Empty admission requires zero actual messages and current ownership; nonempty no-lineage history remains refused. Inline records are controller provenance, not forged signed worker permits. Current registrations mint a random generation at each API boot, and assertSnapshot requires exact generation equality; prior protected answers are therefore fenced after restart. Stable release identity for durable history remains incomplete. |
 | [TOOL-12: Workflow Studio agent-tool HTTP translation contract](#tool-12) | ToolExecutorService constructs the integration for the local /api/workflow-studio base URL and dispatches the workflow-studio tool. The integration implements get/post/put and all named actions, while target routes are mounted with requiresAuth. Reviewed fetch calls carry no forwarded caller authorization/session headers, so successful authorization across this agent-tool-to-local-API boundary is not established from the implementation; mark partial rather than count the HTTP client as a working authenticated workflow author. Existing mounted server routes belong to the Workflow Studio capability; this integration itself mounts no new route. |
@@ -86,7 +86,7 @@ The Rust builder subsequently reported remediation of the preliminary RK finding
 | [AUTH-05: Authenticator second factor and recovery codes](#auth-05) | wired | platform | not-located |
 | [AUTH-06: Password reset and invitation delivery](#auth-06) | wired | platform | not-located |
 | [AUTH-07: Account status administration](#auth-07) | wired | platform | wired |
-| [AUTH-08: Configuration-only local swarm administrator](#auth-08) | partial | platform | not-located |
+| [AUTH-08: Admin role and portal defaults](#auth-08) | partial | platform | not-reviewed |
 | [AUTH-09: Installer root election and transfer](#auth-09) | wired | platform | wired |
 | [AUTH-10: Swarm roles and resource ownership gates](#auth-10) | wired | platform | partial |
 | [AUTH-11: Business tenants and explicit memberships](#auth-11) | wired | platform | partial |
@@ -222,21 +222,21 @@ Decisions: [docs/adr/117-local-auth-invited-users.md](../../docs/adr/117-local-a
 Existing acceptance sources: [tests/unit/local-account-administration.spec.ts](../../tests/unit/local-account-administration.spec.ts), [tests/unit/local-auth-middleware.spec.ts](../../tests/unit/local-auth-middleware.spec.ts).
 
 <a id="auth-08"></a>
-### AUTH-08 — Configuration-only local swarm administrator
+### AUTH-08 — Admin role and portal defaults
 
-Separate the local swarm administrator from people who use chat, applications and personal AI accounts. **Core: partial; boundary: platform.** Reserved account kind, dedicated admin login and global route containment are implemented. The guard admits administration plus exact dashboard GETs and denies personal routes. ADR-174 staged screen/rights transition remains incomplete; the October 5 board records admin screens planned and the account not activated at that receipt. Activation was not rechecked here.
+Give people who hold the admin role a separate set of screens for portal-wide defaults, while the same person keeps their ordinary screens for their own data. **Core: partial; boundary: platform.** ADR-174 Amendment A (2026-10-06) removed the separate configuration-only local account, its /login/admin sign-in and its route containment. Admin is the existing operator role (swarm_roles root/admin rows or the operator environment allowlist) on a person's own account. Capability swarm rows already fall back to the portal default (ADR-173); the reserved portal-default owner for other settings and the admin screens that edit it are not built yet.
 
-User operations: Sign in to swarm administration with the reserved local account; Manage configuration and users; Keep personal work under a separate user identity.
+User operations: Hold the admin role on an ordinary account; Fall back to portal-default settings where a person has none of their own.
 
-Core evidence: [src/features/local-auth/services/local-user-store.ts](../../src/features/local-auth/services/local-user-store.ts), [src/app/routes/local-auth-routes.ts](../../src/app/routes/local-auth-routes.ts), [src/shared/middleware/swarm-admin-scope.ts](../../src/shared/middleware/swarm-admin-scope.ts), [src/shared/middleware/privileged-identities.ts](../../src/shared/middleware/privileged-identities.ts), [src/app/server.ts](../../src/app/server.ts), [src/app/routes/swarm-admin-sign-in-routes.ts](../../src/app/routes/swarm-admin-sign-in-routes.ts), [src/app/server-auxiliary-routes.ts](../../src/app/server-auxiliary-routes.ts).
+Core evidence: [src/shared/middleware/privileged-identities.ts](../../src/shared/middleware/privileged-identities.ts), [src/shared/middleware/authz.ts](../../src/shared/middleware/authz.ts), [src/app/server-auxiliary-routes.ts](../../src/app/server-auxiliary-routes.ts).
 
-Rust: **not-located**. Bounded search across crates for swarm-admin/configuration-only account guards found no corresponding route containment. Rust root has broad grants and Ctx.store only excludes Service from person scope, so root is not the core configuration-only admin boundary. Sources in `oshal-kernel`: `crates/control/src/grants.rs`, `crates/control/src/ctx.rs`, `crates/api/src/admin_api.rs`.
+Rust: **not-reviewed**. Not re-reviewed after ADR-174 Amendment A; the earlier mapping covered the removed configuration-only account.
 
-Core route references: `/login/admin`, `/logout/admin`, `/api/admin-auth/login`, `/access`, `/users`, `/utilities`.
+Core route references: `/access`, `/users`, `/utilities`.
 
 Decisions: [docs/adr/174-local-admin-and-swarm-admin.md](../../docs/adr/174-local-admin-and-swarm-admin.md).
 
-Existing acceptance sources: [tests/unit/local-swarm-admin-account.spec.ts](../../tests/unit/local-swarm-admin-account.spec.ts), [tests/unit/local-swarm-admin-login.spec.ts](../../tests/unit/local-swarm-admin-login.spec.ts), [tests/unit/swarm-admin-scope-guard.spec.ts](../../tests/unit/swarm-admin-scope-guard.spec.ts).
+Existing acceptance sources: [tests/unit/operator-route-ratchet.spec.ts](../../tests/unit/operator-route-ratchet.spec.ts).
 
 <a id="auth-09"></a>
 ### AUTH-09 — Installer root election and transfer
@@ -4919,7 +4919,7 @@ Every current immediate directory is listed. “Unassigned” requires an explic
 | `src/features/intake` | [EXEC-08](#exec-08) |
 | `src/features/linkedin-assistant` | [SOCIAL-01](#social-01), [SOCIAL-02](#social-02) |
 | `src/features/llm-provider` | [SEC-03](#sec-03), [SEC-08](#sec-08), [A2A-04](#a2a-04), [MODEL-01](#model-01), [MODEL-02](#model-02), [MODEL-03](#model-03), [MODEL-06](#model-06), [MODEL-07](#model-07), [HARNESS-01](#harness-01), [HARNESS-02](#harness-02), [HARNESS-03](#harness-03), [HARNESS-04](#harness-04), [HARNESS-05](#harness-05) |
-| `src/features/local-auth` | [AUTH-03](#auth-03), [AUTH-04](#auth-04), [AUTH-05](#auth-05), [AUTH-06](#auth-06), [AUTH-07](#auth-07), [AUTH-08](#auth-08) |
+| `src/features/local-auth` | [AUTH-03](#auth-03), [AUTH-04](#auth-04), [AUTH-05](#auth-05), [AUTH-06](#auth-06), [AUTH-07](#auth-07) |
 | `src/features/location` | [NODE-09](#node-09), [DATA-17](#data-17), [ENG-03](#eng-03), [ENG-04](#eng-04) |
 | `src/features/logging` | [MON-02](#mon-02) |
 | `src/features/memory` | [MEMORY-01](#memory-01) |

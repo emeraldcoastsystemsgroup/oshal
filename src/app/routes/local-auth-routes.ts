@@ -14,6 +14,7 @@
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Respect established external identities in setup and serialize root status and credential recovery guards with role changes.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | GET /api/local-auth/state reports resetEmail: whether a reset email has a configured rail (SMTP or a connector sender). A fresh install has neither, and the login page's "Email me a reset link" then answered "a reset link is on its way" for a mail that could never be sent; the page now shows the server-side link command instead.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 slice 2b-i: the swarm-admin account never gets a session without a working second factor. On its first sign-in the correct password returns secondFactor 'enrol' with the QR, typed key and recovery codes, and only a correct authenticator code confirms the factor and starts the session. After that it signs in with password plus code like any enrolled account. It cannot switch the factor off.
+ * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 slices 2b-i and 2b-ii removed (Roger's admin-role decision, 2026-10-06: admin is the existing operator role on a person's own account, so there is no separate swarm-admin account to sign in). Gone from the login: the enrolment-inside-the-login branch, startAdminEnrolment and the 2fa-disable refusal (entry 11), so every account gets the ordinary second-factor rules exactly as before entry 11. Gone from the session injector and the password login: the onlyAccountKind option, the account-kind filter and the oshal_account_kind claim, so a local session principal again carries only iss, sub, email, name and preferred_username. The two helpers stay at module scope but are private (createLocalSessionInjector feeds createLocalAuthMiddlewareSet, createPasswordLoginHandler serves POST /api/local-auth/login, each with its pre-2b-ii body), and clearLocalSessionCookie and servePage are no longer exported: their only outside caller was the deleted swarm-admin-sign-in-routes.ts.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -60,7 +61,6 @@ import {
   listUsers,
   upsertInvite,
   verifyLogin,
-  type LocalAccountKind,
   type LocalUser,
 } from '@/features/local-auth';
 import { sendTransactionalMail, smtpConfigured } from '@/features/notifications';
@@ -75,7 +75,7 @@ export { isLocalAuthEnabled } from '@/features/local-auth';
 // The injector runs on EVERY request; a 30s cache keeps revocation (disable /
 // password change) near-immediate without a per-request SELECT.
 const SNAPSHOT_TTL_MS = 30_000;
-type Snapshot = { status: string; tokenVersion: number; email: string; displayName: string | null; accountKind: LocalAccountKind };
+type Snapshot = { status: string; tokenVersion: number; email: string; displayName: string | null };
 const snapshotCache = new Map<string, { snap: Snapshot | null; at: number }>();
 
 /**
@@ -165,7 +165,7 @@ function setLocalSessionCookie(req: Request, res: Response, identity: LocalSessi
   return true;
 }
 
-export function clearLocalSessionCookie(res: Response): void {
+function clearLocalSessionCookie(res: Response): void {
   res.clearCookie(LOCAL_SESSION_COOKIE, { path: '/' });
 }
 
@@ -187,7 +187,7 @@ function resolveLoginPage(file: string): string | null {
   return null;
 }
 
-export function servePage(res: Response, file: string): void {
+function servePage(res: Response, file: string): void {
   const resolved = resolveLoginPage(file);
   if (!resolved) {
     res.status(500).type('text/plain').send('login surface is missing from this build');
@@ -207,17 +207,16 @@ export function servePage(res: Response, file: string): void {
 // ── The middleware set (server.ts picks this over OIDC when LOCAL_AUTH=true) ─
 
 /**
- * @description The local session injector: a valid `oshal_local` cookie for an active account whose
- * token version still matches becomes `req.oidc`. It steps aside when another rail already
- * authenticated the request. With `onlyAccountKind`, it admits only that kind of account: an
- * identity-provider deployment uses it to accept the swarm admin's local session and nobody else's
- * (ADR-174). The principal carries `oshal_account_kind` so later gates can tell the admin apart.
+ * @description The LOCAL_AUTH session injector: a valid `oshal_local` cookie for an active account
+ * whose token version still matches becomes the standard `req.oidc` principal (revocation via a 30s
+ * store snapshot: a disabled account or a bumped token_version ends the session). It reissues the
+ * cookie past the rolling half-life and steps aside when another injector already authenticated the
+ * request.
  *
  * @param pool - Postgres pool for the session snapshot.
- * @param options - `onlyAccountKind` restricts which local accounts the cookie may stand for.
  * @returns Express middleware.
  */
-export function createLocalSessionInjector(pool: Pool, options: { onlyAccountKind?: LocalAccountKind } = {}): RequestHandler {
+function createLocalSessionInjector(pool: Pool): RequestHandler {
   return async (req, res, next) => {
     try {
       const existing = (req as { oidc?: { isAuthenticated?: () => boolean } }).oidc;
@@ -227,7 +226,6 @@ export function createLocalSessionInjector(pool: Pool, options: { onlyAccountKin
       if (!claims) return next();
       const snap = await cachedSnapshot(pool, claims.sub);
       if (!snap || snap.status !== 'active' || snap.tokenVersion !== claims.v) return next();
-      if (options.onlyAccountKind && snap.accountKind !== options.onlyAccountKind) return next();
       if (shouldReissueLocalSession(claims)) {
         setLocalSessionCookie(req, res, {
           userSub: claims.sub, email: snap.email, displayName: snap.displayName, tokenVersion: snap.tokenVersion,
@@ -241,7 +239,6 @@ export function createLocalSessionInjector(pool: Pool, options: { onlyAccountKin
           email: snap.email,
           name: snap.displayName || snap.email,
           preferred_username: snap.email,
-          oshal_account_kind: snap.accountKind,
         },
         idToken: 'local-session',
         accessToken: 'local-session',
@@ -493,97 +490,67 @@ function errStatus(err: unknown): number {
 }
 
 /**
- * @description Starts the swarm admin's authenticator enrolment and returns what the login page
- * shows: the QR, the typed key and the one-time recovery codes.
- */
-async function startAdminEnrolment(pool: Pool, sub: string, account: string) {
-  const issuer = (process.env.TOTP_ISSUER || 'oshal').trim() || 'oshal';
-  const enrolment = await beginTotpEnrolment(pool, sub, issuer, account);
-  return {
-    qrDataUri: await QRCode.toDataURL(enrolment.otpauthUri, { margin: 1, width: 240 }),
-    otpauthUri: enrolment.otpauthUri,
-    secret: formatSecretForDisplay(enrolment.secretBase32),
-    recoveryCodes: enrolment.recoveryCodes,
-  };
-}
-
-/**
- * @description The password login: email (or the admin's login) + password, then the second factor.
- * One generic failure message, so it never tells which accounts exist. With `onlyAccountKind`, the
- * handler admits only that kind of account: the swarm admin's sign-in page (ADR-174) uses it.
+ * @description POST handler for the LOCAL_AUTH password login: email + password, then the second
+ * factor when the account has one. Every failure answers with one generic message (no account
+ * enumeration), failures are rate-limited per IP + email, and the session cookie is set only after
+ * both steps pass.
  *
- * @param pool - Postgres pool.
- * @param options - `onlyAccountKind` restricts which accounts may sign in through this handler.
- * @returns Express handler for POST.
+ * @param pool - Postgres pool backing the local-user store.
+ * @returns Express handler for POST /api/local-auth/login.
  */
-export function createPasswordLoginHandler(pool: Pool, options: { onlyAccountKind?: LocalAccountKind } = {}): RequestHandler {
+function createPasswordLoginHandler(pool: Pool): RequestHandler {
   return async (req, res) => {
-  const body = (req.body ?? {}) as { email?: string; password?: string; returnTo?: string; code?: string };
-  const email = String(body.email ?? '').trim().toLowerCase();
-  const key = loginKey(req, email);
-  if (isLoginBlocked(key)) {
-    res.status(429).json({ error: 'too many attempts — wait a few minutes and try again' });
-    return;
-  }
-  try {
-    const verified = await verifyLogin(pool, email, String(body.password ?? ''));
-    // A login page for one kind of account answers every other account exactly like a wrong password.
-    const user = verified && (!options.onlyAccountKind || verified.accountKind === options.onlyAccountKind) ? verified : null;
-    if (!user) {
-      recordLoginFailure(key);
-      res.status(401).json({ error: 'that email and password did not match' });
+    const body = (req.body ?? {}) as { email?: string; password?: string; returnTo?: string; code?: string };
+    const email = String(body.email ?? '').trim().toLowerCase();
+    const key = loginKey(req, email);
+    if (isLoginBlocked(key)) {
+      res.status(429).json({ error: 'too many attempts — wait a few minutes and try again' });
       return;
     }
-    // The password is right. Now the second factor, if this account has one. Note this
-    // block is reached ONLY after a successful password check, so it can never be used to
-    // probe which accounts have 2FA enabled.
-    const factor = await getTotpState(pool, user.userSub);
-    const code = String(body.code ?? '').trim();
-    if (user.accountKind === 'swarm-admin' && factor?.enabled !== true) {
-      // ADR-174: the swarm admin never gets a session without a working second factor. Its first
-      // sign-in enrols the authenticator inside the login: the password returns the QR, and only a
-      // correct code from the app starts the session.
-      if (!code) {
-        res.json({ ok: false, secondFactor: 'enrol', ...(await startAdminEnrolment(pool, user.userSub, user.email)) });
-        return;
-      }
-      if (!await confirmTotpEnrolment(pool, user.userSub, code, Date.now())) {
+    try {
+      const user = await verifyLogin(pool, email, String(body.password ?? ''));
+      if (!user) {
         recordLoginFailure(key);
-        res.status(401).json({ error: 'that code did not match \u2014 check the clock on your phone and try the current code' });
+        res.status(401).json({ error: 'that email and password did not match' });
         return;
       }
-    } else if (factor?.enabled) {
-      if (!code) {
-        // No session yet, and deliberately NOT counted as a failure: the credential was
-        // correct and the client simply has one more step to complete.
-        res.json({ ok: false, secondFactor: 'required' });
-        return;
+      // The password is right. Now the second factor, if this account has one. Note this
+      // block is reached ONLY after a successful password check, so it can never be used to
+      // probe which accounts have 2FA enabled.
+      const factor = await getTotpState(pool, user.userSub);
+      const code = String(body.code ?? '').trim();
+      if (factor?.enabled) {
+        if (!code) {
+          // No session yet, and deliberately NOT counted as a failure: the credential was
+          // correct and the client simply has one more step to complete.
+          res.json({ ok: false, secondFactor: 'required' });
+          return;
+        }
+        const verdict = await verifySecondFactor(pool, user.userSub, code, Date.now());
+        if (verdict !== 'ok') {
+          recordLoginFailure(key);
+          res.status(401).json({
+            error: 'that code did not match \u2014 check your authenticator app, or use a recovery code',
+          });
+          return;
+        }
       }
-      const verdict = await verifySecondFactor(pool, user.userSub, code, Date.now());
-      if (verdict !== 'ok') {
-        recordLoginFailure(key);
-        res.status(401).json({
-          error: 'that code did not match \u2014 check your authenticator app, or use a recovery code',
-        });
-        return;
-      }
+      loginFailures.delete(key);
+      bustLocalUserSnapshot(user.userSub);
+      setLocalSessionCookie(req, res, sessionIdentityFor(user));
+      logger.info({ sub: user.userSub, secondFactor: factor?.enabled === true }, 'local-auth login');
+      res.json({
+        ok: true,
+        returnTo: sanitizeLoginReturnTo(body.returnTo) ?? '/',
+        // An administrator may REQUIRE the factor on an account that has not enrolled yet.
+        // Requiring it must never lock somebody out of an account they have not set up, so
+        // the answer is "you are in, now go and enrol" rather than a refusal.
+        enrolSecondFactor: factor?.required === true && factor.enabled !== true,
+      });
+    } catch (err) {
+      logger.error({ err }, 'local-auth login failed');
+      res.status(500).json({ error: 'login unavailable' });
     }
-    loginFailures.delete(key);
-    bustLocalUserSnapshot(user.userSub);
-    setLocalSessionCookie(req, res, sessionIdentityFor(user));
-    logger.info({ sub: user.userSub, secondFactor: factor?.enabled === true }, 'local-auth login');
-    res.json({
-      ok: true,
-      returnTo: sanitizeLoginReturnTo(body.returnTo) ?? '/',
-      // An administrator may REQUIRE the factor on an account that has not enrolled yet.
-      // Requiring it must never lock somebody out of an account they have not set up, so
-      // the answer is "you are in, now go and enrol" rather than a refusal.
-      enrolSecondFactor: factor?.required === true && factor.enabled !== true,
-    });
-  } catch (err) {
-    logger.error({ err }, 'local-auth login failed');
-    res.status(500).json({ error: 'login unavailable' });
-  }
   };
 }
 
@@ -835,10 +802,6 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
         return;
       }
       const state = await getTotpState(pool, sub);
-      if (snapshot.accountKind === 'swarm-admin') {
-        res.status(403).json({ error: 'the swarm admin always signs in with a second factor' });
-        return;
-      }
       if (state?.required) {
         res.status(403).json({ error: 'an administrator requires a second factor on this account' });
         return;
