@@ -652,3 +652,36 @@ and reviewed upgrades compose this service's ordinary role checks and approvals;
 transaction commits all constituent edges, audit records and the parent receipt. Direct and
 other managed sources survive revocation. Isolated HTTP, Access browser and PostgreSQL
 acceptance passed; installed package acceptance remains open.
+
+## Delivery amendment — one path at a time in Access Administration (operator, 2026-10-06)
+
+**Status:** Merged 2026-10-06 (#1104, #1105).
+
+The operator found two problems on the screen:
+
+- With a single application chosen, the composite-role section for a different application still
+  appeared directly underneath it.
+- Two of the operator's own accounts, a personal and a work Google account with the same display name,
+  were listed identically. A grant went to the wrong one.
+
+The operator's direction: an administrator gives either a single role on a single application, or a
+composite role, never both in one pass.
+
+Decision (user interface only, no policy change):
+
+- The screen asks **What are you giving?** first and shows only that path. **One role on one
+  application** is the default, and shows the application table, the application picker and Advanced
+  access. **A composite role** shows only the composite section, with its own application list. The
+  choice survives a refresh in the same tab.
+- The selector shows each account's verified email beside its display name. The directory inventory
+  served to swarm administrators carries an additive `email` field, and the shared `label` other
+  surfaces read is unchanged. Section 5 still holds: an email is shown only, and never selects, links
+  or merges an identity.
+
+Previews, applies, authority checks and the composite lifecycle are unchanged. Guards:
+
+- `authorization-admin-browser.spec.ts` checks the default path, the switch both ways, the choice
+  surviving a reload, the radio layout and the email in the selector.
+- `principal-directory.spec.ts` checks that two same-named accounts keep their own emails and
+  unchanged labels, and that nothing is returned for non-administrators.
+- `experience-composite-browser.spec.ts` selects the composite path first.

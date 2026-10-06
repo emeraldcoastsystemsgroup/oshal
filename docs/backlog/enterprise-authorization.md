@@ -13,7 +13,10 @@ AUTH-01 is implemented using `uses: [application-authorization]` as the old-core
 AUTH-02 and AUTH-07 have a shared service, UI/tool parity and isolated PostgreSQL/browser
 proofs, including scoped applied-change history, delegated access administrators/auditors and the
 per-user application permission screen. Reviewed catalog migration now has an API; its Access
-Administration screen panel and a sensitive approval workflow remain (see the AUTH-07 section below). AUTH-03 now covers four things:
+Administration screen panel and a sensitive approval workflow remain (see the AUTH-07 section below).
+The Access screen shows one path at a time (one role on one application, or a composite role) and shows
+each account's verified email in its selector (2026-10-06; see the
+[ADR-149 delivery amendment](../adr/149-enterprise-application-authorization.md#delivery-amendment--one-path-at-a-time-in-access-administration-operator-2026-10-06)). AUTH-03 now covers four things:
 - local proof-based setup;
 - established-account and root credential guards;
 - an identity-provider first root, from a proof bound to one exact issuer and subject and redeemed on
