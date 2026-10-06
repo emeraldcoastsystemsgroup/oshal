@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Preserve every valid metadata.owner_sub byte-for-byte when lifting it into the RLS column. Subject case and surrounding whitespace are identity data, so normalizing them could rebind a private chunk; existing blank-value validation remains unchanged.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Make the dedicated pgvector pool ceiling configurable and stamp application_name for managed-Postgres capacity accounting.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Own this private pool's connection 'error' events (ownPoolConnectionErrors) - a server-terminated connection on an unowned pool is an uncaught exception that ends the api process.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): deleteByKnowledgeId removes one document's chunks (metadata.knowledge_id, stamped at ingest) from a collection; whole-collection deletion is unchanged.
  */
 
 import { Pool } from 'pg';
@@ -220,6 +221,21 @@ export class PgvectorRagEngine {
    */
   async deleteCollection(collection: string): Promise<number> {
     const res = await getPool().query('DELETE FROM rag_chunks WHERE collection = $1', [collection]);
+    return res.rowCount ?? 0;
+  }
+
+  /**
+   * @description Remove one document's chunks: those whose metadata carries the knowledge id the
+   * ingest stamped. Chunks stored before ids were stamped match nothing, by design.
+   * @param collection - Collection name.
+   * @param knowledgeId - The knowledge record's id.
+   * @returns Number of chunks removed.
+   */
+  async deleteByKnowledgeId(collection: string, knowledgeId: string): Promise<number> {
+    const res = await getPool().query(
+      "DELETE FROM rag_chunks WHERE collection = $1 AND metadata->>'knowledge_id' = $2",
+      [collection, knowledgeId],
+    );
     return res.rowCount ?? 0;
   }
 

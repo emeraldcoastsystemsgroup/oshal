@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Persist owner_sub on knowledge documents and make listKnowledgeDocuments permission-aware (agent filter + operator-or-owner scope) so the Settings RAG visibility surface never lists another user's private docs
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Close the owned Postgres pool when persistence initialization fails before falling back to memory
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Re-attempt persistence instead of ending the pool and nulling it: one lost acquire during the boot migration burst made checkpoints, agent memory and the knowledge catalog non-persistent for the whole process lifetime. Activation now runs through the shared re-attemptable helper, the pool is kept so a retry has something to retry with, and the memory fallback is a state the next operation can leave.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): getKnowledgeDocument and deleteKnowledgeDocument, one record by id, in memory and in Postgres (DELETE ... RETURNING under the caller's RLS identity, which hides other people's private rows but, by the 094 policy's FOR ALL arm, lets any identity delete a shared NULL-owner row: the route gate is the barrier for shared knowledge). The Swarm Admin shared-knowledge screen removes a document through them.
  */
 
 import type { Pool } from 'pg';
@@ -250,6 +251,53 @@ export class MemoryLayerService {
     addToIndex(this.knowledgeIndex, document.collection, document.knowledgeId);
     logger.info({ collection: document.collection, knowledgeId: document.knowledgeId }, 'Knowledge memory recorded (memory)');
     return document;
+  }
+
+  /**
+   * @description Reads one knowledge record by id, or null. Under RLS a person's read of another
+   * person's private row answers null, as the policy makes it invisible.
+   * @param knowledgeId - The record's id.
+   * @returns The record, or null.
+   */
+  async getKnowledgeDocument(knowledgeId: string): Promise<KnowledgeMemoryDocument | null> {
+    await this.awaitInitialization();
+    if (this.persistentMode) {
+      const result = await this.pool!.query<KnowledgeMemoryRow>(
+        'SELECT * FROM knowledge_memory_documents WHERE knowledge_id = $1::uuid',
+        [knowledgeId],
+      );
+      return result.rows[0] ? mapKnowledgeMemoryRow(result.rows[0]) : null;
+    }
+    return this.knowledgeDocuments.get(knowledgeId) ?? null;
+  }
+
+  /**
+   * @description Deletes one knowledge record by id and returns it, or null when no row matched.
+   * RLS (migration 094) hides other people's PRIVATE rows from a person, but its FOR ALL policy lets
+   * any identity delete a shared (NULL-owner) row: the route's gate (operator, or the owner of a
+   * private row) is the barrier for shared knowledge, not the database. The chunks are the RAG
+   * service's to remove; this is the catalog half.
+   * @param knowledgeId - The record's id.
+   * @returns The deleted record, or null.
+   */
+  async deleteKnowledgeDocument(knowledgeId: string): Promise<KnowledgeMemoryDocument | null> {
+    await this.awaitInitialization();
+    if (this.persistentMode) {
+      const result = await this.pool!.query<KnowledgeMemoryRow>(
+        'DELETE FROM knowledge_memory_documents WHERE knowledge_id = $1::uuid RETURNING *',
+        [knowledgeId],
+      );
+      const deleted = result.rows[0] ? mapKnowledgeMemoryRow(result.rows[0]) : null;
+      logger.info({ knowledgeId, removed: Boolean(deleted) }, 'Knowledge memory record deleted (postgres)');
+      return deleted;
+    }
+    const existing = this.knowledgeDocuments.get(knowledgeId) ?? null;
+    if (existing) {
+      this.knowledgeDocuments.delete(knowledgeId);
+      removeFromIndex(this.knowledgeIndex, existing.collection, knowledgeId);
+    }
+    logger.info({ knowledgeId, removed: Boolean(existing) }, 'Knowledge memory record deleted (memory)');
+    return existing;
   }
 
   /**

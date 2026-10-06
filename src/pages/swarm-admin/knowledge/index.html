@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-6): the shared-knowledge screen under Swarm Admin, served
+    | at /swarm-admin/knowledge to the operator role only. Every knowledge document the swarm holds
+    | with its scope (shared corpus, one bot, or one person's private document), its collection,
+    | chunks (and whether they can be removed one by one), source and date; add to the shared corpus
+    | by pasting text or uploading files; remove one document after a confirm; delete a whole
+    | collection after typing its name; the vector store's health said plainly, or said unknown. No screen could add to or prune the shared
+    | corpus before: the RAG Center only inspected it.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Shared knowledge</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/knowledge/knowledge.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the knowledge…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Shared knowledge</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-library"></span>
+      <h1>Shared knowledge</h1>
+    </div>
+    <p class="sa-lead">
+      What every bot here can retrieve. A document in the shared corpus belongs to the swarm and answers for everyone;
+      a document filed under one bot is meant for that bot; a person's private document answers only for them. What
+      you add on this screen goes into the shared corpus. Removing a document removes its record and, for documents
+      stored since chunks carried an id, its chunks; an older document keeps its chunks until its collection is
+      deleted, and its row says so.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="healthHeading">
+      <h2 id="healthHeading">Store</h2>
+      <ul id="posture" class="sk-posture surface-card"></ul>
+    </section>
+
+    <section class="sa-section" aria-labelledby="docsHeading">
+      <div class="sk-toolbar">
+        <h2 id="docsHeading">Documents</h2>
+        <label class="sk-filter">Search <input id="search" type="search" autocomplete="off" placeholder="title, source or collection" /></label>
+        <label class="sk-filter">Scope
+          <select id="scopeFilter">
+            <option value="" selected>All</option>
+            <option value="swarm">Shared corpus</option>
+            <option value="bot">One bot</option>
+            <option value="private">Private</option>
+          </select>
+        </label>
+        <label class="sk-filter">Collection <select id="collectionFilter"><option value="" selected>All</option></select></label>
+        <button type="button" id="reload">Reload</button>
+      </div>
+      <p id="count" class="sk-count"></p>
+      <div class="sk-table-wrap surface-card">
+        <table class="sk-table" aria-describedby="docsHeading">
+          <thead><tr><th>Document</th><th>Scope</th><th>Collection</th><th>Chunks</th><th>Source</th><th>Added</th><th>Actions</th></tr></thead>
+          <tbody id="docs"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="addHeading">
+      <h2 id="addHeading">Add to the shared corpus</h2>
+      <div class="sk-forms">
+        <form id="pasteForm" class="sk-form surface-card">
+          <h3>Paste text</h3>
+          <label>Title <input id="pasteTitle" name="title" type="text" autocomplete="off" placeholder="what this is" /></label>
+          <label>Collection <input id="pasteCollection" name="collection" type="text" autocomplete="off" value="default" pattern="[a-zA-Z0-9._\-]{1,128}" required /></label>
+          <label>Format
+            <select id="pasteFormat" name="format">
+              <option value="text" selected>Plain text</option>
+              <option value="markdown">Markdown</option>
+            </select>
+          </label>
+          <label>Text (up to about 90 000 characters per paste; upload a file for more) <textarea id="pasteContent" name="content" rows="8" required placeholder="paste the text the swarm should know"></textarea></label>
+          <div class="sk-actions"><button type="submit">Add the text</button></div>
+          <p id="pasteMessage" class="sk-message" role="status"></p>
+        </form>
+        <form id="uploadForm" class="sk-form surface-card">
+          <h3>Upload files</h3>
+          <label>Collection <input id="uploadCollection" name="collection" type="text" autocomplete="off" value="default" pattern="[a-zA-Z0-9._\-]{1,128}" required /></label>
+          <label>Files (text, Markdown, PDF or Word .docx; up to 20, 10 MB each) <input id="uploadFiles" name="files" type="file" multiple required /></label>
+          <div class="sk-actions"><button type="submit">Upload</button></div>
+          <p id="uploadMessage" class="sk-message" role="status"></p>
+        </form>
+      </div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="collectionsHeading">
+      <h2 id="collectionsHeading">Collections</h2>
+      <p class="sk-help">Deleting a collection removes every chunk in it, including chunks of documents stored before they carried an id, for every bot and person whose documents are in it. The documents' records stay until each is removed. Collections named swarm-* or ambient-recall are the platform's own.</p>
+      <ul id="collections" class="sk-collections surface-card"></ul>
+    </section>
+  </main>
+
+  <script type="module" src="/swarm-admin/knowledge/knowledge.js"></script>
+</body>
+</html>

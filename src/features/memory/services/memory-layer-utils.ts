@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted non-swarm memory-layer row mapping and snapshot helper functions from the service implementation
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added owner_sub to the knowledge row/document mapping plus classifyKnowledgeScope + knowledgeDocumentVisible (pure permission predicate) and the KnowledgeListOptions/permission-scope types shared by the service and the RAG visibility surface
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): buildKnowledgeMemoryDocument keeps a caller-supplied knowledgeId (the id already stamped on the chunks) instead of always minting one.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -276,7 +277,7 @@ export function buildAgentMemoryRecord(
 export function buildKnowledgeMemoryDocument(input: RecordKnowledgeMemoryInput): KnowledgeMemoryDocument {
   const now = new Date().toISOString();
   return {
-    knowledgeId: randomUUID(),
+    knowledgeId: input.knowledgeId ?? randomUUID(),
     agentId: input.agentId,
     taskId: input.taskId,
     ownerSub: input.ownerSub,

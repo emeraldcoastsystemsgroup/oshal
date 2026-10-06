@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): the swarm logins screen is guarded like the home, listed in the navigation, carries the card template and containers its script fills, inserts values as text only, and keeps the style order the glass spec requires.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the budgets screen is guarded like the home, listed in the navigation, carries the containers and templates its script fills, inserts values as text only (the one innerHTML-free render path is pinned), and keeps the style order the glass spec requires.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the connectors screen is guarded like the home, listed in the navigation, carries the containers its script fills, inserts values as text only, confirms a remove, and keeps the style order the glass spec requires. Every page's style-order check now also asserts its stylesheet link is present: indexOf answers -1 for a missing link, which made the order check pass vacuously.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): the shared-knowledge screen is guarded like the home, listed in the navigation, carries the containers and forms its script fills, inserts values as text only, confirms a document removal and asks for a collection's name before deleting it, and keeps the style order the glass spec requires.
  */
 
 import fs from 'node:fs';
@@ -194,6 +195,30 @@ describe('the /swarm-admin surface', () => {
       expect(await screen.text()).toContain('Catalog');
       expect((await app.get('/swarm-admin/connectors/connectors.js', USER)).status).toBe(403);
       expect((await app.get('/swarm-admin/connectors', null)).status).toBe(302);
+    } finally { await app.close(); }
+  });
+
+  it('serves the shared-knowledge screen under the same guard, with its table, forms and collections, text-only', async () => {
+    const page = pages().find((p) => p.routePath === '/swarm-admin/knowledge');
+    expect(page?.extraGuards).toEqual([requiresOperator]);
+    expect(path.basename(page!.pageDir)).toBe('knowledge');
+    const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    for (const id of ['posture', 'docs', 'search', 'scopeFilter', 'collectionFilter', 'pasteForm', 'uploadForm', 'collections', 'statusBanner']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/knowledge/knowledge.css')).toBeGreaterThan(-1);
+    expect(html.indexOf('/swarm-admin/knowledge/knowledge.css')).toBeLessThan(html.indexOf('surface-glass.css'));
+    const script = fs.readFileSync(path.join(page!.pageDir, 'knowledge.js'), 'utf8');
+    expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(script).toContain("requestJson('/api/rag/knowledge?limit=500')");
+    expect(script.match(/window\.confirm\(/g)?.length).toBe(1);
+    expect(script.match(/window\.prompt\(/g)?.length).toBe(1);
+    expect(SWARM_ADMIN_NAVIGATION.some((item) => item.path === '/swarm-admin/knowledge' && item.group === 'swarm-admin')).toBe(true);
+    const app = await serve((a) => registerUiSurfaceRoutes({ app: a, requiresAuth, serveHtml: sendHtmlResponse, pages: pages() }));
+    try {
+      const screen = await app.get('/swarm-admin/knowledge', OPERATOR);
+      expect(screen.status).toBe(200);
+      expect(await screen.text()).toContain('Add to the shared corpus');
+      expect((await app.get('/swarm-admin/knowledge/knowledge.js', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/knowledge', null)).status).toBe(302);
     } finally { await app.close(); }
   });
 

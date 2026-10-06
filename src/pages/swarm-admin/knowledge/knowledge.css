@@ -1,0 +1,169 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-6): the shared-knowledge screen's own styles on top of the
+    | Swarm Admin home's: the sticky status banner, the store posture strip, the filter toolbar, the
+    | documents table (sideways-scrolling on a phone) with scope pills from the theme's tokens, the
+    | two add forms side by side (stacked on a phone), the collections list. Loaded before
+    | surface-glass.css, as the glass spec requires.
+*/
+
+.sa-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0.6rem 1.5rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.sa-status[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sa-status[data-tone="warning"] { opacity: 1; color: var(--status-warning, var(--text-primary)); }
+.sa-status[data-tone="success"] { opacity: 1; color: var(--status-success); }
+.sa-lead { margin-bottom: 1rem; }
+.sa-crumbs { font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.5rem; }
+.sa-crumbs a { color: var(--accent-primary); text-decoration: none; }
+
+.sk-posture {
+  list-style: none;
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.95rem;
+}
+
+.sk-posture li strong { font-variant-numeric: tabular-nums; margin-right: 0.3rem; }
+.sk-posture li[data-state="off"] { color: var(--status-error); }
+.sk-posture li[data-state="unknown"] { color: var(--status-warning, var(--text-primary)); }
+.sk-table td[data-untagged="true"] .sk-sub { color: var(--status-warning, var(--text-primary)); white-space: normal; }
+.sk-collections li { word-break: break-all; }
+.sk-posture li[data-state="on"] strong { color: var(--status-success); }
+
+.sk-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.sk-toolbar h2 { margin: 0; align-self: center; }
+
+.sk-filter {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.sk-filter input,
+.sk-filter select,
+.sk-form input[type="text"],
+.sk-form select,
+.sk-form textarea {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.sk-filter input,
+.sk-filter select { min-width: 9rem; }
+
+.sk-count,
+.sk-help { margin: 0 0 0.5rem; font-size: 0.9rem; opacity: 0.8; }
+
+.sk-table-wrap {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+}
+
+.sk-table {
+  width: 100%;
+  min-width: 52rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sk-table th,
+.sk-table td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.sk-table td.num { font-variant-numeric: tabular-nums; }
+.sk-table td.empty { opacity: 0.75; font-style: italic; }
+.sk-table .sk-sub { display: block; font-size: 0.8rem; opacity: 0.7; word-break: break-all; }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.pill[data-scope="swarm"] { color: var(--status-success); }
+.pill[data-scope="bot"] { color: var(--accent-primary); }
+.pill[data-scope="private"] { opacity: 0.75; }
+
+.sk-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+.sk-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+
+.sk-form {
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+  align-content: start;
+}
+
+.sk-form h3 { margin: 0; font-size: 1.05rem; }
+
+.sk-form label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.sk-form textarea { resize: vertical; }
+
+.sk-message { margin: 0; font-size: 0.9rem; opacity: 0.85; }
+.sk-message[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sk-message[data-tone="success"] { opacity: 1; color: var(--status-success); }
+
+.sk-collections {
+  list-style: none;
+  margin: 0;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sk-collections li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.sk-collections li.empty { opacity: 0.75; font-style: italic; }
