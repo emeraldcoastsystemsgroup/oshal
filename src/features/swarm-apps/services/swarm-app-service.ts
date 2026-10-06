@@ -1016,8 +1016,7 @@ export class SwarmAppService {
     await this.setBotStatuses(await this.lifecycleAgentIds(record), 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
-    // Protected node turns carry the bot's persona from the controller (bot-node-client signs it in).
-    applyBotPersonas(record);
+    applyBotPersonas(record); // protected node turns carry the bot persona (bot-node-client signs it in)
     applyArtifactActions(record);
     // Dynamic UI discovery is the last activation step that may throw directly. Complete it
     // before enabling model tools or seeding grants, then keep only non-throwing/caught steps
