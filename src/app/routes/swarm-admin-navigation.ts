@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-2): the Swarm Admin navigation is server data. GET /api/admin/navigation (mounted behind requiresAuth + requiresOperator, the admin role of Amendment A1) lists the Swarm Admin home and the administration pages that exist today, grouped; a screen's entry ships in the same change as its route, so nothing lists a page that does not exist, and users, who never see Swarm Admin, cannot read the list either. The /swarm-admin home and its shared top bar render it.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-3): the AI defaults screen's entry, in the same change as its route.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): the swarm logins screen's entry, in the same change as its route.
  */
 
 import { Router as createRouter, type Router } from 'express';
@@ -29,6 +30,7 @@ export interface SwarmAdminNavigationItem {
 export const SWARM_ADMIN_NAVIGATION: ReadonlyArray<SwarmAdminNavigationItem> = Object.freeze(([
   { id: 'home', title: 'Swarm Admin', path: '/swarm-admin', group: 'swarm-admin', description: 'Portal defaults for everyone in this swarm.' },
   { id: 'ai-defaults', title: 'AI defaults', path: '/swarm-admin/ai-defaults', group: 'swarm-admin', description: 'The fleet provider, model and fallback order, and the swarm default for voice, speech, images and video.' },
+  { id: 'logins', title: 'Swarm logins', path: '/swarm-admin/logins', group: 'swarm-admin', description: 'The vendor logins everyone without their own uses: Claude Code, Codex, Gemini, Antigravity.' },
   { id: 'users', title: 'Users and roles', path: '/users', group: 'people', description: 'Who holds swarm root and admin; invitations.' },
   { id: 'access-review', title: 'Access review', path: '/access-review', group: 'people', description: 'What each person and application may reach, and why.' },
   { id: 'admin-console', title: 'Operations console', path: '/admin', group: 'operations', description: 'Identity, health, audit search and posture.' },
