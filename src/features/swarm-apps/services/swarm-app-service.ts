@@ -52,6 +52,7 @@
  * 46 | maintainer@emeraldcoastsystemsgroup.com | Reconcile a distinct external workflow.workerBot alongside declared bots during activation/deactivation. The prior early return after bots[] left Social active while social-writer stayed inactive after every boot; the canonical external-association selector now adds only the executable worker, never a borrowed metadata-only chatBot.
  * 47 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * 48 | maintainer@emeraldcoastsystemsgroup.com | ADR-081 privileged lane (general fix): registerWorkflow records when the pipeline registry refuses a manifest's workflow (a privileged ticket type from an app that does not own it, or another type naming the privileged worker), so an app that loads without its workflow says why in the log instead of its tickets deferring silently.
+ * 49 | maintainer@emeraldcoastsystemsgroup.com | activate() registers the app's composed bot personas for protected node turns (applyBotPersonas, beside the skill profiles: replace-by-app, non-fatal, retracts on failure); deactivate() retracts them (retractBotPersonas, which calls unregisterAppBotPersonas) with the other app-keyed registries, so a toggled-off app carries no persona into a protected dispatch.
  */
 
 import type { Pool } from 'pg';
@@ -85,6 +86,7 @@ import {
 } from '@/shared/skill-profiles';
 import { unregisterAppArtifactActions } from '@/shared/artifact-exchange';
 import { applyArtifactActions } from './manifest-artifact-registration';
+import { applyBotPersonas, retractBotPersonas } from './manifest-bot-persona';
 import {
   assertGroupResolvable,
   groupDashboardTile,
@@ -1014,6 +1016,8 @@ export class SwarmAppService {
     await this.setBotStatuses(await this.lifecycleAgentIds(record), 'active');
     this.applyGuestTier(record);
     this.applySkillProfiles(record);
+    // Protected node turns carry the bot's persona from the controller (bot-node-client signs it in).
+    applyBotPersonas(record);
     applyArtifactActions(record);
     // Dynamic UI discovery is the last activation step that may throw directly. Complete it
     // before enabling model tools or seeding grants, then keep only non-throwing/caught steps
@@ -1275,6 +1279,8 @@ export class SwarmAppService {
     } catch (err) {
       logger.error({ err, app: record.name }, 'Skill-profile deregistration failed (non-fatal)');
     }
+    // A toggled-off app carries no persona into a protected dispatch. A Map delete; idempotent.
+    retractBotPersonas(record.name);
     // ADR-139: retract the app's "Send to…" artifact actions — a toggled-off app must hold zero
     // live menu entries. Idempotent.
     try {

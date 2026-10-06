@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Seed authoritative manifest runtime records without replacing operator selections.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-081 privileged lane (general fix): upsertManifestBots refuses, as the last line behind readManifest, a manifest that declares the privileged worker's id or name unless the app owns a privileged lane, because this upsert sets the agents row's name and would rename the developer bot for any workflow that then names the alias.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Export the package-owned persona path resolver as resolveManifestBotPersonaPath so the protected bot-persona composer (manifest-bot-persona.ts) resolves a bot's persona through its owning manifest with the same inside-the-package refusal, instead of a second resolver that could drift. Behaviour of the existing call is unchanged.
  */
 import type { Pool } from 'pg';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
@@ -20,8 +21,15 @@ const logger = createChildLogger({ module: 'manifest-bot-runtime' });
 export interface ManifestBotRuntimeDefaults { providerId: string; modelId?: string }
 export type ManifestBotRuntimeDefaultsResolver = (providerId?: string) => ManifestBotRuntimeDefaults | undefined;
 
-/** Package paths stay package-owned; only repository kernel manifests use repository-relative personas. */
-function personaPath(bot: SwarmAppBotDeclaration, manifestPath: string): string | undefined {
+/**
+ * @description Resolve a manifest bot's persona file through its owning manifest. Package paths stay
+ * package-owned; only repository kernel manifests (swarm-apps/) use repository-relative personas.
+ * @param bot - The manifest's bot declaration; `persona` is the declared relative path.
+ * @param manifestPath - The owning manifest's file path.
+ * @returns The resolved persona path, or undefined when the bot declares no persona.
+ * @throws Error when the resolved path leaves the owning package.
+ */
+export function resolveManifestBotPersonaPath(bot: SwarmAppBotDeclaration, manifestPath: string): string | undefined {
   if (!bot.persona?.trim()) return undefined;
   const directory = dirname(resolve(manifestPath));
   const candidate = resolve(directory, bot.persona);
@@ -114,7 +122,7 @@ export async function upsertManifestBots(pool: Pool, manifest: SwarmAppManifest,
 async function upsertManifestBot(pool: Pool, manifest: SwarmAppManifest, bot: SwarmAppBotDeclaration,
   manifestPath: string, defaults?: ManifestBotRuntimeDefaultsResolver): Promise<void> {
   try {
-    const path = personaPath(bot, manifestPath);
+    const path = resolveManifestBotPersonaPath(bot, manifestPath);
     const seed = defaults ? runtimeSeed(bot, path, defaults) : undefined;
     // Compatibility constructors retain their previous provider fallback; production injects deployment defaults.
     let providerId = seed?.providerId ?? (defaults ? undefined : process.env.FORCE_LLM_PROVIDER || 'openai-native');
