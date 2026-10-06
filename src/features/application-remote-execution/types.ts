@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep immutable remote execution provenance separate from live policy decisions.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Distinguish controller inline provenance from signed worker dispatches; legacy records remain remote.
  */
 import type { AuthorizationActor, AuthorizationDecision, AuthorizationEffective, AuthorizationGrant, AuthorizationOperation } from '@/shared/application-authorization';
 import type { RemoteApplicationSnapshot, RemoteExecutionBinding } from '@/shared/application-remote-execution';
@@ -13,6 +14,7 @@ import type { DelegationTokenVerifier, RecordedDelegationTokenIssuer } from '@/s
 /** @description Durable controller record; signed body content and tokens are never stored. */
 export interface RemoteExecutionRecord {
   version: 1; binding: RemoteExecutionBinding; actor: AuthorizationActor; snapshot: RemoteApplicationSnapshot;
+  transport?: 'remote' | 'inline';
   status: 'prepared' | 'bound' | 'started' | 'completed' | 'revoked';
   createdAt: string; expiresAt: string; claims?: DelegationTokenClaims; tokenHash?: string;
   nonces: string[]; permissionGrants?: AuthorizationGrant[]; resultTaskIds?: string[]; startedAt?: string; completedAt?: string;

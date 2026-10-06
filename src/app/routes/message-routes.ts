@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Bounded SAME-endpoint retry on the cockpit chat path (operator decision 2026-09-22), the twin of inline-bot-execution seq 14. This route had the same two outcomes for a provider wall - rotate, or surface it - and rotation is permanently refused for an explicitly chosen BYO endpoint, so exactly those turns got no retry and an intermittently tripping provider spend cap became the assistant answer. When isExplicitByoTurn says the ladder resolved the user own BYO row, the first attempt runs inside runWithSameEndpointRetry (same URL, same key, same account; attempt, backoff and wall-clock bounds) reading swallowedTurnFailure so it also sees the resolved-failure shape the agentic loop produces. The rotation legs below are unchanged and resolver-owned lanes are not wrapped.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | The inline branch now rides runInlineTurnWithRecovery, the ONE turn body it shares with executeBotOrInline (inline-bot-execution seq 15): the same-endpoint replay moved INTO the orchestrator's provider call (options.byoLlmRetry — one saved user message, one error broadcast per turn, where the seq-22 wrapper had re-done both per attempt), rotation is unchanged, and an exhausted explicit endpoint falls, for the deployment operator only, through the readiness-gated configured chain. A fallback turn answers with the brainFallback marker; a fallback that was not ready answers 503 BYO_FALLBACK_NOT_READY whose `error` names the endpoint, the attempts and every rung's reason — the field the cockpit renders.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Keep task and actual ticket ownership separate from protected lineage, refuse unresolved existing threads and prioritize authenticated users over legacy service headers.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Record inline protected conversation lineage and defer stream publication until completion and current owner access are proved.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -49,6 +50,7 @@ import { persistProtectedResultTask } from './protected-result-persistence';
 import { hasProtectedTaskResults, readProtectedResultExecutions, type ProtectedResultTask } from '@/shared/protected-results';
 import { readOwnerPrincipalIssuer, OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 import { isAuthenticatedGuest, type OwnedRecord } from './record-ownership';
+import { ProtectedInlineTaskUnavailableError, runProtectedInlineTurn } from './protected-inline-execution';
 
 const logger = createChildLogger({ module: 'message-routes' });
 
@@ -398,12 +400,15 @@ function handleSendMessage(ctx: AppContext) {
       // the orchestrator when the ladder resolved the user's own BYO row), rotation for a
       // resolver-owned lane, and — for the deployment operator only — the readiness-gated hot
       // fallback when an explicit endpoint exhausted its replay.
-      const { result, fallback } = await runInlineTurnWithRecovery({
+      const verifiedActor = hasAuthenticatedUserIdentity(req) && !isGuestRequest(req) && ctx.applicationAuthorization
+        ? await ctx.applicationAuthorization.resolveActor(req) : undefined;
+      const { result, fallback, applicationExecutionId } = await runProtectedInlineTurn(ctx, resolvedAgentId,
+        { taskId: resolvedContext.taskId, workspaceId: resolvedContext.taskId, userSub: callerSub }, () => runInlineTurnWithRecovery({
         pool: ctx.pool, agentId: resolvedAgentId, userSub: callerSub, resolvedBrain,
         firstEndpoint: hostedBrainWire(resolvedBrain),
         explicit: isExplicitByoTurn(undefined, resolvedBrain),
         runTurn,
-      });
+      }), verifiedActor);
 
       const durationMs = Date.now() - startTime;
       logger.info(
@@ -426,6 +431,7 @@ function handleSendMessage(ctx: AppContext) {
         requestedTaskId: taskId,
         agentId: resolvedAgentId,
         ticketCreated: executionContext.ticketCreated,
+        ...(applicationExecutionId ? { applicationExecutionId } : {}),
         ticketId: executionContext.ticketId ?? null,
         ticketStatus: executionContext.ticketStatus ?? null,
         ticketTitle: executionContext.ticketTitle ?? null,
@@ -433,6 +439,9 @@ function handleSendMessage(ctx: AppContext) {
         ...(fallback ? { brainFallback: fallback } : {}),
       });
     } catch (error) {
+      if (error instanceof ProtectedInlineTaskUnavailableError) {
+        res.status(404).json({ error: 'not found' }); return;
+      }
       // A denial is an authorization outcome, not a server fault: 403 with the same machine
       // code the bot-node gate returns, logged at WARN (the gate already logged the audit line).
       if (error instanceof CallerNotEntitledError) {

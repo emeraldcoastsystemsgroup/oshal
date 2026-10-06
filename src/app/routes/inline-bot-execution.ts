@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com  | Replace, rather than merge, the authoritative config slice for `bot-default`: a model-only incoming request could otherwise retain stale model/version/fallback fields when the canonical bot record omitted them.
  * 19 | maintainer@emeraldcoastsystemsgroup.com  | Resolve explicit `bot-default` strictly and enforce the same SEC-05 autonomous-CLI boundary as the node: a safe hosted canonical record is stamped, an unavailable or guest-ineligible CLI record degrades to the caller's hosted ladder, and resolver outages remain retryable instead of becoming a deterministic no-brain refusal.
  * 20 | maintainer@emeraldcoastsystemsgroup.com  | Treat every dedicated bot-node default as an autonomous-runtime choice, not the raw provider spelling: catalog API ids such as Gemini reconcile to Cline on the worker. A non-carved caller (including a user whose old saved choice outlives the carve) now falls to hosted before canonical resolution; the demo operator retains the per-bot record.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Bind protected inline responses and their stream events to durable controller-owned execution lineage before release.
  */
 
 import type { AppContext } from '@/app/composition/app-context';
@@ -47,6 +48,7 @@ import type { ByoHostedFallbackRung } from '@/features/llm-provider';
 import { cliBrainAvailable, resolveUserBrain, type ResolvedBrain } from './user-brain-resolution';
 import type { ByoLlmConnection } from './byo-llm-routes';
 import { getSpecialistContextRegistry, SpecialistContextError } from '@/shared/specialist-context';
+import { runProtectedInlineTurn } from './protected-inline-execution';
 
 const logger = createChildLogger({ module: 'inline-bot-execution' });
 
@@ -692,16 +694,18 @@ export async function executeBotOrInline(
     return remote;
   }
 
+  return executeInlineBotWithRecovery(ctx, agentId, request, skillPattern);
+}
+
+/** @description Resolve the existing hosted lane and run one inline recovery turn under durable result authority.
+ * @param ctx Controller stores/provider resolution. @param agentId Exact target. @param request Accountable request.
+ * @param skillPattern Existing calling-application capability context. @returns Normalized completed bot response.
+ */
+async function executeInlineBotWithRecovery(ctx: AppContext, agentId: string, request: BotNodeRequest,
+  skillPattern: string): Promise<BotNodeResponse> {
   const start = Date.now();
-  // Inline (controller-hosted concierge) path: no envelope/bot node, so weave the resolved block into
-  // the text before processMessage — same effect as the remote append, one place.
   const inlineText = skillPattern ? `${request.text}${skillPattern}` : request.text;
-  // ADR-127 inline hosted brain: an inline bot whose registry harness is an unbrokered CLI has no
-  // admissible in-process runtime (SEC-05 refuses those unconditionally on the controller), so when
-  // the caller did not thread a connection, resolve the user-brain ladder HERE — the same hosted
-  // rungs Jarvis rides. Throws NO_HOSTED_BRAIN (naming Settings → AI Providers) when nothing
-  // resolves; hosted/other harnesses pass through with no override. A caller-threaded connection
-  // is an explicit billing boundary — used verbatim, never retried elsewhere.
+  // An explicit caller connection preserves its billing boundary; otherwise use the existing hosted ladder.
   const resolvedBrain = request.byoLlmConnection
     ? undefined
     : await resolveHostedBrainMeta(ctx.pool, agentId, request.userSub);
@@ -716,24 +720,30 @@ export async function executeBotOrInline(
       model: request.model,
       interactionMode: request.direct ? 'task' : 'chat',
       byoLlmConnection,
-      // Operator decision 2026-09-22: an explicitly chosen endpoint replays a retryable wall
-      // against ITSELF at the model call — same URL, key and billing account, no boundary crossed
-      // — and, for the operator, switches to a ready fallback rung there once it is exhausted.
       ...turn,
     } as any);
-  // The endpoint this turn actually runs on: the caller's explicit choice when there is one,
-  // otherwise the ladder's pick stripped to the wire trio.
-  const { result, fallback } = await runInlineTurnWithRecovery({
+  const { result, fallback, applicationExecutionId } = await runProtectedInlineTurn(ctx, agentId,
+    { taskId: request.taskId, workspaceId: request.workspaceFolderId, userSub: request.userSub }, () => runInlineTurnWithRecovery({
     pool: ctx.pool, agentId, userSub: request.userSub, resolvedBrain,
     firstEndpoint: request.byoLlmConnection ?? hostedBrainWire(resolvedBrain),
     explicit: isExplicitByoTurn(request, resolvedBrain),
     runTurn,
-  });
+  }));
 
   if (!result.success) {
     throw new Error(`Inline bot execution failed: ${result.error || 'Unknown error'}`);
   }
 
+  return inlineBotResponse(result, fallback, request, start, Boolean(request.byoLlmConnection || resolvedBrain), applicationExecutionId);
+}
+
+/** @description Retain the existing inline response, cost, model and fallback fields with trusted result lineage.
+ * @param result Existing orchestrator result. @param fallback Hosted recovery marker. @param request Original request.
+ * @param start Turn start time. @param hosted Whether the actual turn used a hosted lane.
+ * @param applicationExecutionId Completed controller provenance. @returns Bot-node response shape.
+ */
+function inlineBotResponse(result: ProcessResult, fallback: BrainFallbackMarker | undefined, request: BotNodeRequest,
+  start: number, hosted: boolean, applicationExecutionId?: string): BotNodeResponse {
   const usage = result.usageSummary;
   const model = firstUsageModel(usage) ?? request.model ?? 'inline-orchestrator';
   return {
@@ -748,9 +758,10 @@ export async function executeBotOrInline(
     },
     cost: usage?.totalCost ?? 0,
     model,
-    provider: fallback ? fallback.providerUsed : (request.byoLlmConnection || resolvedBrain) ? 'byo-llm' : 'inline-orchestrator',
+    provider: fallback ? fallback.providerUsed : hosted ? 'byo-llm' : 'inline-orchestrator',
     durationMs: Date.now() - start,
     taskId: request.taskId,
+    ...(applicationExecutionId ? { applicationExecutionId } : {}),
     ...(fallback ? { brainFallback: fallback } : {}),
   };
 }

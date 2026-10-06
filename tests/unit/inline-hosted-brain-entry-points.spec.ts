@@ -8,10 +8,18 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ONE-CHOKEPOINT node dispatch: with a dynamically registered node-bound bot and a REAL local HTTP node, POST /api/send-message routes the turn to the node through executeBotOrInline — the demo operator's turn arrives with the CLI providerId STAMPED (the ADR-127 carve, env-stubbed), a plain caller's with the resolved hosted connection threaded — the controller orchestrator is never called, and both turns persist to the message store the history route replays. This is the route the live 2026-08-11 failure ran (a node-backed bot's chat dying on an exhausted hosted key), crossed at the real dispatch boundary.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default (2026-08-12): pickCliHarnessAgentId selects a codex-cli registry bot (the registry no longer declares claude-code), and the ADR-127 stamp expectation follows DEMO_CLI_ORDER's new first rung (openai-codex).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | BUG-17 node half: both node-dispatch cases now assert the body posted to /api/swarm-execute carries no `creds` and no `providerIntent`. The controller-to-node boundary is where a connector credential would cross, and nothing observed it: a route that added both to a chat turn left all 16 cases green.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exercise hosted-brain HTTP entry points with actual owned task storage, a stamped verified issuer and the current workspace ownership contract; require the anonymous no-work refusal already present in shipping sequence24.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { InMemoryTaskStore } from '@/entities/task';
+import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
+import { getCaller } from '@/shared/middleware/authz';
+import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
+
+vi.mock('@/shared/services/database/optional-postgres-pool', () => ({ createOptionalPostgresPool: () => null }));
 
 // The ladder is the ONE collaborator doubled here: these guards pin the entry-point wiring,
 // and the ladder's own resolution order has its own suites. Everything else — the router, the
@@ -48,6 +56,7 @@ vi.mock('@/features/cost-governance', async (importOriginal) => {
 });
 
 const USER_SUB = 'auth0|hosted-brain-user';
+const USER_ISSUER = 'https://hosted-brain.fixture.test';
 const TASK_ID = 'f2b7a9d0-0000-4000-8000-000000000002';
 const CONNECTION = { baseUrl: 'https://hosted.example.test/v1', apiKey: 'sk-test-never-logged', model: 'test-model' };
 
@@ -93,13 +102,17 @@ async function armLadder(connection: typeof CONNECTION | undefined): Promise<Ret
 /** Boots the REAL message router with the same identity stamping the OIDC middleware produces. */
 async function bootSendMessageApp(): Promise<string> {
   const { createMessageRoutes } = await import('../../src/app/routes/message-routes');
+  const tasks = new InMemoryTaskStore();
+  await tasks.create({ taskId: TASK_ID, ownerSub: USER_SUB, title: 'Hosted brain entry fixture',
+    metadata: { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: USER_ISSUER } });
   const ctx = {
-    taskStore: {
-      get: async () => null,
-      incrementMessageCount: async () => undefined,
-      incrementTurnCount: async () => undefined,
-    },
-    workspaceService: { resolveTaskOwner: async () => null },
+    taskStore: tasks,
+    workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
+    applicationAuthorization: { resolveActor: async (req: Request) => {
+      const sub = getCaller(req).sub, issuer = getAuthenticatedPrincipalIssuer(req);
+      if (!sub || !issuer) throw new Error('Fixture requires a verified principal');
+      return { sub, issuer, isActive: true, isSwarmAdmin: false };
+    } },
     ticketService: {},
     pool: {},
     orchestrator: { processMessage },
@@ -113,7 +126,8 @@ async function bootSendMessageApp(): Promise<string> {
     if (sub) {
       (req as Request & { oidc?: unknown }).oidc = {
         isAuthenticated: () => true,
-        user: { sub, email: `${sub}@example.test` },
+        user: { sub, iss: USER_ISSUER, email: `${sub}@example.test` },
+        idTokenClaims: { iss: USER_ISSUER },
       };
     }
     next();
@@ -214,7 +228,7 @@ describe('POST /api/send-message — direct chat resolves the hosted brain over 
     expect(processMessage).not.toHaveBeenCalled();
   });
 
-  it('an identity-less caller never walks the ladder — no override, unchanged pre-feature behavior', async () => {
+  it('an identity-less caller is refused before the ladder or model under the current ownership contract', async () => {
     const agentId = await pickCliHarnessAgentId();
     const ladder = await armLadder(CONNECTION);
     const base = await bootSendMessageApp();
@@ -225,13 +239,11 @@ describe('POST /api/send-message — direct chat resolves the hosted brain over 
       body: JSON.stringify({ taskId: TASK_ID, text: 'hello', agentId }),
     });
 
-    // The gate sits BEFORE the ladder: no identity ⇒ no resolution ⇒ the platform lane can
-    // never serve an anonymous turn. The turn itself proceeds exactly as before the feature
-    // (internal/swarm-dispatch callers carry no user and must not break).
-    expect(res.status).toBe(200);
+    // Shipping sequence24 already requires an authenticated subject or a valid bound service.
+    // An anonymous request cannot acquire ownership merely by naming this existing task.
+    expect(res.status).toBe(404);
     expect(ladder).not.toHaveBeenCalled();
-    const options = processMessage.mock.calls[0][2] as { byoLlmConnection?: unknown };
-    expect(options.byoLlmConnection).toBeUndefined();
+    expect(processMessage).not.toHaveBeenCalled();
   });
 
   it('a ladder FAILURE degrades to no override instead of a user-facing refusal', async () => {

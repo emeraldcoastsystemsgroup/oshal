@@ -8,6 +8,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Keep autonomous suite registration aligned with runnable local commands and prevent browser claims of host test execution.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Hold the provider-embedded tool tier scenario to the same runner parity as the rest.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Hold the new persistence recovery card to the existing four-suite local runner without changing browser execution authority.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Pin the six protected inline concierge suites at their actual unit, HTTP/PostgreSQL and browser boundaries and retain explicit local-runner prerequisites.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -45,5 +46,29 @@ describe('autonomous Test Lab registration', () => {
     const result = await scenario.steps[0].run('', {});
     expect(result.state).toBe('degraded');
     expect(result.detail).toContain('No tests ran');
+  });
+
+  it('registers all concierge repair suites with their actual furthest exercised boundary', () => {
+    const scenario = AUTONOMOUS_SCENARIOS.find(item => item.id === 'protected-remote-application-execution')!;
+    expect(scenario.regressionTests).toEqual(expect.arrayContaining([
+      { level: 'unit', path: 'tests/unit/application-inline-execution.spec.ts' },
+      { level: 'integration', path: 'tests/unit/protected-empty-task-access.spec.ts' },
+      { level: 'integration', path: 'tests/unit/protected-task-control-access.spec.ts' },
+      { level: 'unit', path: 'tests/unit/protected-inline-stream-events.spec.ts' },
+      { level: 'integration', path: 'tests/unit/protected-inline-thread-postgres.spec.ts' },
+      { level: 'browser', path: 'tests/unit/swarmbot-conversation-browser.spec.ts' },
+    ]));
+    expect(scenario.steps).toHaveLength(1);
+    expect(scenario.steps[0]).toMatchObject({ id: 'runner', app: 'test-lab' });
+  });
+
+  it('names the owned database/browser prerequisites without claiming deployed concierge acceptance', async () => {
+    const scenario = AUTONOMOUS_SCENARIOS.find(item => item.id === 'protected-remote-application-execution')!;
+    const result = await scenario.steps[0].run('', {});
+    expect(result.state).toBe('degraded');
+    expect(result.detail).toContain('Node, Docker and Chromium');
+    expect(result.detail).toContain('No tests ran from this step');
+    expect(scenario.description).toContain('application adapter');
+    expect(scenario.description).toContain('deployed native concierge and real model acceptance are separate');
   });
 });

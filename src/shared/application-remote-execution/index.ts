@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Define controller-owned remote execution bindings and signed current-policy permits.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose signing-independent controller inline execution, destination validation and separate current empty-thread/control policy.
  */
 import type { AuthorizationActor, AuthorizationOperation } from '@/shared/application-authorization';
 import type { RecordedDelegationToken } from '@/shared/security/delegation-token';
@@ -29,6 +30,8 @@ export interface PrepareRemoteExecutionInput {
 }
 /** @description Opaque dispatch reference returned before the existing request is signed. */
 export interface PreparedRemoteExecution { executionId: string; expiresAt: string; binding: RemoteExecutionBinding }
+/** @description Controller-only inline provenance and its original restricted business principal. */
+export interface StartedInlineExecution extends PreparedRemoteExecution { actor: AuthorizationActor }
 /** @description Only same-application named operations can be revalidated during a running execution. */
 export type RemoteExecutionAction = Pick<AuthorizationOperation, 'kind' | 'operation' | 'resourceId' | 'fields'>;
 /** @description Wire request proves possession of the original dispatch token; actor/app are never accepted. */
@@ -49,6 +52,23 @@ export interface ApplicationRemoteExecutionAuthority {
    * @returns Opaque prepared binding, or null only for a confirmed unprotected target.
    */
   prepare(actor: AuthorizationActor, input: PrepareRemoteExecutionInput): Promise<PreparedRemoteExecution | null>;
+  /** @description Start protected controller work under the same original policy and permission ceiling without a worker token.
+   * @param actor Verified initiating actor. @param input Exact controller task/workspace.
+   * @param validateDestination Trusted controller identity-only destination check before any provenance insertion.
+   * @returns Restricted durable inline provenance, or null for a confirmed unprotected target.
+   */
+  startInline(actor: AuthorizationActor, input: PrepareRemoteExecutionInput,
+    validateDestination?: (actor: AuthorizationActor) => Promise<void>): Promise<StartedInlineExecution | null>;
+  /** @description Complete only a controller inline execution after exact-owner and current-policy checks.
+   * @param executionId Controller-generated inline reference. @param actor Verified initiating actor.
+   * @returns Completion after the atomic durable transition, before output release.
+   */
+  completeInline(executionId: string, actor: AuthorizationActor): Promise<void>;
+  /** @description Verify current protected bot access without manufacturing result lineage for an empty thread.
+   * @param agentId Exact stored thread bot. @param actor Verified current thread owner.
+   * @returns Completion only while the current installed bot policy permits access.
+   */
+  assertEmptyTaskAccess(agentId: string, actor: AuthorizationActor): Promise<void>;
   /** @description Persist the exact signed dispatch before it leaves the controller.
    * @param executionId Prepared reference. @param receipt Original recorded token.
    * @param request Exact body containing applicationExecutionId. @returns Completion after durable binding.
@@ -68,6 +88,11 @@ export interface ApplicationRemoteExecutionAuthority {
    * @returns Completion only when at least one matching execution exists and all remain readable.
    */
   assertTaskResultAccess(taskId: string, actor: AuthorizationActor): Promise<void>;
+  /** @description Permit bounded pending tool control only for exact owned inline work without making its results readable.
+   * @param taskId Exact stored execution task. @param actor Verified current viewer.
+   * @returns Completion only when every bound execution retains its original and current authority.
+   */
+  assertTaskControlAccess(taskId: string, actor: AuthorizationActor): Promise<void>;
   /** @description Attach controller-owned result lineage before releasing output to an exact owner's aggregate task. */
   linkResult(executionId: string, resultTaskId: string, actor: AuthorizationActor): Promise<void>;
   /** @description Detect durable protected lineage regardless of viewer identity or missing metadata. */

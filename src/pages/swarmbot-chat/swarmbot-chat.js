@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | CORE-05: render the server's honest ai_disabled state in chat instead of leaving an unhandled send error or noop-looking reply.
  * 23 | maintainer@emeraldcoastsystemsgroup.com | Use the canonical Cockpit theme resolver and keep embedded parent/profile updates from overwriting the saved global preference.
  * 24 | maintainer@emeraldcoastsystemsgroup.com | Follow shared standalone and bundled parent palettes without saving inherited bot colors.
+ * 25 | maintainer@emeraldcoastsystemsgroup.com | Show failed conversation recovery and explicitly create a fresh owned thread without deleting protected history or drafts.
  */
 
 import { initializeSharedRagWorkspacePopup } from '/chat-assets/chat-rag-workspace-popup.mjs';
@@ -34,6 +35,7 @@ import { SwarmBotWorkspaceActions } from '/swarmbot/chat/swarmbot-workspace-acti
 import { appendMessage } from '/swarmbot/chat/swarmbot-messages.js';
 import { createSurfaceProducer } from '/shared/ui/js/surface-bridge-producer.js';
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
+import { bootstrapConversation, showConversationFailure, requestJson } from '/swarmbot/chat/swarmbot-conversation.js';
 import { COCKPIT_THEMES, resolveCockpitTheme } from '/cockpit/js/theme-manager.js';
 
 const logger = createUiLogger('swarmbot-chat');
@@ -206,37 +208,7 @@ class SwarmBotWorkspaceApp {
   }
 
   async bootstrapWorkspace() {
-    if (!this.state.agentId) {
-      logger.info('Swarmbot workspace waiting for bot selection');
-      this.renderAwaitingAgentSelectionState();
-      this.setStatus(isEmbedded()
-        ? 'Select a swarm bot to load this workspace.'
-        : 'Choose a swarm bot to begin.', 'info');
-      return;
-    }
-
-    const startedAt = Date.now();
-    logger.info('Bootstrapping swarmbot workspace', {
-      agentId: this.state.agentId,
-      taskId: this.state.taskId || null,
-    });
-    if (await this.resolveGuestMode()) {
-      // Guests cannot mint chat tasks (guest tier blocks POST /api/tasks) — render a
-      // stable read-only shell instead of failing bootstrap into a retry loop.
-      await this.loadProfile().catch(() => {});
-      this.renderGuestReadOnlyState();
-      return;
-    }
-    await this.loadProfile();
-    await this.ensureTask();
-    await this.loadMessages();
-    this.connectStream();
-    this.openInitialWorkspaceAction();
-    logger.info('Swarmbot workspace bootstrap complete', {
-      agentId: this.state.agentId,
-      taskId: this.state.taskId || null,
-      durationMs: Date.now() - startedAt,
-    });
+    return bootstrapConversation(this);
   }
 
   async loadProfile() {
@@ -369,6 +341,7 @@ class SwarmBotWorkspaceApp {
       this.setStatus('Guest session: chat is read-only. Sign in to talk to the swarm.', 'info');
       return;
     }
+    if (this.elements.messageInput.disabled) return;
     const text = readString(this.elements.messageInput.value);
     if (!text || !this.state.taskId) {
       return;
@@ -385,7 +358,7 @@ class SwarmBotWorkspaceApp {
    */
   async dispatchMessage(text) {
     const body = readString(text);
-    if (this.state.guestMode || !body || !this.state.taskId) {
+    if (this.state.guestMode || this.elements.messageInput.disabled || !body || !this.state.taskId) {
       return;
     }
 
@@ -409,7 +382,8 @@ class SwarmBotWorkspaceApp {
       const message = toErrorMessage(error);
       this.setTyping(false);
       appendMessage(this.elements.messageArea, 'assistant', 'AI unavailable', message);
-      this.setStatus(message, 'error');
+      if (!this.elements.messageInput.value) this.elements.messageInput.value = body;
+      showConversationFailure(this, error);
     }
   }
 
@@ -964,50 +938,6 @@ function parseJson(value) {
   }
 }
 
-async function requestJson(url, options = {}) {
-  const method = options.method || 'GET';
-  const startedAt = Date.now();
-  logger.debug('Swarmbot request started', {
-    url,
-    method,
-  });
-  const response = await fetch(url, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
-  const payload = await parseResponseJson(response);
-  if (!response.ok) {
-    const errorMessage = readString(payload?.message || payload?.error) || `${response.status} ${response.statusText}`;
-    logger.warn('Swarmbot request failed', {
-      url,
-      method,
-      status: response.status,
-      durationMs: Date.now() - startedAt,
-      errorMessage,
-    });
-    throw new Error(errorMessage);
-  }
-  logger.info('Swarmbot request completed', {
-    url,
-    method,
-    status: response.status,
-    durationMs: Date.now() - startedAt,
-  });
-  return payload;
-}
-
-async function parseResponseJson(response) {
-  try {
-    return await response.json();
-  } catch (error) {
-    logger.warn('Swarmbot response parsing failed', {
-      status: response.status,
-      error: serializeUiError(error),
-    });
-    return null;
-  }
-}
 
 function toErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -1053,4 +983,5 @@ void app.init().catch((error) => {
   logger.error('Swarmbot workspace bootstrap failed', {
     error: serializeUiError(error),
   });
+  showConversationFailure(app, error);
 });
