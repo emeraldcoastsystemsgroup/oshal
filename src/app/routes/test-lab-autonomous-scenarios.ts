@@ -49,6 +49,7 @@
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Register concierge operation logging, secret omission and bounded documentation/catch negative controls in the existing protected-execution runner.
  * 44 | maintainer@emeraldcoastsystemsgroup.com   | Register the protected node chat-turn guard on the protected remote application execution scenario: rail, cockpit and legacy chat bodies reach a protected node bot direct and non-agentic with one brain shape, an unprotected node keeps its shape, and the persisted node reply is published on the real task stream only after both turns are saved. It is integration level, over the real routers, chokepoint, node client and stream with a loopback stub node.
  * 45 | maintainer@emeraldcoastsystemsgroup.com   | Register the protected bot-persona guards on the protected remote application execution scenario: the signed carrier end to end (real client, policy service, worker ingress and handler) and the composer over real package directories.
+ * 46 | maintainer@emeraldcoastsystemsgroup.com   | Register the concierge node guards on the protected remote application execution scenario: the route end to end over the real routers, chokepoint, node client, registry and stream against a loopback stub node (concierge-node-dispatch, integration), the inline app-bot owner gate (inline-app-bots, unit) and the served-agent policy with the handler's foreign-agent rules (bot-node-served-agents, unit). The delegation and protected-boundary cases extend suites already registered here.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -251,6 +252,9 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/protected-node-chat-turn.spec.ts' },
     { level: 'integration', path: 'tests/unit/protected-bot-persona-carrier.spec.ts' },
     { level: 'integration', path: 'tests/unit/manifest-bot-persona.spec.ts' },
+    { level: 'integration', path: 'tests/unit/concierge-node-dispatch.spec.ts' },
+    { level: 'unit', path: 'tests/unit/inline-app-bots.spec.ts' },
+    { level: 'unit', path: 'tests/unit/bot-node-served-agents.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Protected application execution fixtures', run: async () => ({
     app: 'test-lab', label: 'Protected application execution fixtures', state: 'degraded',
