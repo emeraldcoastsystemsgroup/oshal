@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Fence retired anonymous-declaring entries captured before an asynchronous predecessor yields to reload or unmount.
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Restore pre-callback authority on signed handler fallthrough without changing anonymous route admission.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Normalize anonymous route declarations { method, path } when staging entries.
+ * 17 | maintainer@emeraldcoastsystemsgroup.com  | ADR-175: `auth: node` mounts. The guard admits only a request the global PAT middleware authenticated with a device-bound node credential admitted on this rail (`req.oshalNodeToken`); the mount registers its path as a package node rail and unmount drops it.
  */
 
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express';
@@ -50,6 +51,7 @@ import { validCallbackPrincipal, type PackageCallbackVerifier } from '@/shared/p
 import { runWithRequestIdentity } from '@/shared/services/database/request-identity';
 import { runWithoutApplicationAuthorizationActor } from '@/shared/application-authorization-context';
 import { invokeAnonymousPackageHandler } from './manifest-anonymous-request';
+import { registerPackageNodeRail, unregisterPackageNodeRails } from '@/features/remote-client';
 
 const logger = createChildLogger({ module: 'manifest-route-mounter' });
 
@@ -266,6 +268,10 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
     catch (error) { this.byApp.delete(appName); contextStage?.abort(); toolStage?.abort(); throw error; }
     if (entries.length) this.byApp.set(appName, entries);
     else this.byApp.delete(appName);
+    unregisterPackageNodeRails(appName);
+    for (const entry of entries) {
+      if (entry.mode === 'node') registerPackageNodeRail(appName, entry.mountPath);
+    }
   }
 
   /**
@@ -300,6 +306,17 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
             res.status(401).json({ error: 'This route requires a valid service secret' });
           },
         ];
+      case 'node':
+        return [
+          (req: Request, res: Response, next: NextFunction): void => {
+            if ((req as { oshalNodeToken?: { clientId?: string } }).oshalNodeToken?.clientId) {
+              next();
+              return;
+            }
+            logger.warn({ appName, mountPath }, 'Package node route requires a device-bound node credential — rejected');
+            res.status(401).json({ error: 'This route requires a device-bound node credential' });
+          },
+        ];
       case 'operator':
         return [this.requiresAuth, requiresOperator];
       case 'public':
@@ -318,6 +335,7 @@ export class ManifestRouteMounterImpl implements ManifestRouteMounter {
   unmount(appName: string): void {
     this.specialistContext?.unregister(appName);
     this.packageTools?.unregister(appName);
+    unregisterPackageNodeRails(appName);
     if (!this.enabled) return;
     if (this.byApp.delete(appName)) {
       logger.info({ appName }, 'Unmounted package routes');
