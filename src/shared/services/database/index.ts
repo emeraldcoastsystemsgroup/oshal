@@ -16,6 +16,7 @@
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | Export createPersistenceActivation so a store that can fall back to in-memory storage re-attempts its Postgres activation instead of serving from memory for the life of the process after one transient boot failure.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Export SCHEMA_LOCK_KEYS so a bootstrap site outside this directory can name its advisory lock through the layer boundary instead of deep-importing schema-lock or hardcoding an integer that nothing checks for collisions.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Export ownPoolConnectionErrors so every pool construction site can own the 'error' event of a checked-out connection; an unowned one is an uncaught exception, and under the crash guards that is the whole process (the 2026-09-05 deploy crash).
+ * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B2): export buildPortalDefaultRlsPolicyStatements, the owner-or-operator policy plus the one SELECT policy that lets every identity read a table's portal-default row, for the settings tables that hold portal defaults beside people's own rows.
  */
 
 export { createOptionalPostgresPool, hasPostgresConfiguration } from './optional-postgres-pool';
@@ -37,6 +38,7 @@ export {
   type SchemaRequirement,
 } from './schema-bootstrap-policy';
 export { buildOwnerRlsPolicyStatements } from './owner-rls-policy';
+export { buildPortalDefaultRlsPolicyStatements } from './portal-default-rls-policy';
 export { SCHEMA_LOCK_KEYS } from './schema-lock';
 export { ensureConversationStoreSchema } from './conversation-schema';
 export { ensureSwarmRunStoreSchema } from './swarm-run-schema';
