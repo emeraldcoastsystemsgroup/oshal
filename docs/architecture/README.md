@@ -13,6 +13,13 @@ The guiding model is:
 ## Current Documents
 
 ### Core Runtime
+- [core-feature-inventory.md](./core-feature-inventory.md)
+  - current source-backed capability inventory: users, authorization, execution, providers,
+    harnesses, tools, connectors, A2A, nodes, monitoring, data, learners, profiles, UX and
+    package contracts. Separates platform/shared engines/resident applications from package
+    boundaries, maps actual Rust sources with explicit verification limits, and generates
+    skill, feature-directory and full ADR coverage from
+    [the curated records](./core-feature-inventory.json).
 - [clean-kernel/](./clean-kernel/README.md)
   - DRAFT design series (2026-09-17): a language-neutral specification of what oshal should be if
     designed again from what this project has learned. Goals, principles, keep / copy / re-architect /
