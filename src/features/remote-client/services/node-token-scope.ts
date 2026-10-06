@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-node worker-plane token scoping (docs/backlog/hardening.md #7, retiring the swarm-wide shared secret). Pure decisions only: decideNodeTokenScope confines a NODE-BOUND credential to its own device's plane (plus the two enrollment-handshake paths), sharedSecretRetired reads the fail-closed switch, and nodeTokenBindingMatches is the route-level body check for /register. No Express, no DB — so the guard spec drives the same functions the runtime does.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-175: package node rails. A mount declared `auth: node` registers its path here, and a node-bound token is admitted beneath a registered rail (reason `package-node-rail`) as well as on its own worker plane. The route still binds the device it speaks for to the token's clientId.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-175 amendment 1 (security review): a rail registers only beneath its own app's namespace (/api/<app>/<segment>...), so a package cannot open core or another app's routes to node credentials; and a node-bound token is admitted on a rail only when its clientId names that app (`<app>-...`), else refused `foreign-app`, so a desktop worker credential or another app's device is not an identity on this rail.
  */
 
 /**
@@ -48,23 +49,27 @@ export const NODE_TOKEN_HANDSHAKE_PATHS: readonly string[] = [
 /** Why a node-bound token was admitted, or refused, on a given path. */
 export type NodeTokenScopeDecision =
   | { allowed: true; reason: 'handshake' | 'own-device-plane' | 'package-node-rail' }
-  | { allowed: false; reason: 'foreign-device' | 'off-plane' };
+  | { allowed: false; reason: 'foreign-device' | 'off-plane' | 'foreign-app' };
 
 /** Package node rails by app: mounts declared `auth: node` (ADR-175), as decoded path segments. */
 const packageNodeRails = new Map<string, string[][]>();
 
 /**
- * @description Register an `auth: node` mount so a node-bound token is admitted beneath it.
- * Called by the manifest route mounter after the app's routes mount; replaces nothing else.
- * @param appName - Owning package; its rails are dropped together on unmount.
+ * @description Register an `auth: node` mount so a node-bound token of this app is admitted beneath it.
+ * Called by the manifest route mounter after the app's routes mount. A rail must sit beneath the
+ * app's own namespace, `/api/<appName>/<segment>...`: anything else (core routes, another app, the
+ * app root) is refused and nothing is registered, so the node guard there admits no one.
+ * @param appName - Owning package; its rails are dropped together on unmount and remount.
  * @param mountPath - The declared mount, e.g. `/api/embodied/nodes`.
+ * @returns Whether the rail was registered.
  */
-export function registerPackageNodeRail(appName: string, mountPath: string): void {
+export function registerPackageNodeRail(appName: string, mountPath: string): boolean {
   const segments = segmentsOf(mountPath);
-  if (segments.length < 2) return; // never a bare `/api` or root rail
+  if (segments.length < 3 || segments[0] !== 'api' || segments[1] !== appName) return false;
   const rails = packageNodeRails.get(appName) ?? [];
   rails.push(segments);
   packageNodeRails.set(appName, rails);
+  return true;
 }
 
 /**
@@ -82,11 +87,20 @@ export function unregisterPackageNodeRails(appName: string): void {
  * @returns True when a node-bound token may authenticate it.
  */
 export function isPackageNodeRailPath(path: string): boolean {
+  return packageNodeRailApp(path) !== null;
+}
+
+/**
+ * @description The app whose registered node rail a request path sits at or beneath.
+ * @param path - Request path.
+ * @returns The owning app's name, or null when no rail covers the path.
+ */
+export function packageNodeRailApp(path: string): string | null {
   const request = segmentsOf(path);
-  for (const rails of packageNodeRails.values()) {
-    if (rails.some((rail) => rail.every((segment, index) => request[index] === segment))) return true;
+  for (const [appName, rails] of packageNodeRails) {
+    if (rails.some((rail) => rail.every((segment, index) => request[index] === segment))) return appName;
   }
-  return false;
+  return null;
 }
 
 /** Input to {@link decideNodeTokenScope} — the token's binding plus the request path. */
@@ -122,7 +136,8 @@ function segmentsOf(path: string): string[] {
  *
  * A node-bound token is admitted only on:
  *   1. the two enrollment-handshake paths ({@link NODE_TOKEN_HANDSHAKE_PATHS}),
- *   2. a registered package node rail (an `auth: node` mount, ADR-175), and
+ *   2. a registered package node rail (an `auth: node` mount, ADR-175) of the app its clientId names
+ *      (`<app>-...`; another app's rail is `foreign-app`), and
  *   3. its OWN device's plane — `/api/remote-clients/<boundClientId>` and anything beneath it.
  *
  * Everything else is refused: a sibling device's plane (`foreign-device` — this is the
@@ -146,7 +161,11 @@ export function decideNodeTokenScope(input: NodeTokenScopeInput): NodeTokenScope
   if (NODE_TOKEN_HANDSHAKE_PATHS.includes(normalized)) {
     return { allowed: true, reason: 'handshake' };
   }
-  if (isPackageNodeRailPath(path)) return { allowed: true, reason: 'package-node-rail' };
+  const railApp = packageNodeRailApp(path);
+  if (railApp !== null) {
+    // A device credential is an identity only on rails of the app its clientId names (`embodied-plant` on embodied).
+    return bound.startsWith(`${railApp}-`) ? { allowed: true, reason: 'package-node-rail' } : { allowed: false, reason: 'foreign-app' };
+  }
 
   const planeSegments = segmentsOf(REMOTE_CLIENT_PLANE_PREFIX);
   const requestSegments = segmentsOf(path);

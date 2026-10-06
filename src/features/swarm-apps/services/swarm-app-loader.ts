@@ -32,6 +32,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com | Refuse malformed or overbroad anonymous read declarations before activation.
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Refuse undeclared or malformed experience contracts before installation; hosting compatibility remains unavailable until discovery and shell hosting ship.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com  | ADR-175 amendment 1: an `auth: node` route must mount beneath /api/<manifest name>/<segment>; anything broader would let device credentials authenticate on core or another app's routes, so the manifest is refused.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -391,6 +392,16 @@ function validateRouteDeclarations(manifest: SwarmAppManifest, absPath: string):
       || !manifest.uses?.includes('signed-package-callbacks') || !manifest.authorization
       || typeof decl.callbackVerifier !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(decl.callbackVerifier))) {
       throw new Error(`Manifest ${absPath}: ${at}.callbackVerifier requires an explicit public route, authorization catalog and signed-package-callbacks capability`);
+    }
+
+    if (mode === 'node') {
+      const segments = decl.mountPath.split('/').filter(Boolean);
+      if (segments.length < 3 || segments[0] !== 'api' || segments[1] !== manifest.name) {
+        throw new Error(
+          `Manifest ${absPath}: ${at} is auth: node but mountPath "${decl.mountPath}" is not beneath /api/${manifest.name}/. ` +
+            `A node rail admits device credentials, so it must sit inside the package's own namespace (ADR-175).`,
+        );
+      }
     }
 
     if (mode === 'public') {
