@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Derive the protected single-shot marker only for direct requests whose server-resolved brokered tool set is empty; a protected request with an application tool keeps the existing bridge path and never receives the marker.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Follow the moved code. Token Chase replay left bot-node-server.ts for bot-node-token-chase-replay-route.ts (4b4a7f50), so slicing the server at its app.post found nothing (-1). The guard now reads the module itself. Inside the route, the protected-transport refusal precedes executeReplay. The module's only provider call sits inside executeReplay, above the route, so the model is reachable only after that refusal. The server registers the route behind authorizeBotNodeCall. No comparison can fall back to -1.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Verify the provider call is structurally inside executeReplay so an adjacent or top-level call cannot satisfy the replay transport regression.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Real-worker companion for protected node chat turns (message-routes seq 27). stampRemoteBrain's CLI branch and the queued CLI path send exactly providerId, model and providerConfigRequired:true, with no configVersion and no fallbackOrder, and nothing pinned that key set at the protected worker. The new case signs that exact stamp and requires 200, permits start through complete, and exactly that recorded provider authority. tests/unit/protected-node-chat-turn.spec.ts doubles this worker with a stub node; this case is its real boundary.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -170,6 +171,32 @@ describe('protected supported mode and authority continuity', () => {
     expect(fixture.state.phases).toEqual([]);
     expect(fixture.state.calls).toEqual([]);
     expect(fixture.store.listTasks()).toEqual([]);
+  });
+
+  it('admits the exact CLI stamp a chat turn carries, with no configVersion or fallbackOrder', async () => {
+    const previousDemo = process.env.DEMO_MODE;
+    delete process.env.DEMO_MODE;
+    try {
+      await fixture.close();
+      const active = { provider: 'cline-cli', model: 'fixture-model', apiProvider: 'gemini' };
+      fixture = await startProtectedWorkerFixture(undefined, {
+        directProvider: { provider: active.provider, model: active.model },
+        brokeredTools: [],
+        dispatchConfigRuntime: { getActiveProvider: () => active, setActiveProvider: () => active },
+      });
+      const response = await fixture.post(fixture.issue({
+        byoLlmConnection: undefined, providerId: active.provider, model: active.model, providerConfigRequired: true,
+      }));
+      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+      expect(fixture.state.phases[0]).toBe('start');
+      expect(fixture.state.phases.at(-1)).toBe('complete');
+      expect(fixture.state.providerAuthorities).toStrictEqual([
+        { providerId: active.provider, model: active.model, providerConfigRequired: true },
+      ]);
+    } finally {
+      if (previousDemo === undefined) delete process.env.DEMO_MODE;
+      else process.env.DEMO_MODE = previousDemo;
+    }
   });
 
   it('rejects a malformed signed fallback chain at HTTP ingress', async () => {
