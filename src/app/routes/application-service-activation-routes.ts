@@ -5,7 +5,9 @@
  *
  * Every route sits on the `/api/swarm/apps` router, which is mounted behind requiresAuth: there is
  * no anonymous path to an activation. Activating a SYSTEM service additionally requires swarm
- * administration, which the activation service checks against the caller's verified actor.
+ * administration, which the activation service checks against the caller's verified actor. The
+ * configuration-only swarm admin (ADR-174 D1) activates a service only as the application: it is not
+ * a user of the swarm, so it is refused a USER activation, which would run every tick as the admin.
  *
  * CHANGE LOG
  * -----------------------------------------------------------------------------
@@ -13,11 +15,13 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: GET /:name/services, POST /:name/services/:id/activate and DELETE /:name/services/:id/activation — read the declared services with their activation state, turn one on under an explicitly named principal class, and turn it off again.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | The deactivation names its principal class the same way the activation does: `?runsAs=system|user`, refused with the same 400 when it is anything else. Turning a service off no longer depends on which activation a lookup happens to find, so a person with nothing to turn off reads a 200 not-found instead of an administration refusal.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 S02: the configuration-only swarm admin activates a service only as the application. POST /:name/services/:id/activate answers 403 swarm_admin_not_a_user when the swarm admin names runsAs 'user', before the activation service is consulted. A user activation makes the caller the service's principal and registers a per-user schedule instance whose every tick runs as that caller, so it would run work on the admin's behalf, which ADR-174 D1 forbids. The class travels in the request body, which the global gate (swarm-admin-scope.ts) does not read, so the refusal sits here, the one place that sees it. System activation, every deactivation (including a swarm administrator closing someone else's activation with ?targetSub=) and everyone else's user activation are unchanged.
  *
  * @module application-service-activation-routes
  */
 import type { Request, Response, Router } from 'express';
 import { createChildLogger } from '@/shared/logger';
+import { isSwarmAdminPrincipal } from '@/shared/middleware/swarm-admin-identity';
 import { ApplicationAuthorizationError } from '@/features/application-authorization';
 import { getApplicationServiceActivations } from '../application-service-activation-wiring';
 
@@ -67,13 +71,24 @@ export function registerApplicationServiceActivationRoutes(router: Router): void
     }
   });
 
-  /** Activate one service under an explicitly named principal class. */
+  /**
+   * Activate one service under an explicitly named principal class. The swarm admin may name only
+   * `system`: a `user` activation would make it the service's principal (ADR-174 D1).
+   */
   router.post('/:name/services/:id/activate', async (req: Request, res: Response) => {
     const name = String(req.params.name);
     const scheduleId = String(req.params.id);
     const runsAs = (req.body as { runsAs?: unknown } | undefined)?.runsAs;
     if (runsAs !== 'system' && runsAs !== 'user') {
       res.status(400).json({ error: 'authorization_service_class_required' });
+      return;
+    }
+    if (runsAs === 'user' && isSwarmAdminPrincipal(req)) {
+      logger.info({ app: name, scheduleId, runsAs }, 'Swarm admin refused a user service activation');
+      res.status(403).json({
+        error: 'swarm_admin_not_a_user',
+        message: 'The swarm admin activates a service as the application, never as itself. Sign in with your own account to run it for yourself.',
+      });
       return;
     }
     const composed = handles(res);
