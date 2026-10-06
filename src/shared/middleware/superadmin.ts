@@ -7,10 +7,11 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | isSuperAdminSub(sub) for QUEUE-side gating (ADR-081): dispatch has no Request, only ticket.ownerSub. Sub-allowlist-only by design — the console capability flag gates the browser console, not the oshal-dev workflow (the manifest's presence is that capability), and the email allowlist can't be checked without a session.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Match super-admin OIDC subjects exactly and case-sensitively; only email allowlists retain case-insensitive normalization. Whitespace/case variants can no longer alias a privileged subject.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | PRIVILEGED_TICKET_TYPES / isPrivilegedTicketType moved here from dispatch-manifest-worker.ts so the ticket route (refuses a non-super-admin filer at the door) and the queue gate (refuses a non-super-admin owner at dispatch) read ONE definition.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: OSHAL_SUPERADMIN_EMAILS counts only with a verified identity-provider issuer (authz operatorRequestIssuer, the rule every operator decision binds to): a local account's email was never verified, and a request carrying no verified issuer is no better, so such a principal qualifies by subject alone. The denial names which list can admit it.
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { getCaller } from './authz';
+import { getCaller, operatorMatchKeys, operatorRequestIssuer } from './authz';
 
 /**
  * Super-admin is a DISTINCT, more privileged role than operator. Operator can manage
@@ -87,9 +88,12 @@ export function evaluateSuperAdmin(req: Request): SuperAdminDecision {
   const authenticated = typeof sub === 'string' && sub.length > 0;
   const subs = parseSubjectAllowlist(process.env.OSHAL_SUPERADMIN_SUBS);
   const emails = parseEmailAllowlist(process.env.OSHAL_SUPERADMIN_EMAILS);
+  // The email counts only with a verified identity-provider issuer (ADR-174 Amendment A): a local account's
+  // address was never verified, and a request carrying no verified issuer is no better.
+  const keys = operatorMatchKeys(sub, email, operatorRequestIssuer(req));
   const onAllowlist =
-    (typeof sub === 'string' && sub.length > 0 && subs.has(sub))
-    || (typeof email === 'string' && email.length > 0 && emails.has(email.toLowerCase()));
+    (keys.sub !== null && subs.has(keys.sub))
+    || (keys.email !== null && emails.has(keys.email.toLowerCase()));
 
   const checks: SuperAdminChecks = { capabilityEnabled, authenticated, onAllowlist };
   const allowed = capabilityEnabled && authenticated && onAllowlist;
@@ -106,7 +110,7 @@ function reasonFor(checks: SuperAdminChecks): string {
     return 'Not authenticated.';
   }
   if (!checks.onAllowlist) {
-    return 'Caller is not on the super-admin allowlist (OSHAL_SUPERADMIN_SUBS / OSHAL_SUPERADMIN_EMAILS).';
+    return 'Caller is not on the super-admin allowlist (OSHAL_SUPERADMIN_SUBS; OSHAL_SUPERADMIN_EMAILS counts only for a verified identity-provider sign-in).';
   }
   return 'Granted: caller is an enabled super-admin.';
 }

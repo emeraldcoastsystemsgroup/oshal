@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Pin the Security Center's operator-only
  *              | boundary (operator decision 2026-07-07): the requiresOperator middleware is
  *              | fail-closed, the /api/security mount carries it, and the manifest is scope: operator.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: the request fixture carries a verified identity-provider issuer, because an email counts for an operator decision only with one; a request carrying a user principal but no issuer matches by subject only.
  */
 
 /**
@@ -25,8 +26,9 @@ import type { Request, Response, NextFunction } from 'express';
 
 /** Build a minimal Request carrying an OIDC user (or none). */
 function reqAs(sub: string | null, email?: string): Request {
-  const user = sub === null && email === undefined ? undefined : { sub: sub ?? undefined, email };
-  return { oidc: { user } } as unknown as Request;
+  // A verified identity-provider issuer rides on the user: an email counts for an operator decision only with one.
+  const user = sub === null && email === undefined ? undefined : { sub: sub ?? undefined, email, iss: 'https://login.example.test/tenant' };
+  return { oidc: { isAuthenticated: () => Boolean(user), user } } as unknown as Request;
 }
 
 /** Response double capturing status/json; next() spy. */

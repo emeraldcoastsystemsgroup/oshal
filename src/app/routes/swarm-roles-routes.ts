@@ -6,15 +6,16 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Swarm root (ADR-148): the /api/swarm/roles surface behind the Users page. Every mutating route is operator-gated, and the ONE deliberately un-gated-by-requiresOperator route is the root claim — it has to be reachable by a signed-in caller while root is unclaimed, or a fresh LOCAL_AUTH box where OSHAL_OPERATOR_SUBS was never set could never establish an operator at all (the exact bootstrap deadlock this feature exists to end). That claim carries its own fail-closed conditions instead: authenticated caller, root genuinely unclaimed, and either the store is empty of roles or the caller already passes break-glass.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Remove empty-table public root election; retain authenticated existing-operator recovery.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: POST /installer-root completes an identity-provider installation's first root from the local installer's one-use proof, bound to one exact issuer and subject and presented from the bound origin by that verified session; mock sign-in is refused. /status also tells the caller their own verified issuer and subject, the two values the installer binds.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment A: /me, /status and /claim-root check the caller with the issuer isOperator binds to (authz operatorRequestIssuer), so a local principal, or one whose request carries no verified issuer, whose unverified email is on OSHAL_OPERATOR_EMAILS or a role row is reported, and admitted to the recovery claim, exactly as isOperator decides; and the root row such a caller claims stores no email, so the typed address never becomes a key for another issuer's principal. initializeSwarmRoles retries a failed boot-time load a bounded number of times (about a minute), because the admin console admits only the break-glass allowlist until the first successful load.
  */
 
 import type { Router, Request, Response, RequestHandler } from 'express';
 import { Router as createRouter } from 'express';
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
-import { getCaller, requiresOperator, isOperatorIdentity, isBreakGlassOnlyOperator } from '@/shared/middleware/authz';
+import { getCaller, requiresOperator, isOperatorIdentity, isBreakGlassOnlyOperator, operatorRequestIssuer } from '@/shared/middleware/authz';
 import { getRootSub, privilegedIdentityStatus } from '@/shared/middleware/privileged-identities';
-import { getAuthenticatedPrincipalIssuer, isMockOidcEnabled } from '@/shared/middleware/principal-issuer';
+import { getAuthenticatedPrincipalIssuer, isMockOidcEnabled, LOCAL_AUTH_PRINCIPAL_ISSUER } from '@/shared/middleware/principal-issuer';
 import { completeOidcInstallerRootSetup } from '@/app/composition/installer-root-bootstrap';
 import {
   ensureSwarmRoleSchema, refreshPrivilegedCache,
@@ -30,24 +31,44 @@ const logger = createChildLogger({ module: 'swarm-roles-routes' });
  *
  * Deliberately NON-FATAL. A swarm whose role table cannot be reached must still start, because
  * the env break-glass allowlist is precisely the recovery path for that situation — refusing to
- * boot would turn a degraded role store into a total outage, with no way in to fix it.
+ * boot would turn a degraded role store into a total outage, with no way in to fix it. A failed
+ * load is retried a bounded number of times (about a minute in all), because until the first
+ * successful load the admin console admits only the break-glass allowlist (ADR-174 Amendment A),
+ * and a transient database hiccup at boot must not become a lockout that lasts until a restart.
  *
  * @param pool - Postgres pool.
- * @returns Resolves when roles are loaded, or when the failure has been logged.
+ * @param options - Retry delays and the sleep to use between attempts (tests pass zeros and a no-op).
+ * @returns Resolves when roles are loaded, or when the last failure has been logged.
  */
-export async function initializeSwarmRoles(pool: Pool): Promise<void> {
-  try {
-    await ensureSwarmRoleSchema(pool);
-    const count = await refreshPrivilegedCache(pool);
-    const rootSub = await getRootSubFromStore(pool);
-    if (!rootSub) {
-      logger.warn('SWARM ROOT IS UNCLAIMED — no identity holds root yet. Operator access is currently break-glass only (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS). Claim root from the Users page to make it a managed role.');
+export async function initializeSwarmRoles(
+  pool: Pool,
+  options: { retryDelaysMs?: readonly number[]; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<void> {
+  const delays = options.retryDelaysMs ?? ROLE_LOAD_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref(); }));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await ensureSwarmRoleSchema(pool);
+      const count = await refreshPrivilegedCache(pool);
+      const rootSub = await getRootSubFromStore(pool);
+      if (!rootSub) {
+        logger.warn('SWARM ROOT IS UNCLAIMED — no identity holds root yet. Operator access is currently break-glass only (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS). Claim root from the Users page to make it a managed role.');
+      }
+      logger.info({ privilegedCount: count, rootClaimed: Boolean(rootSub), attempt: attempt + 1 }, 'swarm roles initialized');
+      return;
+    } catch (err) {
+      if (attempt >= delays.length) {
+        logger.error({ err, attempts: attempt + 1 }, 'swarm role initialization FAILED — operator access falls back to the env break-glass allowlist, and the admin console stays restricted to it until the api restarts');
+        return;
+      }
+      logger.warn({ err, attempt: attempt + 1, retryInMs: delays[attempt] }, 'swarm role initialization failed — retrying; operator access is break-glass only until roles load');
+      await sleep(delays[attempt]);
     }
-    logger.info({ privilegedCount: count, rootClaimed: Boolean(rootSub) }, 'swarm roles initialized');
-  } catch (err) {
-    logger.error({ err }, 'swarm role initialization FAILED — operator access falls back to the env break-glass allowlist');
   }
 }
+
+/** Delays between boot-time role-load attempts: six tries over about a minute. */
+const ROLE_LOAD_RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000, 16_000, 32_000];
 
 /** Maps a SwarmRoleError to its status; anything else is a 500 with no internals leaked. */
 function fail(res: Response, err: unknown, context: string): void {
@@ -119,14 +140,15 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
 
   router.get('/me', requiresAuth, async (req: Request, res: Response) => {
     const { sub, email } = getCaller(req);
+    const issuer = operatorRequestIssuer(req);
     try {
       const row = sub ? await getRole(pool, sub) : null;
       res.json({
         sub,
         email,
         role: row?.role ?? 'user',
-        isOperator: isOperatorIdentity(sub, email),
-        breakGlassOnly: isBreakGlassOnlyOperator(sub, email),
+        isOperator: isOperatorIdentity(sub, email, issuer),
+        breakGlassOnly: isBreakGlassOnlyOperator(sub, email, issuer),
         isRoot: Boolean(sub) && getRootSub() === sub,
       });
     } catch (err) { fail(res, err, 'GET /me'); }
@@ -134,6 +156,7 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
 
   router.get('/status', requiresAuth, async (req: Request, res: Response) => {
     const { sub, email } = getCaller(req);
+    const issuer = operatorRequestIssuer(req);
     try {
       const rootSub = await getRootSubFromStore(pool);
       const cache = privilegedIdentityStatus();
@@ -144,8 +167,8 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
         // The caller's OWN verified identity: the exact issuer and subject an installer binds a setup proof to.
         callerSub: sub ?? null,
         callerIssuer: getAuthenticatedPrincipalIssuer(req),
-        callerIsOperator: isOperatorIdentity(sub, email),
-        callerBreakGlassOnly: isBreakGlassOnlyOperator(sub, email),
+        callerIsOperator: isOperatorIdentity(sub, email, issuer),
+        callerBreakGlassOnly: isBreakGlassOnlyOperator(sub, email, issuer),
         rolesLoaded: cache.loaded,
         privilegedCount: cache.count,
       });
@@ -165,8 +188,9 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
   router.post('/claim-root', requiresAuth, async (req: Request, res: Response) => {
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).json({ error: 'sign in to claim swarm root' }); return; }
+    const issuer = operatorRequestIssuer(req);
     try {
-      if (!isOperatorIdentity(sub, email)) {
+      if (!isOperatorIdentity(sub, email, issuer)) {
         logger.warn({ sub }, 'root claim REFUSED — installer proof or existing operator is required');
         res.status(403).json({
           error: 'root claim requires an existing operator; use the local installer setup for a fresh installation',
@@ -175,7 +199,8 @@ export function createSwarmRolesRoutes(pool: Pool, requiresAuth: RequestHandler)
       }
       const row = await claimRoot(pool, {
         userSub: sub,
-        email,
+        // A local or issuer-less caller's email was never verified: the row binds it by subject (operatorMatchKeys).
+        email: issuer === null || issuer === LOCAL_AUTH_PRINCIPAL_ISSUER ? null : email,
         displayName: typeof req.body?.displayName === 'string' ? req.body.displayName : null,
         note: 'claimed by existing operator recovery',
       });

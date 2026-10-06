@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | /api/me data-lifecycle surface: GET /export (self-scope JSON bundle — one section per store + honest manifest; a single JSON download because no zip library is a dependency and adding packages is out of scope), POST /delete-request (mints the short-lived signed confirmation token; operator subs refused up front), POST /delete-confirm (verifies the sub-bound token, executes the registry delete pass, writes the RETAINED data_lifecycle_audit row — 080-data-lifecycle.sql — and reports every store outcome). Auth-gated via the requiresAuth param, the sanctioned route-factory pattern.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix: buildAllExporters is now async (per-request information_schema discovery covers every remaining sub-keyed table) — all three handlers await it; the export manifest and BOTH delete responses now carry KNOWN_EXPORT_GAPS so the stores this surface still does not cover are disclosed to the user, never implied deleted.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-169 L2: every handler builds its registry through routeExporters, which leads with the location store bound to the caller's subject and verified issuer (location-data-lifecycle.ts) and keeps the location tables out of discovery. delete-confirm therefore runs the one location erase (revoke location device credentials, delete the caller's location rows, clear in-memory location state) before the discovered deletes, and the export carries the caller's location rows once.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: the two erasure routes pass the issuer isOperator binds to (authz operatorRequestIssuer) into isDeleteRefused, in step with every other operator decision on a request.
  */
 
 /**
@@ -22,7 +23,7 @@ import { Router, type Request, type Response, type RequestHandler } from 'expres
 import type { Express } from 'express';
 import type { AppContext } from '@/app/composition/app-context';
 import { createChildLogger } from '@/shared/logger';
-import { getCaller } from '@/shared/middleware/authz';
+import { getCaller, operatorRequestIssuer } from '@/shared/middleware/authz';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import {
   buildAllExporters,
@@ -133,7 +134,7 @@ export function createDataLifecycleRouter(ctx: AppContext, requiresAuth?: Reques
   router.post('/delete-request', ...guards, async (req: Request, res: Response) => {
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const refusal = isDeleteRefused(sub, email);
+    const refusal = isDeleteRefused(sub, email, operatorRequestIssuer(req));
     if (refusal) {
       logger.warn({ sub }, 'delete-request refused: operator account');
       res.status(403).json({ error: 'operator-account', message: refusal });
@@ -171,7 +172,7 @@ export function createDataLifecycleRouter(ctx: AppContext, requiresAuth?: Reques
     const start = Date.now();
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).json({ error: 'unauthorized' }); return; }
-    const refusal = isDeleteRefused(sub, email);
+    const refusal = isDeleteRefused(sub, email, operatorRequestIssuer(req));
     if (refusal) {
       logger.warn({ sub }, 'delete-confirm refused: operator account');
       res.status(403).json({ error: 'operator-account', message: refusal });

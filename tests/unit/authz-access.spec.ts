@@ -13,6 +13,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact case-sensitive subject allowlists and canonical base64url trusted-service user transport while retaining case-insensitive email matching.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: the request fixture carries a verified identity-provider issuer, because an email counts for an operator decision only with one; a request carrying a user principal but no issuer matches by subject only.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
@@ -31,8 +32,9 @@ import type { Request, Response } from 'express';
 
 /** Build a minimal Request carrying an OIDC user (or none). */
 function reqAs(sub: string | null, email?: string): Request {
-  const user = sub === null && email === undefined ? undefined : { sub: sub ?? undefined, email };
-  return { oidc: { user } } as unknown as Request;
+  // A verified identity-provider issuer rides on the user: an email counts for an operator decision only with one.
+  const user = sub === null && email === undefined ? undefined : { sub: sub ?? undefined, email, iss: 'https://login.example.test/tenant' };
+  return { oidc: { isAuthenticated: () => Boolean(user), user } } as unknown as Request;
 }
 
 // These functions read process.env (operator allowlists, legacy-unowned flag).
@@ -81,6 +83,12 @@ describe('isOperator', () => {
   it('is TRUE when the caller email is in OSHAL_OPERATOR_EMAILS', () => {
     process.env.OSHAL_OPERATOR_EMAILS = 'boss@corp.com';
     expect(isOperator(reqAs('u9', 'Boss@Corp.com'))).toBe(true);
+  });
+  it('is FALSE by email for a request carrying a user principal but no verified issuer, or the local issuer (ADR-174 Amendment A)', () => {
+    process.env.OSHAL_OPERATOR_EMAILS = 'boss@corp.com';
+    expect(isOperator({ oidc: { isAuthenticated: () => true, user: { sub: 'u9', email: 'boss@corp.com' } } } as unknown as Request)).toBe(false);
+    expect(isOperator({ oidc: { user: { sub: 'u9', email: 'boss@corp.com' } } } as unknown as Request)).toBe(false);
+    expect(isOperator({ oidc: { isAuthenticated: () => true, user: { sub: 'local-0123456789abcdef', email: 'boss@corp.com', iss: 'urn:oshal:local-auth' } } } as unknown as Request)).toBe(false);
   });
   it('is FALSE for a caller not on either allowlist', () => {
     process.env.OSHAL_OPERATOR_SUBS = 'admin-sub';

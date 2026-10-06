@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the /api/me data-lifecycle ROUTES the new cockpit My Data surface consumes. data-lifecycle.spec.ts covers the feature layer (exporters, tokens, the delete pass) but nothing pinned the HTTP boundary: this pins 401 on all three endpoints, that the export subject is the SESSION sub and a body/query-supplied sub cannot redirect it, that the export sets an attachment Content-Disposition (the surface links to it as a plain download), that delete-request refuses an operator account with 403 and fails CLOSED with 503 when no signing secret exists, and that delete-confirm rejects a missing/forged/foreign token without running the delete pass. Also pins that BOTH delete responses carry knownGaps — the surface prints them, and a delete that silently implied full coverage would be the dishonest outcome.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: a local-issuer principal whose typed email is an operator's is not refused erasure as an operator account; the routes bind isDeleteRefused to the issuer isOperator uses.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -144,6 +145,11 @@ describe('POST /api/me/delete-request — step 1, the plan the surface shows bef
     const res = await hit(appFor(OPERATOR, pool), '/delete-request', postJson());
     expect(res.status).toBe(403);
     expect(res.body?.error).toBe('operator-account');
+    // A local account that typed the operator's address is not the operator (ADR-174 Amendment A): its erasure proceeds.
+    process.env.OSHAL_OPERATOR_EMAILS = 'boss@example.com';
+    const local = await hit(appFor({ sub: 'local-0123456789abcdef', email: 'boss@example.com', iss: 'urn:oshal:local-auth' }, pool), '/delete-request', postJson());
+    expect(local.body?.error).not.toBe('operator-account');
+    delete process.env.OSHAL_OPERATOR_EMAILS;
     expect(res.body?.token).toBeUndefined();
   });
 
