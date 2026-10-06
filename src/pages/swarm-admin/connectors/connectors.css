@@ -1,0 +1,138 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-5): the connectors screen's own styles on top of the Swarm
+    | Admin home's: the sticky status banner, the totals strip, the filter toolbar, the catalog
+    | table (sideways-scrolling on a phone) with risk, audit and state pills coloured from the
+    | theme's --status-* tokens, and the audit reasons inline under the pill. Nothing hard-coded.
+    | Loaded before surface-glass.css.
+*/
+
+.sa-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0.6rem 1.5rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.sa-status[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sa-status[data-tone="success"] { opacity: 1; color: var(--status-success); }
+.sa-lead { margin-bottom: 1rem; }
+.sa-crumbs { font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.5rem; }
+.sa-crumbs a { color: var(--accent-primary); text-decoration: none; }
+
+.sc-totals {
+  list-style: none;
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.95rem;
+}
+
+.sc-totals li strong { font-variant-numeric: tabular-nums; margin-right: 0.3rem; }
+.sc-totals li[data-key="blocked"] strong,
+.sc-totals li[data-key="highRisk"] strong { color: var(--status-warning, var(--text-primary)); }
+
+.sc-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.sc-toolbar h2 { margin: 0; align-self: center; }
+.sc-toolbar a { color: var(--accent-primary); align-self: center; font-size: 0.9rem; }
+
+.sc-filter {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.sc-filter input,
+.sc-filter select {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  min-width: 9rem;
+}
+
+.sc-count { margin: 0 0 0.5rem; font-size: 0.9rem; opacity: 0.8; }
+
+.sc-table-wrap {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+}
+
+.sc-table {
+  width: 100%;
+  min-width: 60rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sc-table th,
+.sc-table td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.sc-table td.empty { opacity: 0.75; font-style: italic; }
+.sc-table .sc-id { display: block; font-size: 0.8rem; opacity: 0.7; word-break: break-all; }
+.sc-table .sc-sub { display: block; font-size: 0.8rem; opacity: 0.7; }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.pill[data-risk="high"] { color: var(--status-error); }
+.pill[data-risk="medium"] { color: var(--status-warning, var(--text-primary)); }
+.pill[data-audit="fail"] { color: var(--status-error); }
+.pill[data-audit="warn"] { color: var(--status-warning, var(--text-primary)); }
+.pill[data-state="enabled"] { color: var(--status-success); }
+.pill[data-state="blocked"] { color: var(--status-error); }
+.pill[data-state="removed"],
+.pill[data-state="disabled"] { opacity: 0.6; }
+
+.sc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.sc-actions .sc-why { font-size: 0.8rem; opacity: 0.75; }
+
+.sc-issues {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  font-size: 0.8rem;
+  opacity: 0.85;
+  display: grid;
+  gap: 0.15rem;
+  max-width: 22rem;
+}
+
+.sc-issues li[data-level="error"] { color: var(--status-error); }
+.sc-issues li.sc-more { opacity: 0.7; }

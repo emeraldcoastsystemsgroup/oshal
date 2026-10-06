@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-5): the connectors screen under Swarm Admin, served at
+    | /swarm-admin/connectors to the operator role only. The whole marketplace catalog (ADR-067) as
+    | one filterable table: every connector with its category, how people sign in to it, its risk,
+    | its tool counts, its audit standing and its state; enable, disable, remove (after a confirm)
+    | and re-audit; the totals strip; the CSV export. The operator console's compact panel showed
+    | four numbers and four names, and enabling by typed id; this is the full shelf.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Connectors</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/connectors/connectors.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the catalog…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Connectors</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-plug"></span>
+      <h1>Connectors</h1>
+    </div>
+    <p class="sa-lead">
+      The connectors this swarm offers. Enabling one publishes its audited definition and its tools to the bots
+      here; where a connector needs a sign-in, each person signs in with their own account unless the connector
+      declares a deployment credential. A person may switch a connector off for themselves. A connector that
+      fails its audit stays blocked until the audit passes.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="totalsHeading">
+      <h2 id="totalsHeading">Totals</h2>
+      <ul id="totals" class="sc-totals surface-card"></ul>
+    </section>
+
+    <section class="sa-section" aria-labelledby="catalogHeading">
+      <div class="sc-toolbar">
+        <h2 id="catalogHeading">Catalog</h2>
+        <label class="sc-filter">Search <input id="search" type="search" autocomplete="off" placeholder="name, id or category" /></label>
+        <label class="sc-filter">State
+          <select id="stateFilter">
+            <option value="" selected>All</option>
+            <option value="enabled">Enabled</option>
+            <option value="available">Available</option>
+            <option value="disabled">Disabled</option>
+            <option value="removed">Removed</option>
+            <option value="blocked">Blocked</option>
+          </select>
+        </label>
+        <label class="sc-filter">Risk
+          <select id="riskFilter">
+            <option value="" selected>All</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label class="sc-filter">Category <select id="categoryFilter"><option value="" selected>All</option></select></label>
+        <button type="button" id="reload">Reload</button>
+        <a id="exportLink" href="/api/connectors/marketplace/audit-export?format=csv">Export the audit (CSV)</a>
+      </div>
+      <p id="count" class="sc-count"></p>
+      <div class="sc-table-wrap surface-card">
+        <table class="sc-table" aria-describedby="catalogHeading">
+          <thead>
+            <tr><th>Connector</th><th>Category</th><th>Sign-in</th><th>Risk</th><th>Tools</th><th>Audit</th><th>State</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="catalog"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/swarm-admin/connectors/connectors.js"></script>
+</body>
+</html>
