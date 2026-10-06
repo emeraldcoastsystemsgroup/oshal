@@ -13,6 +13,7 @@ SEQ | AUTHOR | DESCRIPTION
 7 | maintainer@emeraldcoastsystemsgroup.com | Review explicit experience member roles, atomic apply, source-safe revoke and template upgrades through the existing Access authority.
 8 | maintainer@emeraldcoastsystemsgroup.com | Carry the selected business tenant into scoped experience role discovery and review invalidation.
 9 | maintainer@emeraldcoastsystemsgroup.com | Ask first what is being given, one role on one application or a composite role, and show only that path (kept across a refresh in the same tab): the composite section (with its own application list) no longer sits under a single-application choice. The user picker shows each account's email, so two accounts with the same display name can be told apart.
+10 | maintainer@emeraldcoastsystemsgroup.com | The choice's radio buttons keep their own size (the page's full-width input rule had pushed them away from their text) and read at body size.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -46,7 +47,8 @@ SEQ | AUTHOR | DESCRIPTION
     .identity-selection label { margin-bottom: 3px; }
     .access-mode { grid-column: 1 / -1; border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; }
     .access-mode legend { float: left; font-weight: 650; margin-right: 8px; padding: 0; }
-    .access-mode label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 500; }
+    .access-mode label { display: inline-flex; gap: 8px; align-items: center; margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary, #e5e7eb); }
+    .access-mode input { width: auto; margin: 0; padding: 0; flex: none; }
     label { display: block; font-size: 12px; font-weight: 650; margin-bottom: 5px; }
     input, select, textarea, button { font: inherit; border-radius: 7px; border: 1px solid var(--border-color, #4b5563); }
     input, select, textarea { width: 100%; background: var(--bg-primary, #111827); color: inherit; padding: 9px 10px; }
