@@ -1,10 +1,11 @@
 # Unreal Engine MCP worker — next steps / where we left off
 
-**Last updated:** 2026-10-05
+**Last updated:** 2026-10-06
 **Owner:** the operator
 **Status:** Decision amended ([ADR-051](../adr/051-unreal-engine-mcp-worker.md) Amendment 1): ChiR24/Unreal_mcp on a
 Windows satellite PC. No worker PC yet, so nothing has run against a real editor. On the DGX Spark itself, the 3-D
-option is the store package `scene-studio` (Godot + Blender), which is live.
+option is the store package `scene-studio` (Godot + Blender), which is live. The launch preset and the dispatch status
+were corrected on 2026-10-06.
 
 Related: [ADR-051](../adr/051-unreal-engine-mcp-worker.md) · [remote-client architecture](../architecture/remote-client-architecture.md)
 
@@ -25,16 +26,20 @@ maintained), pinned to its stable npm release `unreal-engine-mcp-server@0.5.30` 
 - Decision amended (ADR-051 Amendment 1, 2026-10-05), with the satellite-PC spec.
 - The dead `unrealMCP` entry (chongdashu, `uv`) removed from `config-seed/claude-code-mcp.json`: it could not
   start in the control-plane containers, and the Unreal MCP runs only on the worker.
-- The remote-client preset updated for ChiR24 (see the [remote-client architecture](../architecture/remote-client-architecture.md)).
+- The remote-client preset updated for ChiR24 (see the [remote-client architecture](../architecture/remote-client-architecture.md)),
+  and corrected on 2026-10-06 to start the server through a `cmd.exe` wrapper: the daemon cannot start `npx`
+  directly or pass `UE_PROJECT_PATH` to the server.
 - The Spark-side counterpart shipped: `scene-studio` (oshal-applications #422, #423).
 
 ## Not done
 
 - No satellite PC yet; Unreal, the plugin and the bridge have never run against an editor here.
-- **No concierge can call a worker's MCP tools yet** (verified 2026-10-05). The queue carries `mcp.call-tool` to a
-  worker, but no bot-facing tool picks a worker tool, and the server-side executor refuses `executorType: mcp`.
-  The first bring-up needs a caller: route-backed package tools that enqueue on the worker (the `scene-studio`
-  pattern), or a generic remote-MCP tool in core.
+- **No concierge can call a worker's MCP tools yet** (verified 2026-10-06). The server-side executor refuses
+  `executorType: mcp`, so the first bring-up needs a caller: route-backed package tools that enqueue
+  `mcp.call-tool` on the worker (the `scene-studio` pattern), or the bot-facing tool in BACKLOG "OSHAL Node
+  bot-initiated control". The swarm can already run work on an enrolled PC: a ticket pinned to the node runs
+  Codex there (ADR-051, *Dispatch status*). Pushing MCP servers from the swarm to a node is the operator's
+  direction in BACKLOG "OSHAL Node install-time full control and swarm-pushed MCP servers".
 - The planned per-command MCP allowlist (ADR-029) has no entry for the Unreal server.
 
 ---
@@ -53,7 +58,7 @@ maintained), pinned to its stable npm release `unreal-engine-mcp-server@0.5.30` 
 ## Next action: first worker bring-up (on the satellite PC)
 
 1. **Install** Unreal Engine 5.x (5.5–5.8) from the Epic Games Launcher, Visual Studio with the C++
-   game-development workload, Node.js 20.19+, and a checkout of this repo (for the daemon).
+   game-development workload, Node.js 20.19+, and a checkout of this repo with `npm install` (the daemon runs from it).
 2. **Plugin:** download the `McpAutomationBridge` plugin from the
    [ChiR24/Unreal_mcp releases](https://github.com/ChiR24/Unreal_mcp/releases) **for the same version as the npm
    server (0.5.30)**, and copy the `McpAutomationBridge` folder into the project's `Plugins/`. A Blueprint-only project
@@ -61,27 +66,41 @@ maintained), pinned to its stable npm release `unreal-engine-mcp-server@0.5.30` 
 3. **Build and enable:** open the project and let Unreal build the plugin (or build *Development Editor* in Visual
    Studio). The status bar shows the plugin's state.
 4. **Enrol the PC as a device:** in the cockpit (signed in as the owner), enrol a node with `POST /api/join/enroll`. Keep
-   the returned token (`enrollment.token`) and client id (`enrollment.nodeClientId`) on the PC only.
-5. **Daemon environment:**
+   the returned token (`enrollment.token`) and client id (`enrollment.nodeClientId`) on the PC only. Use an enrollment
+   of its own: a node token is bound to one client id, so it cannot be shared with an OSHAL Node app on the same PC.
+5. **Launcher wrapper.** The daemon starts the MCP command without a shell, so it cannot start `npx` (a `.cmd` shim on
+   Windows) directly, and it passes the server only an allowlist of environment variables, which drops
+   `UE_PROJECT_PATH`. Create `C:\oshal\unreal-mcp.cmd`:
+   ```bat
+   @echo off
+   set "UE_PROJECT_PATH=C:\Path\To\YourProject"
+   npx -y unreal-engine-mcp-server@0.5.30
+   ```
+   `@echo off` keeps the wrapper from writing to stdout, which carries the MCP messages. Optionally run
+   `npm i -g unreal-engine-mcp-server@0.5.30` first so the first start does not download the server.
+6. **Daemon environment:**
    ```powershell
    $env:REMOTE_CLIENT_CONTROL_PLANE_URL = "https://<control-plane>"
    $env:REMOTE_CLIENT_CONTROL_PLANE_TOKEN = "<enrollment.token>"
    $env:REMOTE_CLIENT_ID = "<enrollment.nodeClientId>"
    $env:REMOTE_CLIENT_PLATFORM = "windows"
    $env:REMOTE_CLIENT_NAME = "unreal-worker"
-   $env:REMOTE_CLIENT_MCP_COMMAND = "npx"
-   $env:REMOTE_CLIENT_MCP_ARGS = '["-y","unreal-engine-mcp-server@0.5.30"]'
-   $env:UE_PROJECT_PATH = "C:/Path/To/YourProject"
+   $env:REMOTE_CLIENT_MCP_COMMAND = "C:\Windows\System32\cmd.exe"
+   $env:REMOTE_CLIENT_MCP_ARGS = '["/c","C:\\oshal\\unreal-mcp.cmd"]'
    ```
-6. **Run** the remote-client daemon ([`scripts/remote-client.ts`](../../scripts/remote-client.ts)) with the editor open.
+   `REMOTE_CLIENT_MCP_ARGS` is a JSON array (a comma-separated list also works).
+7. **Run** the remote-client daemon (`npm run remote-client:start` in the checkout,
+   [`scripts/remote-client.ts`](../../scripts/remote-client.ts)) with the editor open. Nothing restarts the server if it
+   exits, so restart the daemon after the server or the editor goes down.
 
 ## Verification (how we know it works)
 
 - The daemon logs "Starting local MCP process", registers, and the client record shows `mcpToolCount` > 0.
 - The server finds the plugin on `127.0.0.1:8090` with the project's capability token; with the editor closed, tool
   calls fail closed.
-- A smoke `mcp.call-tool` (spawn a light above the origin) appears in the editor viewport, then — once a caller exists
-  (see *Not done*) — the same from a concierge.
+- A smoke `mcp.call-tool` task, sent by the owner or an operator to `POST /api/remote-clients/<clientId>/tasks` with
+  `toAgentId` set to the client id and `input.toolName` set to a tool from the registration (spawn a light above the
+  origin), appears in the editor viewport. Then, once a caller exists (see *Not done*), the same from a concierge.
 
 ---
 

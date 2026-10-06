@@ -128,6 +128,23 @@ sign-in, and its `output.response` becomes the reply (`src/app/routes/remote-cli
 node without the executor, or a bot on a hosted provider, keeps the controller path unchanged. A failed or late node run is said in
 the reply's `error`.
 
+### 8. Two kinds of node
+
+Two programs register as remote clients, and they reach a PC in different ways:
+
+- **The remote-client daemon** ([`scripts/remote-client.ts`](../../scripts/remote-client.ts), run from a checkout of this repo)
+  hosts one stdio MCP server, chosen on the PC at launch by `REMOTE_CLIENT_MCP_COMMAND` / `_ARGS` / `_CWD`, and runs
+  `mcp.call-tool` for any tool that server lists. Nothing restarts the server if it exits.
+- **The OSHAL Node app** ([`packages/oshal-chat`](../../packages/oshal-chat)) has no MCP client. Its tools are a fixed list built
+  into the app ([`local-tools.ts`](../../packages/oshal-chat/src/main/local-tools.ts)). With worker mode on (the default) it offers
+  `swarm.exec`, plus `codex.exec`, `claude.exec` and `antigravity.exec` when the matching CLI is set up on the PC. Its "Allow this
+  machine to be controlled" checkbox (`allowSystemControl`, off by default, set in the app's Config after install) adds
+  `screen.capture`, `shell.exec`, `desktop.control` and `app.open`. Any other tool name fails on the node.
+
+A `task` ticket whose `metadata.targetRemoteClientId` names a node runs `codex.exec` on it at `sandbox: danger-full-access`
+([`explicit-remote-ticket-dispatch.ts`](../../src/app/explicit-remote-ticket-dispatch.ts)). Neither program accepts an MCP server
+pushed from the swarm: the intents in section 3 are the whole list.
+
 ## Security Model
 
 The remote client is intentionally not a blind open relay.
@@ -176,10 +193,13 @@ export REMOTE_CLIENT_MCP_COMMAND="mcp-server-macos-use"
 export REMOTE_CLIENT_PLATFORM="macos"
 ```
 
-Starting shape for a Windows Unreal Engine worker (see [ADR-051](../adr/051-unreal-engine-mcp-worker.md) Amendment 1). The
-satellite PC runs UE 5.x with the ChiR24 *McpAutomationBridge* plugin enabled and the project open; the stdio server
-`unreal-engine-mcp-server` reaches the plugin on `127.0.0.1:8090` and finds its capability token through
-`UE_PROJECT_PATH`. Pin the server and the plugin to the same release:
+Starting shape for a Windows Unreal Engine worker (see [ADR-051](../adr/051-unreal-engine-mcp-worker.md) Amendment 1 and the
+[live checklist](../apps/unreal-mcp-worker-next-steps.md)). The satellite PC runs UE 5.x with the ChiR24 *McpAutomationBridge*
+plugin enabled and the project open; the stdio server `unreal-engine-mcp-server` reaches the plugin on `127.0.0.1:8090` and
+finds its capability token through `UE_PROJECT_PATH`. Pin the server and the plugin to the same release. The daemon starts the
+MCP command without a shell and passes it only an allowlisted environment (`REMOTE_MCP_PROCESS_ENV_KEYS`), so `npx` cannot start
+directly and `UE_PROJECT_PATH` would be dropped. A `cmd.exe` wrapper handles both: `C:\oshal\unreal-mcp.cmd` contains `@echo off`,
+`set "UE_PROJECT_PATH=C:\Path\To\YourProject"` and `npx -y unreal-engine-mcp-server@0.5.30`.
 
 ```powershell
 $env:REMOTE_CLIENT_CONTROL_PLANE_URL = "https://<control-plane>"
@@ -187,9 +207,8 @@ $env:REMOTE_CLIENT_CONTROL_PLANE_TOKEN = "<device token from POST /api/join/enro
 $env:REMOTE_CLIENT_ID = "<the enrollment's nodeClientId>"
 $env:REMOTE_CLIENT_PLATFORM = "windows"
 $env:REMOTE_CLIENT_NAME = "unreal-worker"
-$env:REMOTE_CLIENT_MCP_COMMAND = "npx"
-$env:REMOTE_CLIENT_MCP_ARGS = '["-y","unreal-engine-mcp-server@0.5.30"]'
-$env:UE_PROJECT_PATH = "C:/Path/To/YourProject"
+$env:REMOTE_CLIENT_MCP_COMMAND = "C:\Windows\System32\cmd.exe"
+$env:REMOTE_CLIENT_MCP_ARGS = '["/c","C:\\oshal\\unreal-mcp.cmd"]'
 ```
 
 ## Current Implementation Files
@@ -208,4 +227,4 @@ $env:UE_PROJECT_PATH = "C:/Path/To/YourProject"
 - If the endpoint machine is macOS, the underlying MCP still needs the relevant Accessibility and Input Monitoring permissions.
 - If the endpoint machine is Windows or Linux, the actual MCP command should match the OS-specific server you want to run locally.
 - The remote client does not replace MCP. It gives OSHAL a networked way to reach the local MCP on the endpoint machine.
-- For an Unreal Engine worker, the Unreal Editor must be running with the `UnrealMCP` plugin enabled before tasks dispatch; the `uv`-launched Python server connects to the editor on TCP `55557` and tool calls fail if the editor is closed.
+- For an Unreal Engine worker, the Unreal Editor must be running with the ChiR24 `McpAutomationBridge` plugin enabled before tasks dispatch; the stdio server reaches the plugin on `127.0.0.1:8090`, and tool calls fail closed while the editor is closed.

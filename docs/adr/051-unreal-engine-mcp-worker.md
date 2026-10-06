@@ -1,6 +1,6 @@
 # ADR-051 — Unreal Engine MCP worker (swarm-driven editor control on a GPU endpoint)
 
-- **Status:** Accepted, amended 2026-10-05 (Amendment 1: ChiR24/Unreal_mcp on a Windows satellite PC; chongdashu dropped; first worker bring-up pending the PC)
+- **Status:** Accepted, amended 2026-10-05 (Amendment 1: ChiR24/Unreal_mcp on a Windows satellite PC; chongdashu dropped; first worker bring-up pending the PC); Amendment 1's worker launch and dispatch status corrected 2026-10-06
 - **Date:** 2026-06-18
 - **Author:** maintainer@emeraldcoastsystemsgroup.com
 - **Related:** [ADR-012 (OS MCP adoption strategy)](012-os-mcp-adoption-strategy.md),
@@ -48,20 +48,53 @@ Editor for Linux ARM64, so Unreal cannot run on the control-plane box; it needs 
 
 Linux on an x86_64 PC also runs the editor; Windows is the smoother path for the plugin build.
 
-**Worker launch (the remote-client preset).** On the PC, with the editor open on a project that has the
-plugin enabled, run the daemon ([`scripts/remote-client.ts`](../../scripts/remote-client.ts)) with
-`REMOTE_CLIENT_MCP_COMMAND=npx` and `REMOTE_CLIENT_MCP_ARGS='["-y","unreal-engine-mcp-server@0.5.30"]'`.
-Set `UE_PROJECT_PATH` (the project folder or `.uproject`) in the daemon's environment: the server uses it
-to find the capability token and the plugin's port. Authenticate the daemon with a device-bound node
-credential (`POST /api/join/enroll`), the remote-client rail's per-device token.
+**Worker launch (the remote-client preset).** The Unreal MCP runs on the PC under the generic remote-client
+daemon ([`scripts/remote-client.ts`](../../scripts/remote-client.ts), `npm run remote-client:start` from a
+checkout of this repo), with the editor open on a project that has the plugin enabled. The OSHAL Node app
+([`packages/oshal-chat`](../../packages/oshal-chat)) cannot host it, because its tools are a fixed list built
+into the app. Start the server through a small `.cmd` wrapper that sets `UE_PROJECT_PATH` (the project folder
+or `.uproject`; the server uses it to find the capability token and the plugin's port) and then runs
+`npx -y unreal-engine-mcp-server@0.5.30`, and point the daemon at `cmd.exe /c <wrapper>`. The daemon's code
+makes the wrapper necessary in two ways:
 
-**Dispatch status (verified 2026-10-05, not assumed).** The remote-client queue carries `mcp.call-tool`
-tasks to a worker: a mesh envelope whose payload names `intent: "mcp.call-tool"` is converted in
-[`remote-client-mesh-task.ts`](../../src/app/routes/remote-client-mesh-task.ts). No tool lets a concierge
-pick a worker's MCP tool, though. The server-side tool executor refuses `executorType: mcp` descriptors,
-and the features that enqueue `mcp.call-tool` (series, browser tasks, explicit `oshal-chat` tickets) each
-name their own tool. The first Unreal bring-up therefore also needs a caller: either route-backed package
-tools that enqueue on the worker (the `scene-studio` pattern), or a generic remote-MCP tool in core.
+- It starts the MCP command without a shell (`shell: false` in
+  [`mcp-stdio-client.ts`](../../src/features/remote-client/services/mcp-stdio-client.ts)), and Windows cannot
+  start a `.cmd` shim such as `npx` that way.
+- It passes the server only an allowlist of environment variables (`REMOTE_MCP_PROCESS_ENV_KEYS` in
+  [`remote-client-service.ts`](../../src/features/remote-client/services/remote-client-service.ts)), and
+  `UE_PROJECT_PATH` is not on it.
+
+Authenticate the daemon with its own device-bound node credential (`POST /api/join/enroll`). A node token is
+bound to one client id, so a PC that also runs the OSHAL Node app needs a second enrollment.
+
+**Dispatch status (verified 2026-10-06; corrects the 2026-10-05 text, which said no route existed).**
+
+- **What runs on a PC today.** The control plane queues A2A tasks for an enrolled, owner-bound node; the node
+  pulls them over its outbound connection and posts the result back. Work reaches a node three ways:
+  - A `task` ticket whose `metadata.targetRemoteClientId` names the node. It runs `codex.exec` on that PC at
+    `sandbox: danger-full-access`, prompted to use the locally installed skills and real desktop or browser
+    controls ([`explicit-remote-ticket-dispatch.ts`](../../src/app/explicit-remote-ticket-dispatch.ts)).
+  - `POST /api/remote-clients/:clientId/tasks`, by the owner or an operator.
+  - A mesh envelope to the node's agent channel, converted to a task in
+    [`remote-client-mesh-task.ts`](../../src/app/routes/remote-client-mesh-task.ts).
+
+  The Codex run uses the PC's own Codex sign-in and per-user config folder, so MCP servers configured in that
+  CLI are available to it. That loading is the CLI's behaviour; this repo does not test it.
+- **Full control of the PC.** The OSHAL Node app's "Allow this machine to be controlled" checkbox
+  (`allowSystemControl`, off by default, ticked in the app's Config after install) adds `screen.capture`,
+  `shell.exec`, `desktop.control` and `app.open`
+  ([`local-tools.ts`](../../packages/oshal-chat/src/main/local-tools.ts)). The installers do not offer it.
+  Worker mode, on by default, already runs `codex.exec` and `claude.exec` without that checkbox.
+- **Not built.**
+  - A bot-facing tool that calls a node's tools or a worker's MCP tools. The server-side tool executor refuses
+    `executorType: mcp` descriptors. See BACKLOG "OSHAL Node bot-initiated control".
+  - Pushing an MCP server from the swarm to a node. The node task intents are fixed (`mcp.initialize`,
+    `mcp.list-tools`, `mcp.call-tool`, `mcp.shutdown`, `status.sync`), the OSHAL Node app has no MCP client,
+    and the daemon's one server is chosen on the PC at launch. BACKLOG "OSHAL Node install-time full control
+    and swarm-pushed MCP servers" records the operator's direction (2026-10-06).
+
+The first Unreal bring-up therefore needs a caller for the worker's tools: route-backed package tools that
+enqueue `mcp.call-tool` on the worker (the `scene-studio` pattern), or the bot-facing tool in the BACKLOG.
 
 Live checklist: [unreal-mcp-worker-next-steps.md](../apps/unreal-mcp-worker-next-steps.md).
 
