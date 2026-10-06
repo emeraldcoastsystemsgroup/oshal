@@ -47,6 +47,7 @@
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Register the guest demo seed own-read regression on the protected remote application execution scenario: the rows the real seeder writes are read through the real guest chain by their guest, and refused to another guest and to the same sub from another issuer.
  * 42 | maintainer@emeraldcoastsystemsgroup.com | Register protected inline concierge authority, empty histories, pending approval streams, real PostgreSQL conversation reload and isolated native recovery browser coverage through the existing fixed runner.
  * 43 | maintainer@emeraldcoastsystemsgroup.com   | Register concierge operation logging, secret omission and bounded documentation/catch negative controls in the existing protected-execution runner.
+ * 44 | maintainer@emeraldcoastsystemsgroup.com   | Register the protected node chat-turn guard on the protected remote application execution scenario: rail, cockpit and legacy chat bodies reach a protected node bot direct and non-agentic with one brain shape, an unprotected node keeps its shape, and the persisted node reply is published on the real task stream only after both turns are saved. It is integration level, over the real routers, chokepoint, node client and stream with a loopback stub node.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -246,6 +247,7 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/manifest-worker-bot-node-boundary.spec.ts' },
     { level: 'integration', path: 'tests/unit/queued-protected-dispatch.spec.ts' },
     { level: 'unit', path: 'tests/unit/autonomous-test-lab-registration.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-node-chat-turn.spec.ts' },
   ],
   steps: [{ id: 'runner', app: 'test-lab', label: 'Protected application execution fixtures', run: async () => ({
     app: 'test-lab', label: 'Protected application execution fixtures', state: 'degraded',

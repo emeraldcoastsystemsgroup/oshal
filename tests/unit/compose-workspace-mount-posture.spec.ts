@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CKR-20 / R3.3 done-when (1) and (3). Every container that runs bot work mounts the SAME workspace volume read-write with no subpath, so every ticket's and every owner's working directory is a sibling of every other. ADR-060 already records that a directory layout on a shared read-write mount is attribution, not enforcement. Nothing here CHANGES that - the option is the operator's to choose (ADR-060 lists three, this repo's entry adds a fourth) - but an unmeasured property is one nobody notices changing, so the posture is pinned: the counts, the :rw, the absence of a subpath, and the exact mounting set. Asserted against the RESOLVED compose, because the mounts arrive through a `<<:` merge and a regex cannot tell an anchor from a service block. The second half pins why persona YAML does not help: runtimeToolMatchesCapabilities short-circuits for CORE_RUNTIME_TOOL_NAMES, and execute_command is in it - a reader who assumes capabilities gate the shell is repeating a belief this entry exists to correct.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve the compose through loadComposeYaml (@/shared/config). The bare js-yaml load failed on the library's default merge-key limit once #869 took docker-compose.oshal-local.yml past 10000 units; the shared loader carries the repository's explicit budget and still resolves every `<<:` merge.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | futures-research-worker (30097d55, 2026-09-25) joined the shared read-write workspace without a CKR-20 review, turning the 39/40 count pin red for nine days. Reviewed 2026-10-04 under the operator's delegation: it does not trip reversal trigger 2 (core image and runtime, package supplies persona YAML only, reason-only tool-less dispatch, profile-gated off by default). The count pin becomes a NAME pin (REVIEWED_WORKSPACE_BOTS) so the next bot to join names itself in the failure and must be reviewed rather than re-counted.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | scene-studio-bot (the Scene Studio director's node, 2026-10-06) reviewed under CKR-20: it runs a store package's bot WITH a tool surface (the oshal-tools MCP bridge, plus agy's sandboxed command grant on every bridged turn), which is reversal trigger 2 if it shares the read-write workspace. So it mounts no workspace at all and its agy task folders are container-local. The mounting set is now the inheritors minus WORKSPACE_FREE_BOTS, plus code-server, and the free set is pinned by name, so giving that node the volume later goes red here instead of passing as one more reviewed bot.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -56,9 +57,10 @@ describe('the shared workspace mount posture is measured, not assumed', () => {
     expect(withSubpath, 'a subpath mount appeared — that is ADR-060 item 3 landing; record it').toEqual([]);
   });
 
-  it('the mounting set is exactly the bot-anchor inheritors plus code-server', () => {
-    // 40 inheritors + code-server = 41. oshal-api is itself an inheritor, so the invariant is
-    // inheritors + 1, not + 2 — which is the arithmetic a reader is most likely to get wrong.
+  it('the mounting set is exactly the workspace-mounting inheritors plus code-server', () => {
+    // 41 inheritors; WORKSPACE_FREE_BOTS inherit the anchor without the volume, so 40 mount, + code-server
+    // = 41. oshal-api is itself an inheritor, so the invariant is mounting inheritors + 1, not + 2 —
+    // which is the arithmetic a reader is most likely to get wrong.
     const all = services();
     const inheritors = Object.entries(all)
       .filter(([, svc]) => svc?.environment?.BOT_RUNTIME !== undefined)
@@ -66,11 +68,12 @@ describe('the shared workspace mount posture is measured, not assumed', () => {
       .sort();
     const mounting = [...new Set(workspaceMounts().map((m) => m.service))].sort();
 
-    expect(inheritors, 'a bot joined or left the shared read-write workspace — review it under CKR-20 '
-      + '(does it run a store package\'s bot with a tool surface? that is reversal trigger 2), record the '
-      + 'decision in this file\'s change log, then update REVIEWED_WORKSPACE_BOTS').toEqual(REVIEWED_WORKSPACE_BOTS);
-    expect(mounting, 'a service mounts the shared workspace that is neither a bot nor code-server')
-      .toEqual([...inheritors, 'code-server'].sort());
+    expect(inheritors, 'a bot joined or left the anchor — review it under CKR-20 (does it run a store '
+      + 'package\'s bot with a tool surface? that is reversal trigger 2 if it shares the workspace), record the '
+      + 'decision in this file\'s change log, then update REVIEWED_WORKSPACE_BOTS (mounts the workspace) or '
+      + 'WORKSPACE_FREE_BOTS (does not)').toEqual([...REVIEWED_WORKSPACE_BOTS, ...WORKSPACE_FREE_BOTS].sort());
+    expect(mounting, 'a service mounts the shared workspace that is neither a reviewed workspace bot nor code-server')
+      .toEqual([...inheritors.filter((name) => !WORKSPACE_FREE_BOTS.includes(name)), 'code-server'].sort());
   });
 });
 
@@ -82,7 +85,8 @@ describe('the shared workspace mount posture is measured, not assumed', () => {
  * core oshal-bot image and core runtime code; its package supplies only persona YAML; its dispatch is
  * reason-only and tool-less (no shell, so the cross-ticket traversal CKR-20 is about is unreachable
  * from it); and it is profile-gated off until the package is installed. A package bot WITH a tool
- * surface would trip the trigger.
+ * surface would trip the trigger. A bot that inherits the anchor WITHOUT the volume is listed in
+ * WORKSPACE_FREE_BOTS instead.
  */
 const REVIEWED_WORKSPACE_BOTS = [
   'career-bot', 'cloud-ops-bot', 'code-developer', 'code-reviewer', 'deck-builder-bot', 'devops-bot',
@@ -93,6 +97,15 @@ const REVIEWED_WORKSPACE_BOTS = [
   'social-writer-bot', 'spotify-bot', 'storage-bot', 'system-architect', 'test-engineer', 'tester-bot',
   'trading-bot', 'travel-bot', 'weather-bot', 'workflow-assistant',
 ] as const;
+
+/**
+ * Anchor inheritors that deliberately mount NO shared workspace, by NAME. Reviewed 2026-10-06:
+ * scene-studio-bot runs a store package's bot with a tool surface (the oshal-tools MCP bridge and
+ * agy's sandboxed command grant), the shape CKR-20 reversal trigger 2 names, so it stays out of the
+ * volume instead of joining it. Its task folders are created in the container's own
+ * /app/workspace-shared.
+ */
+const WORKSPACE_FREE_BOTS: readonly string[] = ['scene-studio-bot'];
 
 describe('persona capabilities do not gate the shell tool', () => {
   it('execute_command is a core runtime tool, so capability matching never sees it', async () => {

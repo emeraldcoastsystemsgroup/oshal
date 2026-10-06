@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the compose bot-node fleet's identity invariants. A new node service is always written by copying an existing one (sales-bot came from career-bot), and the copy-paste failure that survives review is a duplicated AGENT_ID: both containers heartbeat, both answer, and every cost row and audit stamp lands under one identity. Nothing else catches it — the id is a plain env string, the container starts fine, and the wrong-attribution only shows up later in someone's billing question.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Pin both Claude OAuth mounts on package-owned CLI nodes. The sales node originally mounted ~/.claude but omitted the sibling ~/.claude.json account metadata, so a recreate turned a working login into a failed refresh and an honest raw fallback.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | The Claude rule is now "whole or not at all", and scene-studio-bot joins the package-node checks. Requiring both halves on EVERY node made a credential-minimal node impossible and has failed on futures-research-worker since it landed without either half (30097d55); half a session (sales-bot's original ~/.claude without ~/.claude.json) is still red. Also pins scene-studio-bot to the Antigravity login alone (no Codex or Claude session, no config-seed), because that node runs store-package code with agy's sandboxed command grant.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -23,6 +24,9 @@ interface BotService {
   exposes5000: boolean;
   mountsClaudeAuthVolume: boolean;
   mountsClaudeAuthJson: boolean;
+  mountsGeminiAuthVolume: boolean;
+  mountsCodexAuthVolume: boolean;
+  mountsConfigSeed: boolean;
 }
 
 /**
@@ -53,6 +57,9 @@ function botNodeServices(): BotService[] {
         exposes5000: /^\s*-\s*"?5000"?\s*$/m.test(body),
         mountsClaudeAuthVolume: /^\s*-\s*\*claude-auth-volume\s*$/m.test(body),
         mountsClaudeAuthJson: /^\s*-\s*\*claude-auth-json\s*$/m.test(body),
+        mountsGeminiAuthVolume: /^\s*-\s*\*gemini-auth-volume\s*$/m.test(body),
+        mountsCodexAuthVolume: /^\s*-\s*\*codex-auth-volume\s*$/m.test(body),
+        mountsConfigSeed: /^\s*-\s*\.\/config-seed:/m.test(body),
       });
     }
     current = null;
@@ -110,23 +117,43 @@ describe('compose bot-node identity', () => {
       .toEqual([]);
   });
 
-  it('mounts both halves of the host Claude OAuth session on every bot node', () => {
+  // Whole or not at all. Half the session (sales-bot's original ~/.claude without ~/.claude.json)
+  // looks authenticated until the first recreation; a node with none of it never runs Claude Code.
+  it('mounts the host Claude OAuth session whole or not at all on every bot node', () => {
     const broken = services
-      .filter((s) => !s.mountsClaudeAuthVolume || !s.mountsClaudeAuthJson)
+      .filter((s) => s.mountsClaudeAuthVolume !== s.mountsClaudeAuthJson)
       .map((s) => `${s.name}: directory=${s.mountsClaudeAuthVolume} metadata=${s.mountsClaudeAuthJson}`);
 
-    expect(broken, `bot nodes must mount ~/.claude and ~/.claude.json together; a partial `
+    expect(broken, `bot nodes must mount ~/.claude and ~/.claude.json together or not at all; a partial `
       + `session loses authentication after recreation:\n  ${broken.join('\n  ')}`).toEqual([]);
+    // Not vacuous: most of the fleet carries the session, so a parser that saw no mounts fails here.
+    expect(services.filter((s) => s.mountsClaudeAuthVolume && s.mountsClaudeAuthJson).length)
+      .toBeGreaterThan(3);
   });
 
   // A package-owned node (ADR-093 Tier 2) must be opt-in, or every deployment pays its memory
-  // whether or not it runs that package. career-bot established the contract; sales-bot follows.
+  // whether or not it runs that package. career-bot established the contract; sales-bot and
+  // scene-studio-bot follow.
   it('keeps package-owned nodes profile-gated and internal-only', () => {
-    for (const name of ['career-bot', 'sales-bot']) {
+    for (const name of ['career-bot', 'sales-bot', 'scene-studio-bot']) {
       const svc = services.find((s) => s.name === name);
       expect(svc, `${name} must exist as a bot-node service`).toBeDefined();
       expect(svc!.profiles, `${name} must be profile-gated (opt-in per deployment)`).toBeTruthy();
       expect(svc!.exposes5000, `${name} must expose 5000 internally for node dispatch`).toBe(true);
     }
+  });
+
+  // The Scene Studio director node runs store-package code, and agy holds a sandboxed command
+  // grant on every bridged turn, so the node carries the one login it uses and nothing else.
+  it('keeps the scene-studio node on the Antigravity login alone', () => {
+    const svc = services.find((s) => s.name === 'scene-studio-bot');
+    expect(svc, 'scene-studio-bot must exist as a bot-node service').toBeDefined();
+    expect(svc!.agentId).toBe('117640d5-e8a6-4a54-b8f4-c6c926172b88');
+    expect(svc!.mountsGeminiAuthVolume, 'agy reads its login from the .gemini mount').toBe(true);
+    expect({
+      codex: svc!.mountsCodexAuthVolume,
+      claude: svc!.mountsClaudeAuthVolume || svc!.mountsClaudeAuthJson,
+      configSeed: svc!.mountsConfigSeed,
+    }, 'scene-studio-bot carries a credential it never uses').toEqual({ codex: false, claude: false, configSeed: false });
   });
 });

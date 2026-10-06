@@ -22,6 +22,14 @@ before anything is signed and records the missing requirement on the ticket. Con
 and deterministic provider intents are refused rather than dropped. A hosted brain is authoritative
 through its resolved endpoint; a CLI brain is authoritative through its signed provider/model stamp.
 
+Interactive cockpit and rail chat to a protected node-bound bot (`POST /api/send-message` and
+`POST /api/tasks/:taskId/messages`) builds the same shape on the controller. Every chat client posts
+`agenticMode: true` or omits it, so the route ignores the client's value for a protected target and
+sends `direct: true, agenticMode: false`; the brain comes from `stampRemoteBrain`. Protection is
+decided with the inline branch's exact expression (the execution policy, or the controller's
+protected-agent read that protected dispatch prepares from). Bare service-secret calls and
+unprotected bots keep the shape they asked for.
+
 Each protected worker run has isolated history. The runtime supplies an empty native worker-tool
 set, excludes global project context and layered swarm memory, and rechecks permission immediately
 before inference and before storing or returning the answer. The final prompt authority names only
@@ -82,7 +90,9 @@ Migration 132 stores execution state and durable links to parent result tasks. R
 every execution contributing to a task, including when a concurrent metadata append was lost.
 Task/message history, ticket detail/listing, Jarvis caches/shelves and SSE delivery require current
 rights for the exact issuer and subject. Platform administration does not bypass this business
-result boundary. SSE checks again for each event. Protected cached facts are withheld from
+result boundary. SSE checks again for each event. A node chat reply is published on the task stream only after its
+protected lineage, both persisted turns and the caller's read have been re-proved; the stream route
+still authorizes every subscriber for that event. Protected cached facts are withheld from
 automatic derived summaries until those summary paths retain complete source lineage.
 
 Both migrations use forced row security for controller-only authority records. Runtime bootstrap
