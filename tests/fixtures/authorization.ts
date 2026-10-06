@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Allow the actual compiled page adapter to exercise installed asset paths under the same authority checks.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Supply declared package dependencies to browser proofs without replacing authorization routes.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Accept an optional approval verifier so a browser proof can drive the sole-operator self-approval through the real page and routes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Bob's directory entry carries an email, as the administrator inventory now does for verified accounts.
  */
 /** Isolated real management service and disposable loopback HTTP server. No operator database. */
 import express, { type Request, type RequestHandler } from 'express';
@@ -43,7 +44,7 @@ export async function createAuthorizationFixture(pageFactory = createAuthorizati
     resolvePackage, verifyApproval,
     resolveActor: async (sub, issuer) => Object.values(actors).find(actor => actor.sub === sub && actor.issuer === issuer) ?? null,
     inventory: async actor => ({
-      users: actor.isSwarmAdmin ? [{ sub: 'alice', issuer: ISSUER, label: '<img src=x onerror="window.inventoryXss=true"> Alice' }, { sub: 'bob', issuer: ISSUER, label: 'Bob' }] : [],
+      users: actor.isSwarmAdmin ? [{ sub: 'alice', issuer: ISSUER, label: '<img src=x onerror="window.inventoryXss=true"> Alice' }, { sub: 'bob', issuer: ISSUER, label: 'Bob', email: 'bob@example.test' }] : [],
       groups: actor.isSwarmAdmin ? directoryGroups : [],
     }),
   });

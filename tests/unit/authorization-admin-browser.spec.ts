@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Refuse unknown linked identities and obsolete asynchronous access previews.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify inline additive roles, exact row scope, live catalog changes and stale response refusal.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Exercise calendar expiry, compact layout and reviewed bulk role changes.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | Verify the page asks what is being given and shows only that path, and that the user picker shows each account's email.
  */
 /** Chromium drives the real Access Administration page and shared policy HTTP service on loopback. */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -50,6 +51,24 @@ async function openAdvanced() {
 }
 
 describe('Access Administration browser workflow', () => {
+  it('shows one path at a time: one role on one application by default, or a composite role (kept across a refresh); and each account with its email', async () => {
+    const visible = (id: string) => page.locator('#' + id).isVisible();
+    const paths = async () => ({ single: await visible('applications-panel'), advanced: await visible('advanced-access'),
+      picker: await visible('application-field'), composite: await visible('experience-access') });
+    expect(await page.locator('input[name="access-mode"]:checked').getAttribute('value')).toBe('single');
+    expect(await paths()).toEqual({ single: true, advanced: true, picker: true, composite: false });
+    await page.locator('input[name="access-mode"][value="composite"]').check();
+    expect(await paths()).toEqual({ single: false, advanced: false, picker: false, composite: true });
+    await page.reload();
+    await page.locator('#administration').waitFor({ state: 'visible' });
+    expect(await paths()).toEqual({ single: false, advanced: false, picker: false, composite: true });
+    await page.locator('input[name="access-mode"][value="single"]').check();
+    expect(await paths()).toEqual({ single: true, advanced: true, picker: true, composite: false });
+    const labels = await page.locator('#target option').allTextContents();
+    expect(labels.find(text => text.startsWith('Bob'))).toContain('Bob · bob@example.test (');
+    expect(labels.find(text => text.includes('Alice'))).not.toContain('·');
+  });
+
   it('opens the exact user from the roster and reviews their application actions and delegated auditor role', async () => {
     await fixture.apply({ targetSub: 'bob' });
     const query = new URLSearchParams({ issuer: fixture.actors.bob.issuer, sub: 'bob' });

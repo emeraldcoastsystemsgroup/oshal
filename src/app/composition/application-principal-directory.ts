@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Take schema readiness as a re-requestable thunk so a bootstrap that failed at boot is retried by the next directory read instead of refusing for the life of the process.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | List the directory identities configuration admits as swarm administrators, so sole-operator self-approval can refuse the moment a second administrator exists.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment A: the administrator census no longer lists local accounts whose email is on OSHAL_OPERATOR_EMAILS. A local account's email is whatever was typed when the account was made and was never verified, so it makes the account a swarm administrator nowhere else (authz operatorMatchKeys); a local administrator is a swarm_roles row or an OSHAL_OPERATOR_SUBS entry, which the sole-operator census reads itself.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com | The administrator inventory carries each account's verified email beside its unchanged label, so Access Administration can tell two accounts with the same display name apart (a person with a personal and a work Google account). Swarm administrators only, as before.
  */
 import type { Request, RequestHandler } from 'express';
 import type { Pool } from 'pg';
@@ -26,6 +27,11 @@ const logger = createChildLogger({ module: 'application-principal-directory' });
 type Claims = Readonly<Record<string, unknown>>;
 function label(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 512 && !/[\u0000-\u001f\u007f]/.test(value) ? value : null;
+}
+/** @description An account's email for the administrator inventory, only when it is a plain, bounded value. @param {unknown} value Stored email. @returns {{email?: string}} Field to spread. */
+function emailOf(value: unknown): { email?: string } {
+  const email = label(value);
+  return email && email.includes('@') ? { email } : {};
 }
 /** @description Integrate exact observed identities with existing account stores, without granting or creating accounts.
  * @param pool Control-plane pool. @param ready Re-requestable schema readiness. @param env Authentication configuration.
@@ -119,10 +125,10 @@ class ApplicationPrincipalDirectory {
     const enabled = this.providers();
     const users = locals.map(user => {
       const linked = native.filter(row => row.canonicalLocalSub === user.userSub).map(row => row.provider);
-      return { sub: user.userSub, issuer: LOCAL_AUTH_PRINCIPAL_ISSUER,
+      return { sub: user.userSub, issuer: LOCAL_AUTH_PRINCIPAL_ISSUER, ...emailOf(user.email),
         label: `${user.displayName || user.email} (local${linked.length ? `; ${[...new Set(linked)].join(', ')} linked` : ''}; ${user.status})` };
     });
-    for (const row of native.filter(item => !item.canonicalLocalSub)) users.push({ sub: row.sub,issuer: row.issuer,
+    for (const row of native.filter(item => !item.canonicalLocalSub)) users.push({ sub: row.sub,issuer: row.issuer,...emailOf(row.email),
       label: `${row.displayName || row.email || row.sub} (${row.provider}; ${enabled.has(row.issuer) ? row.status : 'provider disabled'})` });
     for (const row of registered) {
       if (native.some(item => item.issuer === row.issuer && item.sub === row.sub)) continue;
