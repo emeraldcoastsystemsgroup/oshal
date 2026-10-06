@@ -1,0 +1,145 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-8): the households screen's own styles on top of the Swarm
+    | Admin home's: the sticky status banner, the overview strip, the filter toolbar, one card per
+    | household with its members table (sideways-scrolling on a phone; the card grids' one track is
+    | minmax(0, 1fr) so a wide table never widens the page), the add-member and create forms, pills
+    | from the theme's tokens. Nothing hard-coded. Loaded before surface-glass.css.
+*/
+
+.sa-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0.6rem 1.5rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.sa-status[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sa-status[data-tone="success"] { opacity: 1; color: var(--status-success); }
+.sa-lead { margin-bottom: 1rem; }
+.sa-crumbs { font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.5rem; }
+.sa-crumbs a { color: var(--accent-primary); text-decoration: none; }
+
+.sh-posture {
+  list-style: none;
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.95rem;
+}
+
+.sh-posture li strong { font-variant-numeric: tabular-nums; margin-right: 0.3rem; }
+
+.sh-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.sh-toolbar h2 { margin: 0; align-self: center; }
+
+.sh-filter {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.sh-filter input,
+.sh-form input[type="text"],
+.sh-form select,
+.sh-add select,
+.sh-members select {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.sh-filter input { min-width: 12rem; }
+.sh-count { margin: 0 0 0.5rem; font-size: 0.9rem; opacity: 0.8; }
+.sh-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+.sh-cards .empty { opacity: 0.75; font-style: italic; }
+
+.sh-card {
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.sh-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.sh-card-head h3 { margin: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
+.sh-meta { margin: 0; font-size: 0.85rem; opacity: 0.75; word-break: break-all; }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.pill[data-manage="yes"] { color: var(--status-success); }
+.pill[data-manage="no"] { opacity: 0.7; }
+.pill[data-role="admin"] { color: var(--accent-primary); }
+
+.sh-members {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.sh-members th,
+.sh-members td {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  white-space: nowrap;
+}
+
+.sh-members td.empty { opacity: 0.75; font-style: italic; white-space: normal; }
+.sh-members .sh-sub { display: block; font-size: 0.8rem; opacity: 0.7; }
+.sh-members a { color: var(--accent-primary); }
+.sh-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+
+.sh-add,
+.sh-form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+
+.sh-form { padding: 1rem 1.25rem; border-radius: 0.75rem; }
+.sh-add label,
+.sh-form label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.sh-add[hidden],
+.sh-note[hidden] { display: none; }
+.sh-note { margin: 0; font-size: 0.9rem; opacity: 0.8; }
+
+.sh-message { margin: 0; font-size: 0.9rem; opacity: 0.85; }
+.sh-message[data-tone="error"] { opacity: 1; color: var(--status-error); }

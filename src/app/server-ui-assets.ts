@@ -15,6 +15,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): register /swarm-admin/connectors, the connectors screen, under the same operator-role guard as the other Swarm Admin pages.
  * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): register /swarm-admin/knowledge, the shared-knowledge screen, under the same operator-role guard as the other Swarm Admin pages.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-7): register /swarm-admin/devices, the devices screen, under the same operator-role guard as the other Swarm Admin pages.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-8): register /swarm-admin/households, the households screen, under the same operator-role guard as the other Swarm Admin pages.
  */
 
 import express from 'express';
@@ -253,6 +254,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const swarmAdminConnectorsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/connectors'), path.resolve(process.cwd(), 'src/pages/swarm-admin/connectors')]);
   const swarmAdminKnowledgeDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/knowledge'), path.resolve(process.cwd(), 'src/pages/swarm-admin/knowledge')]);
   const swarmAdminDevicesDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/devices'), path.resolve(process.cwd(), 'src/pages/swarm-admin/devices')]);
+  const swarmAdminHouseholdsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/households'), path.resolve(process.cwd(), 'src/pages/swarm-admin/households')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -306,5 +308,6 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     { routePath: '/swarm-admin/connectors', pageDir: swarmAdminConnectorsDir, extraGuards: [requiresOperator] },
     { routePath: '/swarm-admin/knowledge', pageDir: swarmAdminKnowledgeDir, extraGuards: [requiresOperator] },
     { routePath: '/swarm-admin/devices', pageDir: swarmAdminDevicesDir, extraGuards: [requiresOperator] },
+    { routePath: '/swarm-admin/households', pageDir: swarmAdminHouseholdsDir, extraGuards: [requiresOperator] },
   ];
 }

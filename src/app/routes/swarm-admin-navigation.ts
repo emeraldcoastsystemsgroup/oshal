@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the connectors screen's entry, in the same change as its route.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): the shared-knowledge screen's entry, in the same change as its route.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-7): the devices screen's entry, in the same change as its route.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-8): the households screen's entry, in the same change as its route.
  */
 
 import { Router as createRouter, type Router } from 'express';
@@ -39,6 +40,7 @@ export const SWARM_ADMIN_NAVIGATION: ReadonlyArray<SwarmAdminNavigationItem> = O
   { id: 'connectors', title: 'Connectors', path: '/swarm-admin/connectors', group: 'swarm-admin', description: 'The connector catalog this swarm offers: enable, disable, remove and re-audit, with risk and audit standing.' },
   { id: 'knowledge', title: 'Shared knowledge', path: '/swarm-admin/knowledge', group: 'swarm-admin', description: 'What every bot can retrieve: the shared corpus, bot and private documents; add, remove, and prune collections.' },
   { id: 'devices', title: 'Devices', path: '/swarm-admin/devices', group: 'swarm-admin', description: 'Every computer and node that has joined the swarm: who it is bound to, its state, bind or unbind it, rotate its token.' },
+  { id: 'households', title: 'Households', path: '/swarm-admin/households', group: 'swarm-admin', description: 'Every household and team with its members and roles; manage the ones you are admin of; access review per person.' },
   { id: 'users', title: 'Users and roles', path: '/users', group: 'people', description: 'Who holds swarm root and admin; invitations.' },
   { id: 'access-review', title: 'Access review', path: '/access-review', group: 'people', description: 'What each person and application may reach, and why.' },
   { id: 'admin-console', title: 'Operations console', path: '/admin', group: 'operations', description: 'Identity, health, audit search and posture.' },
