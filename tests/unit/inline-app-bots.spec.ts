@@ -4,12 +4,14 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard inlineAppBotOwner, the gate that decides which bots the concierge node may run. Over the REAL active registry with packages registered through the real manifestBotDefinition: an inline package bot names its package; a package bot that declares its own container (a dedicated node) does not; a package re-declaring a static inline id does not, because the static governs; an entry with requiresOwnNode does not; an unknown id and an unregistered package do not. The kernel-set refusal is proved with a doubled registry, because every kernel id is also a static entry today and so could never otherwise reach that check.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A reviewed static app concierge (Spaces) is named for its declaring package and refused while no package declares it; the non-reviewed static case now picks a static inline bot outside the reviewed list.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { manifestBotDefinition } from '@/app/extensions/swarm/manifest-bot-definition';
 import { getActiveRegistry, registerAppBots, unregisterAppBots, type SwarmBotDefinition } from '@/app/extensions/swarm/swarm-bot-registry';
 import { inlineAppBotOwner } from '@/app/extensions/swarm/inline-app-bots';
+import { CONCIERGE_STATIC_APP_BOT_IDS } from '@/app/extensions/swarm/concierge-static-app-bots';
 
 const APP = 'spec-inline-app-owner';
 const OTHER_APP = 'spec-inline-app-other';
@@ -26,7 +28,8 @@ afterEach(() => {
 
 /** A static inline bot of the real registry, which a package must never be able to claim. */
 function staticInlineBot(): SwarmBotDefinition {
-  const entry = getActiveRegistry().find((bot) => bot.agentId && bot.container === 'oshal-api' && !bot.requiresOwnNode);
+  const entry = getActiveRegistry().find((bot) => bot.agentId && bot.container === 'oshal-api' && !bot.requiresOwnNode
+    && !CONCIERGE_STATIC_APP_BOT_IDS.has(bot.agentId));
   if (!entry) throw new Error('the active registry has no static inline bot');
   return entry;
 }
@@ -51,6 +54,14 @@ describe('inlineAppBotOwner', () => {
     const fixed = staticInlineBot();
     registerAppBots(APP, [manifestBotDefinition({ agentId: fixed.agentId!, name: 'spec-claimed-static' })]);
     expect(inlineAppBotOwner(fixed.agentId)).toBeUndefined();
+  });
+
+  it('names the declaring package for a reviewed static app concierge, and nothing when no package declares it', () => {
+    const spaces = 'b0300000-0000-0000-0000-000000000001';
+    expect(CONCIERGE_STATIC_APP_BOT_IDS.has(spaces)).toBe(true);
+    expect(inlineAppBotOwner(spaces)).toBeUndefined();
+    registerAppBots(APP, [manifestBotDefinition({ agentId: spaces, name: 'spaces-operator' })]);
+    expect(inlineAppBotOwner(spaces)).toBe(APP);
   });
 
   it('names the FIRST registering package when two declare the same inline id', () => {

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the concierge node's served-agent policy and the handler's foreign-agent rules. The policy is driven through the real ownership reader (application-execution-ownership.ts) over a doubled pool that records each read: a dedicated node serves only itself and never reads; an unknown BOT_NODE_SERVES refuses to start; the concierge serves itself without a read, never a kernel or static identity (no read either), an owned agent after one read that is cached until the TTL, never an unowned one (and does not cache the refusal), and a failed read rejects. The handler cases drive createBotNodeExecutionHandler with a stubbed any-bot controller: N8 two served agents on one workspace get two different agent-scoped tasks while the cost task id stays `${workspace}::${agent}` and the node's own agent keeps the workspace task; N9 a served agent's credential carrier or provider intent is refused before any task, lookup or provider operation, while the same intent for the node's own agent still runs.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The static-floor example is now vault-bot (core); feeds-curator, a reviewed static app concierge, is served only when an installed application owns it.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -16,7 +17,8 @@ const OWNED = 'c0ffee00-0000-4000-8000-0000000000e1';
 const OWNED_TOO = 'c0ffee00-0000-4000-8000-0000000000e2';
 const UNOWNED = 'c0ffee00-0000-4000-8000-0000000000e3';
 const KERNEL = 'a0000000-0000-0000-0000-000000000001';
-const STATIC = 'fd000000-0000-0000-0000-000000000001';
+const STATIC = 'a0000000-0000-0000-0000-0000000000d0'; // vault-bot: a core static inline bot, never served
+const REVIEWED_STATIC = 'fd000000-0000-0000-0000-000000000001'; // feeds-curator: a reviewed static app concierge
 const SERVES = { BOT_NODE_SERVES: 'inline-app-bots' };
 const OWNER = 'auth0|concierge-operator';
 const WORKSPACE = 'jarvis-thread-0001';
@@ -24,7 +26,7 @@ const WORKSPACE = 'jarvis-thread-0001';
 /** An ownership pool that knows two installed application bots and records every read. */
 function ownershipPool() {
   const query = vi.fn(async (_sql: string, params: unknown[]) => ({
-    rows: [OWNED, OWNED_TOO].includes(String(params[1])) ? [{ app: 'spec-concierge-app', protected: false }] : [],
+    rows: [OWNED, OWNED_TOO, REVIEWED_STATIC].includes(String(params[1])) ? [{ app: 'spec-concierge-app', protected: false }] : [],
   }));
   return { pool: { query } as never, query };
 }
@@ -55,6 +57,15 @@ describe('served-agent policy', () => {
     expect(await policy.serves(OWNED)).toBe(true);
     expect(await policy.serves(UNOWNED)).toBe(false);
     expect(query.mock.calls.map((call) => call[1])).toEqual([['bots', OWNED, true], ['bots', UNOWNED, true]]);
+  });
+
+  it('serves a reviewed static app concierge only when an installed application owns it', async () => {
+    const { pool, query } = ownershipPool();
+    const policy = createServedAgentPolicy({ localAgentId: LOCAL, pool, env: SERVES });
+    expect(await policy.serves(REVIEWED_STATIC)).toBe(true);
+    expect(query.mock.calls.map((call) => call[1])).toEqual([['bots', REVIEWED_STATIC, true]]);
+    const unowned = createServedAgentPolicy({ localAgentId: LOCAL, pool: { query: vi.fn(async () => ({ rows: [] })) } as never, env: SERVES });
+    expect(await unowned.serves(REVIEWED_STATIC)).toBe(false);
   });
 
   it('caches a positive answer until the TTL and never caches a refusal', async () => {

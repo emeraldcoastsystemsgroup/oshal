@@ -104,6 +104,14 @@ unchanged and admit only their own agent. On the concierge a served bot's turn r
 credentials and provider intents, and an unprotected turn gets an agent-scoped task, so two bots on
 one workspace never share history.
 
+Eleven store-package concierges are also static registry entries (camera, drone, sat-ops, spaces,
+pumpkin, world, vids, feeds, federal-capture, capture-crm and video). They are listed by agent id in
+`src/app/extensions/swarm/concierge-static-app-bots.ts` and qualify like package-governed bots while
+an installed package declares them in its `bots:` block; no other static or core bot can reach the
+concierge node. federal-capture and capture-crm reference their concierges (capture-specialist,
+capture-coordinator) without a `bots:` block, so those two qualify only once their packages declare
+them.
+
 **Limits.**
 
 - An unprotected application bot gets reasoning only on the concierge node. Its interactive turn

@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reject prompt, direct-entitlement, credential, and provider-intent mutations through the signed canonical body digest before replay consumption.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Reject valid signatures carrying any method/path other than exact POST /api/swarm-execute.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Concierge (multi-agent) node cases N1-N6 over the real verifier and the real served-agent policy with a doubled ownership pool: a dedicated node handed its own policy still refuses a foreign agentId; azp naming a served agent passes and spends its nonce; azp A with body B is 401 before any ownership read and leaves the nonce unspent; a kernel, static or unowned target is 403 target_agent_not_served with the nonce unspent; a served node without verification keys refuses to start; a missing agentId is 403.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | N4's static-registry target is now vault-bot, a core static inline bot: feeds-curator joined the reviewed static app concierges the concierge node may serve (concierge-static-app-bots.ts).
  */
 
 import { generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -307,7 +308,7 @@ describe('concierge (multi-agent) node delegation', () => {
   const OTHER_SERVED = 'c0ffee00-0000-4000-8000-0000000000d2';
   const UNOWNED = 'c0ffee00-0000-4000-8000-0000000000d3';
   const KERNEL_AGENT = 'a0000000-0000-0000-0000-000000000050';
-  const STATIC_AGENT = 'fd000000-0000-0000-0000-000000000001';
+  const STATIC_AGENT = 'a0000000-0000-0000-0000-0000000000d0'; // vault-bot: a core static inline bot (feeds-curator is now a reviewed app concierge)
   const SERVES_ENV = { BOT_NODE_SERVES: 'inline-app-bots' };
 
   /** The real policy over an ownership pool that knows two installed application bots. */

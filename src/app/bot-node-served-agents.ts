@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation: the served-agent policy of a bot node. A dedicated node serves exactly its own agent, as before. A node started with BOT_NODE_SERVES=inline-app-bots (the concierge node) also serves an agent that an installed application durably owns, provided it is neither a kernel identity nor a static registry entry, so a signed dispatch can never pull a core bot onto the concierge. Ownership is the same durable read the protected-execution boundary uses (oshal_application_execution_claims as oshal_bot); positive answers are cached briefly, refusals never are, and a failed read propagates so the caller fails closed.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The reviewed static app concierges (CONCIERGE_STATIC_APP_BOT_IDS) leave the static floor, so the concierge serves them when an installed application owns them; kernel ids stay on the floor even if listed.
  */
 
 import type { Pool } from 'pg';
@@ -11,6 +12,7 @@ import { createChildLogger } from '@/shared/logger';
 import { kernelBotAgentIds, SWARM_BOT_REGISTRY } from '@/app/extensions/swarm/swarm-bot-registry';
 import { LOCAL_BOT_REGISTRY } from '@/app/extensions/swarm/swarm-bot-registry-local';
 import { readApplicationExecutionOwnership } from './application-execution-ownership';
+import { CONCIERGE_STATIC_APP_BOT_IDS } from '@/app/extensions/swarm/concierge-static-app-bots';
 
 const logger = createChildLogger({ module: 'bot-node-served-agents' });
 
@@ -56,6 +58,8 @@ export function createServedAgentPolicy(options: {
   }
   const floor = new Set<string>(kernelBotAgentIds());
   for (const bot of [...LOCAL_BOT_REGISTRY, ...SWARM_BOT_REGISTRY]) if (bot.agentId) floor.add(bot.agentId);
+  // The reviewed static app concierges leave the static floor (kernel ids never do); ownership still decides.
+  for (const id of CONCIERGE_STATIC_APP_BOT_IDS) if (!kernelBotAgentIds().has(id)) floor.delete(id);
   const now = options.now ?? Date.now;
   const servedUntil = new Map<string, number>();
   const authorizationMode = env.OSHAL_APPLICATION_AUTHORIZATION_MODE?.trim().toLowerCase() === 'legacy' ? 'legacy' : 'enforce';
