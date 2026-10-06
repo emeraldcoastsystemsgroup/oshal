@@ -107,7 +107,13 @@ one workspace never share history.
 **Limits.**
 
 - An unprotected application bot gets reasoning only on the concierge node. Its interactive turn
-  runs host-tools-only and the node has no package tools, so application tools are not available.
+  runs host-tools-only and the node has no package tools, so application tools are not available,
+  and it carries no bot persona (the persona carrier rides only on signed protected dispatch). Under
+  the enforce authorization mode every installed application's bots are protected, so this applies
+  only where a bot is unprotected.
+- `protected_perspective` is an author-trusted override, reviewed in the package's own PR: it skips
+  the perspective screen. The secret, size, UTF-8 and control-character refusals still apply to
+  the whole composed persona.
 - Queued manifest-worker dispatch is not routed to the concierge node yet (phase 2). Queued work for
   an inline application bot keeps its existing path.
 - Route-backed tools still answer 401 when called from the node, until they are converted to package

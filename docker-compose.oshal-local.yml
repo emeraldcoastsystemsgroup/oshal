@@ -2444,9 +2444,11 @@ services:
   #
   # CREDENTIALS: the Antigravity login only (the .gemini mount every Antigravity node reads). No
   # Codex or Claude session and no config-seed, so a dispatch stamped with a CLI whose login is not
-  # here fails visibly. No provider literal: the boot pull and each dispatch's stamp choose it. The
-  # persona path is deliberately absent (served bots carry their own persona when protected), so
-  # bot-entrypoint.sh takes its no-persona branch. Pinned by tests/unit/compose-bot-node-identity.spec.ts.
+  # here fails visibly. No provider literal: the boot pull and each dispatch's stamp choose it.
+  # BOT_PERSONA_FILE names a file that deliberately does NOT exist (the identity guard requires every
+  # node to name one): bot-entrypoint.sh tests -f and takes its no-persona branch, and served bots
+  # carry their own persona when protected. Never add that file: every served bot's agentic turn would
+  # be told it is the concierge. Pinned by tests/unit/compose-bot-node-identity.spec.ts.
   concierge-bot:
     <<: *bot-common
     container_name: oshal-local-concierge-bot
