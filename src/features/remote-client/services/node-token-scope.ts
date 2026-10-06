@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — per-node worker-plane token scoping (docs/backlog/hardening.md #7, retiring the swarm-wide shared secret). Pure decisions only: decideNodeTokenScope confines a NODE-BOUND credential to its own device's plane (plus the two enrollment-handshake paths), sharedSecretRetired reads the fail-closed switch, and nodeTokenBindingMatches is the route-level body check for /register. No Express, no DB — so the guard spec drives the same functions the runtime does.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-175: package node rails. A mount declared `auth: node` registers its path here, and a node-bound token is admitted beneath a registered rail (reason `package-node-rail`) as well as on its own worker plane. The route still binds the device it speaks for to the token's clientId.
  */
 
 /**
@@ -46,8 +47,47 @@ export const NODE_TOKEN_HANDSHAKE_PATHS: readonly string[] = [
 
 /** Why a node-bound token was admitted, or refused, on a given path. */
 export type NodeTokenScopeDecision =
-  | { allowed: true; reason: 'handshake' | 'own-device-plane' }
+  | { allowed: true; reason: 'handshake' | 'own-device-plane' | 'package-node-rail' }
   | { allowed: false; reason: 'foreign-device' | 'off-plane' };
+
+/** Package node rails by app: mounts declared `auth: node` (ADR-175), as decoded path segments. */
+const packageNodeRails = new Map<string, string[][]>();
+
+/**
+ * @description Register an `auth: node` mount so a node-bound token is admitted beneath it.
+ * Called by the manifest route mounter after the app's routes mount; replaces nothing else.
+ * @param appName - Owning package; its rails are dropped together on unmount.
+ * @param mountPath - The declared mount, e.g. `/api/embodied/nodes`.
+ */
+export function registerPackageNodeRail(appName: string, mountPath: string): void {
+  const segments = segmentsOf(mountPath);
+  if (segments.length < 2) return; // never a bare `/api` or root rail
+  const rails = packageNodeRails.get(appName) ?? [];
+  rails.push(segments);
+  packageNodeRails.set(appName, rails);
+}
+
+/**
+ * @description Drop every node rail an app registered (unmount / reload).
+ * @param appName - Owning package.
+ */
+export function unregisterPackageNodeRails(appName: string): void {
+  packageNodeRails.delete(appName);
+}
+
+/**
+ * @description Whether a request path sits at or beneath a registered package node rail.
+ * Segment-wise on decoded segments, so `/api/embodied/nodesX` is not beneath `/api/embodied/nodes`.
+ * @param path - Request path.
+ * @returns True when a node-bound token may authenticate it.
+ */
+export function isPackageNodeRailPath(path: string): boolean {
+  const request = segmentsOf(path);
+  for (const rails of packageNodeRails.values()) {
+    if (rails.some((rail) => rail.every((segment, index) => request[index] === segment))) return true;
+  }
+  return false;
+}
 
 /** Input to {@link decideNodeTokenScope} — the token's binding plus the request path. */
 export interface NodeTokenScopeInput {
@@ -81,8 +121,9 @@ function segmentsOf(path: string): string[] {
  * @description Decides whether a NODE-BOUND token may authenticate this request.
  *
  * A node-bound token is admitted only on:
- *   1. the two enrollment-handshake paths ({@link NODE_TOKEN_HANDSHAKE_PATHS}), and
- *   2. its OWN device's plane — `/api/remote-clients/<boundClientId>` and anything beneath it.
+ *   1. the two enrollment-handshake paths ({@link NODE_TOKEN_HANDSHAKE_PATHS}),
+ *   2. a registered package node rail (an `auth: node` mount, ADR-175), and
+ *   3. its OWN device's plane — `/api/remote-clients/<boundClientId>` and anything beneath it.
  *
  * Everything else is refused: a sibling device's plane (`foreign-device` — this is the
  * property the swarm-wide secret could never have) and every non-plane route
@@ -105,6 +146,7 @@ export function decideNodeTokenScope(input: NodeTokenScopeInput): NodeTokenScope
   if (NODE_TOKEN_HANDSHAKE_PATHS.includes(normalized)) {
     return { allowed: true, reason: 'handshake' };
   }
+  if (isPackageNodeRailPath(path)) return { allowed: true, reason: 'package-node-rail' };
 
   const planeSegments = segmentsOf(REMOTE_CLIENT_PLANE_PREFIX);
   const requestSegments = segmentsOf(path);

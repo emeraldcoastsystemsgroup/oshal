@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D2: the route auth-mode contract as DATA. Lives in shared/ (a leaf layer) so the mounter (@/app), the manifest loader (@/features/swarm-apps) and the security scanner (@/features/security) can all import it without violating FSD — and because src/shared/** is in tsconfig.server.json's `include`, so it is unconditionally built into dist, unlike src/features/** which only lands via the import graph (the D8 lesson).
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-175: `node` mode, a package node rail authenticated by a device-bound node credential (an enrolled device acting for its owner), never by the shared service secret.
  */
 
 /**
@@ -31,11 +32,17 @@
  * - `public` — genuinely anonymous; the router MUST self-guard (a token/HMAC inside it). Rare and
  *   loudly warned about. `/api/world` is the real example (WORLD_INGEST_TOKEN inside the router).
  *
+ * - `node` — a device-bound node credential (POST /api/join/enroll mints it for one clientId and
+ *   the signed-in owner, ADR-175). The global PAT middleware admits such a token only on a mount
+ *   declared `node` and stamps `req.oshalNodeToken`; the owner's verified principal then meets the
+ *   ordinary application authorization guard. The route must still check that the device it
+ *   speaks for is the bound clientId. The shared service secret is not accepted here.
+ *
  * Collapsing `service` into `public` — as a four-mode enum would force — would re-create the exact
  * lie this field exists to kill: a mode meaning both "genuinely anonymous" and "guarded by a secret
  * I promise is in there" is no better than the `requiresAuth: false` it replaces.
  */
-export type SwarmAppRouteAuthMode = 'oidc' | 'service-or-oidc' | 'service' | 'operator' | 'public';
+export type SwarmAppRouteAuthMode = 'oidc' | 'service-or-oidc' | 'service' | 'operator' | 'public' | 'node';
 
 /** @description Every valid mode, for validation and error messages. */
 export const ROUTE_AUTH_MODES: readonly SwarmAppRouteAuthMode[] = [
@@ -44,6 +51,7 @@ export const ROUTE_AUTH_MODES: readonly SwarmAppRouteAuthMode[] = [
   'service',
   'operator',
   'public',
+  'node',
 ];
 
 /** @description The mode applied when a manifest declares no `auth:`. Safe by omission. */
