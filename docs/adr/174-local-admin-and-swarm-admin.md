@@ -1,7 +1,7 @@
 # ADR-174: A local admin that only configures the swarm; "My Account" and "Swarm Admin" are separate places
 
 Date: 2026-10-05
-Status: **Accepted 2026-10-05; D1 superseded by Amendment A (2026-10-06, operator decision).** D2 (separate Swarm Admin
+Status: **Accepted 2026-10-05; D1 superseded by Amendment A (2026-10-06, operator decision); Amendment B (2026-10-06) is the design for the portal-default convention and the Swarm Admin screens.** D2 (separate Swarm Admin
 screens) and D3 (mine, then the portal default) stand. Slice 1 is built (PR #1065). Slices 2a-2c (the separate local
 account, its authenticator-only login and its scope gate, PRs #1081-#1086, #1091, #1093) were built and then removed
 under Amendment A.
@@ -33,6 +33,43 @@ Related: [ADR-148](148-swarm-root.md) (the operator gate), [ADR-173](173-capabil
   give voice, speech, image and video a "Portal default" this way, in their own tables; they stay as they are.
 - **A3. Kept from the removed slices:** the config secret-wipe fix (PR #1090), which was a real bug for everyone, and the
   `mountSignInRoutes` helper (`src/app/server-auxiliary-routes.ts`), which keeps `server.ts` under its size limit.
+
+## Amendment B (2026-10-06): the `portal-default` convention and the Swarm Admin screens (design)
+
+Read-only design pass after Amendment A. It names what every slice that builds a portal default or a Swarm Admin screen
+must follow, so the screens can be built one area at a time without re-deciding storage or access each time.
+
+- **B1. One reserved owner.** `PORTAL_DEFAULT_OWNER = 'portal-default'` (a new shared constant, `src/shared/portal-default/`)
+  is the owner value of a portal-default row in any owner-keyed settings table. It can never collide with a person:
+  identity-provider subjects are opaque ids and local subjects are `local-` plus 16 hex. ADR-173's capability tables
+  keep their reserved scope `fleet-default` (`CAPABILITY_FLEET_SCOPE`): it is the same concept, already live, and a
+  rename is migration churn with no behaviour gain; a later slice may alias it. New tables use `portal-default` only.
+- **B2. Access is two policies, not a new rail.** The runtime owner policy (`buildOwnerRlsPolicyStatements`, owner-or-operator
+  for ALL) already lets only an operator write a row whose owner is not their own subject, and `portal-default` is
+  nobody's subject, so no person can insert, update or delete the portal-default row. One policy is added per table,
+  `<table>_read_portal_default` (`FOR SELECT USING (<owner> = 'portal-default')`), so every identity, and the backend
+  acting as a user, can read it. Both come from one helper, `buildPortalDefaultRlsPolicyStatements(table, ownerColumn)`,
+  applied at the same lazy-DDL chokepoint as today's owner policies. The route layer keeps its own guard: every write to
+  a portal default goes through `/api/admin/*`, mounted behind `requiresAuth` and `requiresOperator`, the role of
+  Amendment A1. The database refuses what the route layer misses.
+- **B3. One resolver shape.** `resolvePortalDefault(readRow, sub)` reads the person's own row, then the `portal-default`
+  row, and returns `{ value, source: 'own' | 'portal-default' }` or null. The source rides to the screen, which labels a
+  fallen-back value "Portal default" exactly as ADR-173's panels do, so a user can see what is theirs and what is the
+  swarm's. A missing portal default is answered as D3 says: a clear refusal naming what is missing, or a built-in default
+  where one is documented. Resolvers never read another person's row.
+- **B4. One route family, guarded by the role.** The Swarm Admin screens live under `/swarm-admin` (home, then one leaf
+  per area: `ai-defaults`, `logins`, `connectors`, `budgets`, `knowledge`, `devices`, `households`), each a
+  `resolveUiSurfacePages` entry with `requiresOperator` as its guard. Users never see them (403, and no link); an
+  operator sees them beside their ordinary screens. The menu is server data (`GET /api/admin/navigation`), so a screen's
+  entry ships in the same change as its route and nothing lists a page that does not exist. Admin-only APIs mount under
+  `/api/admin/*`; extensions of existing routers stay on those routers and accept `scope: 'portal-default'` only from an
+  operator. The existing `/admin` console stays the operations console and links to Swarm Admin.
+- **B5. Order of building.** (1) The shared helper: constant, RLS statements, resolver, with guards that fail first
+  (a non-operator insert with owner `portal-default` refused by RLS on a disposable PostgreSQL; everyone reads it; the
+  resolver falls back and reports its source). (2) The `/swarm-admin` home, navigation and guard. (3) AI defaults,
+  reusing ADR-173's fleet-default panels. (4) Logins and keys. (5) Connectors and budgets. (6) Shared knowledge.
+  (7) Devices. (8) Households and access review. Each is its own PR with its own guard and CHANGE LOG entries, and no
+  existing user screen changes until its Swarm Admin counterpart exists.
 
 ## Context
 
