@@ -27,6 +27,7 @@
  * 22 | maintainer@emeraldcoastsystemsgroup.com | Register the real-transport SMTP mailer guard (tests/unit/smtp-mailer-transport.spec.ts) beside the forgot-password proof that mocks the same rail: it drives sendTransactionalMail through the real nodemailer over a loopback SMTP conversation, added with the nodemailer 9 -> 10 bump the 2026-10-02 trivy scan required.
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Attach local-swarm-admin-account (ADR-174 slice 2a: the reserved 'admin' account, created once, never reachable by invites or email resets; real PostgreSQL) beside local-account-administration.
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Attach local-swarm-admin-login (ADR-174 slice 2b-i: the swarm admin signs in only with a working authenticator; real PostgreSQL and login routes).
+ * 25 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-sign-in-rail (ADR-174 slice 2b-ii: the admin's local sign-in beside an identity provider never mixes with the provider session; real PostgreSQL for the admin-only login and session).
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -134,6 +135,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/local-account-administration.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-swarm-admin-account.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-swarm-admin-login.spec.ts' },
+    { level: 'integration', path: 'tests/unit/swarm-admin-sign-in-rail.spec.ts' },
     { level: 'browser', path: 'tests/unit/users-administration-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
     { level: 'integration', path: 'tests/unit/smtp-mailer-transport.spec.ts' },

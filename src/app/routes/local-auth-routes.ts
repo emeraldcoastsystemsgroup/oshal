@@ -60,6 +60,7 @@ import {
   listUsers,
   upsertInvite,
   verifyLogin,
+  type LocalAccountKind,
   type LocalUser,
 } from '@/features/local-auth';
 import { sendTransactionalMail, smtpConfigured } from '@/features/notifications';
@@ -74,7 +75,7 @@ export { isLocalAuthEnabled } from '@/features/local-auth';
 // The injector runs on EVERY request; a 30s cache keeps revocation (disable /
 // password change) near-immediate without a per-request SELECT.
 const SNAPSHOT_TTL_MS = 30_000;
-type Snapshot = { status: string; tokenVersion: number; email: string; displayName: string | null };
+type Snapshot = { status: string; tokenVersion: number; email: string; displayName: string | null; accountKind: LocalAccountKind };
 const snapshotCache = new Map<string, { snap: Snapshot | null; at: number }>();
 
 /**
@@ -164,7 +165,7 @@ function setLocalSessionCookie(req: Request, res: Response, identity: LocalSessi
   return true;
 }
 
-function clearLocalSessionCookie(res: Response): void {
+export function clearLocalSessionCookie(res: Response): void {
   res.clearCookie(LOCAL_SESSION_COOKIE, { path: '/' });
 }
 
@@ -186,7 +187,7 @@ function resolveLoginPage(file: string): string | null {
   return null;
 }
 
-function servePage(res: Response, file: string): void {
+export function servePage(res: Response, file: string): void {
   const resolved = resolveLoginPage(file);
   if (!resolved) {
     res.status(500).type('text/plain').send('login surface is missing from this build');
@@ -204,6 +205,53 @@ function servePage(res: Response, file: string): void {
 }
 
 // ── The middleware set (server.ts picks this over OIDC when LOCAL_AUTH=true) ─
+
+/**
+ * @description The local session injector: a valid `oshal_local` cookie for an active account whose
+ * token version still matches becomes `req.oidc`. It steps aside when another rail already
+ * authenticated the request. With `onlyAccountKind`, it admits only that kind of account: an
+ * identity-provider deployment uses it to accept the swarm admin's local session and nobody else's
+ * (ADR-174). The principal carries `oshal_account_kind` so later gates can tell the admin apart.
+ *
+ * @param pool - Postgres pool for the session snapshot.
+ * @param options - `onlyAccountKind` restricts which local accounts the cookie may stand for.
+ * @returns Express middleware.
+ */
+export function createLocalSessionInjector(pool: Pool, options: { onlyAccountKind?: LocalAccountKind } = {}): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const existing = (req as { oidc?: { isAuthenticated?: () => boolean } }).oidc;
+      if (existing?.isAuthenticated?.()) return next();
+      const cookie = (req as { cookies?: Record<string, string> }).cookies?.[LOCAL_SESSION_COOKIE];
+      const claims = verifyLocalSession(cookie);
+      if (!claims) return next();
+      const snap = await cachedSnapshot(pool, claims.sub);
+      if (!snap || snap.status !== 'active' || snap.tokenVersion !== claims.v) return next();
+      if (options.onlyAccountKind && snap.accountKind !== options.onlyAccountKind) return next();
+      if (shouldReissueLocalSession(claims)) {
+        setLocalSessionCookie(req, res, {
+          userSub: claims.sub, email: snap.email, displayName: snap.displayName, tokenVersion: snap.tokenVersion,
+        }, claims.org);
+      }
+      (req as { oidc?: unknown }).oidc = {
+        isAuthenticated: () => true,
+        user: {
+          iss: LOCAL_AUTH_PRINCIPAL_ISSUER,
+          sub: claims.sub,
+          email: snap.email,
+          name: snap.displayName || snap.email,
+          preferred_username: snap.email,
+          oshal_account_kind: snap.accountKind,
+        },
+        idToken: 'local-session',
+        accessToken: 'local-session',
+      };
+    } catch (err) {
+      logger.error({ err }, 'local-auth session injector failed');
+    }
+    next();
+  };
+}
 
 /**
  * @description Builds the LOCAL_AUTH middleware set — the invited-user sibling of the
@@ -233,37 +281,7 @@ export function createLocalAuthMiddlewareSet(pool: Pool): OidcMiddlewareSet {
   });
   logger.warn('🔐 LOCAL_AUTH mode enabled — invited-user login (ADR-117). Only invited accounts can sign in.');
 
-  const authMiddleware: RequestHandler = async (req, res, next) => {
-    try {
-      const existing = (req as { oidc?: { isAuthenticated?: () => boolean } }).oidc;
-      if (existing?.isAuthenticated?.()) return next();
-      const cookie = (req as { cookies?: Record<string, string> }).cookies?.[LOCAL_SESSION_COOKIE];
-      const claims = verifyLocalSession(cookie);
-      if (!claims) return next();
-      const snap = await cachedSnapshot(pool, claims.sub);
-      if (!snap || snap.status !== 'active' || snap.tokenVersion !== claims.v) return next();
-      if (shouldReissueLocalSession(claims)) {
-        setLocalSessionCookie(req, res, {
-          userSub: claims.sub, email: snap.email, displayName: snap.displayName, tokenVersion: snap.tokenVersion,
-        }, claims.org);
-      }
-      (req as { oidc?: unknown }).oidc = {
-        isAuthenticated: () => true,
-        user: {
-          iss: LOCAL_AUTH_PRINCIPAL_ISSUER,
-          sub: claims.sub,
-          email: snap.email,
-          name: snap.displayName || snap.email,
-          preferred_username: snap.email,
-        },
-        idToken: 'local-session',
-        accessToken: 'local-session',
-      };
-    } catch (err) {
-      logger.error({ err }, 'local-auth session injector failed');
-    }
-    next();
-  };
+  const authMiddleware = createLocalSessionInjector(pool);
 
   const localRequiresAuth: RequestHandler = (req, res, next) => {
     const oidc = (req as { oidc?: { isAuthenticated?: () => boolean } }).oidc;
@@ -474,6 +492,101 @@ function errStatus(err: unknown): number {
   return typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
 }
 
+/**
+ * @description Starts the swarm admin's authenticator enrolment and returns what the login page
+ * shows: the QR, the typed key and the one-time recovery codes.
+ */
+async function startAdminEnrolment(pool: Pool, sub: string, account: string) {
+  const issuer = (process.env.TOTP_ISSUER || 'oshal').trim() || 'oshal';
+  const enrolment = await beginTotpEnrolment(pool, sub, issuer, account);
+  return {
+    qrDataUri: await QRCode.toDataURL(enrolment.otpauthUri, { margin: 1, width: 240 }),
+    otpauthUri: enrolment.otpauthUri,
+    secret: formatSecretForDisplay(enrolment.secretBase32),
+    recoveryCodes: enrolment.recoveryCodes,
+  };
+}
+
+/**
+ * @description The password login: email (or the admin's login) + password, then the second factor.
+ * One generic failure message, so it never tells which accounts exist. With `onlyAccountKind`, the
+ * handler admits only that kind of account: the swarm admin's sign-in page (ADR-174) uses it.
+ *
+ * @param pool - Postgres pool.
+ * @param options - `onlyAccountKind` restricts which accounts may sign in through this handler.
+ * @returns Express handler for POST.
+ */
+export function createPasswordLoginHandler(pool: Pool, options: { onlyAccountKind?: LocalAccountKind } = {}): RequestHandler {
+  return async (req, res) => {
+  const body = (req.body ?? {}) as { email?: string; password?: string; returnTo?: string; code?: string };
+  const email = String(body.email ?? '').trim().toLowerCase();
+  const key = loginKey(req, email);
+  if (isLoginBlocked(key)) {
+    res.status(429).json({ error: 'too many attempts — wait a few minutes and try again' });
+    return;
+  }
+  try {
+    const verified = await verifyLogin(pool, email, String(body.password ?? ''));
+    // A login page for one kind of account answers every other account exactly like a wrong password.
+    const user = verified && (!options.onlyAccountKind || verified.accountKind === options.onlyAccountKind) ? verified : null;
+    if (!user) {
+      recordLoginFailure(key);
+      res.status(401).json({ error: 'that email and password did not match' });
+      return;
+    }
+    // The password is right. Now the second factor, if this account has one. Note this
+    // block is reached ONLY after a successful password check, so it can never be used to
+    // probe which accounts have 2FA enabled.
+    const factor = await getTotpState(pool, user.userSub);
+    const code = String(body.code ?? '').trim();
+    if (user.accountKind === 'swarm-admin' && factor?.enabled !== true) {
+      // ADR-174: the swarm admin never gets a session without a working second factor. Its first
+      // sign-in enrols the authenticator inside the login: the password returns the QR, and only a
+      // correct code from the app starts the session.
+      if (!code) {
+        res.json({ ok: false, secondFactor: 'enrol', ...(await startAdminEnrolment(pool, user.userSub, user.email)) });
+        return;
+      }
+      if (!await confirmTotpEnrolment(pool, user.userSub, code, Date.now())) {
+        recordLoginFailure(key);
+        res.status(401).json({ error: 'that code did not match \u2014 check the clock on your phone and try the current code' });
+        return;
+      }
+    } else if (factor?.enabled) {
+      if (!code) {
+        // No session yet, and deliberately NOT counted as a failure: the credential was
+        // correct and the client simply has one more step to complete.
+        res.json({ ok: false, secondFactor: 'required' });
+        return;
+      }
+      const verdict = await verifySecondFactor(pool, user.userSub, code, Date.now());
+      if (verdict !== 'ok') {
+        recordLoginFailure(key);
+        res.status(401).json({
+          error: 'that code did not match \u2014 check your authenticator app, or use a recovery code',
+        });
+        return;
+      }
+    }
+    loginFailures.delete(key);
+    bustLocalUserSnapshot(user.userSub);
+    setLocalSessionCookie(req, res, sessionIdentityFor(user));
+    logger.info({ sub: user.userSub, secondFactor: factor?.enabled === true }, 'local-auth login');
+    res.json({
+      ok: true,
+      returnTo: sanitizeLoginReturnTo(body.returnTo) ?? '/',
+      // An administrator may REQUIRE the factor on an account that has not enrolled yet.
+      // Requiring it must never lock somebody out of an account they have not set up, so
+      // the answer is "you are in, now go and enrol" rather than a refusal.
+      enrolSecondFactor: factor?.required === true && factor.enabled !== true,
+    });
+  } catch (err) {
+    logger.error({ err }, 'local-auth login failed');
+    res.status(500).json({ error: 'login unavailable' });
+  }
+  };
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /**
@@ -548,72 +661,7 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
   });
 
   /** POST /api/local-auth/login — email + password. One generic failure message (no enumeration). */
-  router.post('/api/local-auth/login', async (req, res) => {
-    const body = (req.body ?? {}) as { email?: string; password?: string; returnTo?: string; code?: string };
-    const email = String(body.email ?? '').trim().toLowerCase();
-    const key = loginKey(req, email);
-    if (isLoginBlocked(key)) {
-      res.status(429).json({ error: 'too many attempts — wait a few minutes and try again' });
-      return;
-    }
-    try {
-      const user = await verifyLogin(pool, email, String(body.password ?? ''));
-      if (!user) {
-        recordLoginFailure(key);
-        res.status(401).json({ error: 'that email and password did not match' });
-        return;
-      }
-      // The password is right. Now the second factor, if this account has one. Note this
-      // block is reached ONLY after a successful password check, so it can never be used to
-      // probe which accounts have 2FA enabled.
-      const factor = await getTotpState(pool, user.userSub);
-      const code = String(body.code ?? '').trim();
-      if (user.accountKind === 'swarm-admin' && factor?.enabled !== true) {
-        // ADR-174: the swarm admin never gets a session without a working second factor. Its first
-        // sign-in enrols the authenticator inside the login: the password returns the QR, and only a
-        // correct code from the app starts the session.
-        if (!code) {
-          res.json({ ok: false, secondFactor: 'enrol', ...(await startAdminEnrolment(user.userSub, user.email)) });
-          return;
-        }
-        if (!await confirmTotpEnrolment(pool, user.userSub, code, Date.now())) {
-          recordLoginFailure(key);
-          res.status(401).json({ error: 'that code did not match \u2014 check the clock on your phone and try the current code' });
-          return;
-        }
-      } else if (factor?.enabled) {
-        if (!code) {
-          // No session yet, and deliberately NOT counted as a failure: the credential was
-          // correct and the client simply has one more step to complete.
-          res.json({ ok: false, secondFactor: 'required' });
-          return;
-        }
-        const verdict = await verifySecondFactor(pool, user.userSub, code, Date.now());
-        if (verdict !== 'ok') {
-          recordLoginFailure(key);
-          res.status(401).json({
-            error: 'that code did not match \u2014 check your authenticator app, or use a recovery code',
-          });
-          return;
-        }
-      }
-      loginFailures.delete(key);
-      bustLocalUserSnapshot(user.userSub);
-      setLocalSessionCookie(req, res, sessionIdentityFor(user));
-      logger.info({ sub: user.userSub, secondFactor: factor?.enabled === true }, 'local-auth login');
-      res.json({
-        ok: true,
-        returnTo: sanitizeLoginReturnTo(body.returnTo) ?? '/',
-        // An administrator may REQUIRE the factor on an account that has not enrolled yet.
-        // Requiring it must never lock somebody out of an account they have not set up, so
-        // the answer is "you are in, now go and enrol" rather than a refusal.
-        enrolSecondFactor: factor?.required === true && factor.enabled !== true,
-      });
-    } catch (err) {
-      logger.error({ err }, 'local-auth login failed');
-      res.status(500).json({ error: 'login unavailable' });
-    }
-  });
+  router.post('/api/local-auth/login', createPasswordLoginHandler(pool));
 
   /**
    * POST /api/local-auth/forgot — unauthenticated self-service password reset (the /login
@@ -698,18 +746,6 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
   }
 
   /** Answers 401 and returns null when the caller has no session. */
-  /** Starts the swarm admin's authenticator enrolment and returns what the login page shows: the QR, the typed key and the one-time recovery codes. */
-  async function startAdminEnrolment(sub: string, account: string) {
-    const issuer = (process.env.TOTP_ISSUER || 'oshal').trim() || 'oshal';
-    const enrolment = await beginTotpEnrolment(pool, sub, issuer, account);
-    return {
-      qrDataUri: await QRCode.toDataURL(enrolment.otpauthUri, { margin: 1, width: 240 }),
-      otpauthUri: enrolment.otpauthUri,
-      secret: formatSecretForDisplay(enrolment.secretBase32),
-      recoveryCodes: enrolment.recoveryCodes,
-    };
-  }
-
   function requireSelf(req: Request, res: Response): string | null {
     const sub = callerSub(req);
     if (!sub) {

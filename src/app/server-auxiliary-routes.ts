@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Mount personal cockpit display choices outside the installed Smart Home application namespace.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | /api/logs and /api/process-lab are portal-admin only (requiresOperator): the debug feed lists every user's tasks and messages, and a process-lab run starts a real swarm ticket run (route review 2026-10-05).
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | mountPersonalGraphRoutes: the ADR-066 personal-graph mounts, moved here unchanged from server.ts (decomposition threshold); still operator-only and off unless PERSONAL_GRAPH_ROUTES=on.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | mountSignInRoutes: the sign-in entry points moved unchanged from server.ts (/login, the pilot's /login/local and /login/microsoft, the generic /login/:provider), plus the swarm admin's /login/admin sign-in before the generic route (ADR-174 slice 2b-ii).
  * -----------------------------------------------------------------------------
  */
 
@@ -69,6 +70,7 @@ import { createLinkedInAssistantRoutes } from './routes/linkedin-assistant-route
 import { createConfigRoutes } from './routes/config-routes';
 import { createLogsRoutes } from './routes/logs-routes';
 import { requiresOperator } from '@/shared/middleware/authz';
+import { createSwarmAdminSignInRoutes, swarmAdminSignInAvailable } from './routes/swarm-admin-sign-in-routes';
 import { createGraphRoutes as createPersonalGraphRoutes } from './routes/personal-graph-routes';
 import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-routes';
 import { InMemoryGraphStore } from '@/features/personal-graph';
@@ -140,6 +142,29 @@ export function mountPublicAndLegacyAuthRoutes(
 
     redirectLegacyAuthRoute(req, res, '/callback');
   });
+}
+
+/**
+ * @description Registers the sign-in entry points in their load-bearing order. `/login` is ours, not
+ * express-openid-connect's (routes.login=false), so a same-origin ?returnTo survives the provider
+ * round trip. The swarm admin's /login/admin (ADR-174) and the Entra pilot's /login/local and
+ * /login/microsoft come before the generic /login/:provider, which would otherwise capture them.
+ *
+ * @param app - Express application.
+ * @param ctx - Application context (the account store's pool).
+ * @param handlers - The auth set's login handlers.
+ */
+export function mountSignInRoutes(
+  app: express.Application,
+  ctx: AppContext,
+  handlers: { loginHandler: express.RequestHandler; localLoginHandler?: express.RequestHandler; microsoftLoginHandler?: express.RequestHandler },
+): void {
+  app.get('/login', handlers.loginHandler);
+  if (swarmAdminSignInAvailable()) app.use(createSwarmAdminSignInRoutes(ctx.pool));
+  if (handlers.localLoginHandler) app.get('/login/local', handlers.localLoginHandler);
+  if (handlers.microsoftLoginHandler) app.get('/login/microsoft', handlers.microsoftLoginHandler);
+  // Provider-suffixed entries (/login/google, …) share the handler, which reads the provider from the path.
+  if (!handlers.microsoftLoginHandler) app.get('/login/:provider', handlers.loginHandler);
 }
 
 /**
