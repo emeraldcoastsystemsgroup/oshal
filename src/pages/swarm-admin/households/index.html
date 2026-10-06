@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-8): the households screen under Swarm Admin, served at
+    | /swarm-admin/households to the operator role only. Every household of the swarm with its
+    | members and their roles, the people named from the directory, and an access-review link per
+    | person; add a member, change a role or remove a member on the households this operator is
+    | admin of (the only identity the membership fence lets change one), with the others said to
+    | be managed by their own admins; create a household, which makes the operator its admin.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Households</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/households/households.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the households…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Households</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-organization"></span>
+      <h1>Households</h1>
+    </div>
+    <p class="sa-lead">
+      Every household, team and company of this swarm, with its members from this swarm's directory and their roles. A
+      household is managed by its own admins: you can change the members of the ones you are an admin of, and of any
+      you create here. The others you can see, and review a member's access, but not change. People from an external
+      identity provider are counted here and managed on the access screen. Each person's access review shows
+      everything they may reach.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="postureHeading">
+      <h2 id="postureHeading">Overview</h2>
+      <ul id="posture" class="sh-posture surface-card"></ul>
+    </section>
+
+    <section class="sa-section" aria-labelledby="householdsHeading">
+      <div class="sh-toolbar">
+        <h2 id="householdsHeading">Households</h2>
+        <label class="sh-filter">Search <input id="search" type="search" autocomplete="off" placeholder="name or member" /></label>
+        <button type="button" id="reload">Reload</button>
+      </div>
+      <p id="count" class="sh-count"></p>
+      <div id="households" class="sh-cards"></div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="createHeading">
+      <h2 id="createHeading">Create a household</h2>
+      <form id="createForm" class="sh-form surface-card">
+        <label>Name <input id="createName" name="name" type="text" autocomplete="off" required placeholder="the household's or business's name" /></label>
+        <label>Kind
+          <select id="createKind" name="kind">
+            <option value="space" selected>Household</option>
+            <option value="org">Team or company</option>
+          </select>
+        </label>
+        <div class="sl-actions"><button type="submit">Create (you become its admin)</button></div>
+        <p id="createMessage" class="sh-message" role="status"></p>
+      </form>
+    </section>
+  </main>
+
+  <template id="householdTemplate">
+    <article class="sh-card surface-card">
+      <div class="sh-card-head">
+        <h3 class="sh-name"></h3>
+        <span class="pill sh-kind"></span>
+        <span class="pill sh-manage"></span>
+      </div>
+      <p class="sh-meta"></p>
+      <table class="sh-members">
+        <thead><tr><th>Member</th><th>Role</th><th>Since</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <form class="sh-add" hidden>
+        <label>Add a person <select name="memberSub"><option value="">Choose a person</option></select></label>
+        <label>As
+          <select name="role">
+            <option value="member" selected>member</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <div class="sl-actions"><button type="submit">Add</button></div>
+      </form>
+      <p class="sh-note" hidden></p>
+    </article>
+  </template>
+
+  <script type="module" src="/swarm-admin/households/households.js"></script>
+</body>
+</html>
