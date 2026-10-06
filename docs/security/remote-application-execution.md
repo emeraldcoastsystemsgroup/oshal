@@ -82,8 +82,9 @@ keeps it. Otherwise a turn goes to the concierge node only when all of these hol
 interactive (`direct: true`) and the caller is covered by the ADR-127 carve (`DEMO_MODE` and an exact
 `OSHAL_OPERATOR_SUBS` entry); the caller chose no BYO connection, provider, credentials or provider
 intent; `OSHAL_CONCIERGE_NODE_URL` is set on `oshal-api` and the target is an inline application bot
-(the governing registry definition is an installed package's controller-inline bot, not a static
-entry, not a kernel identity and not `requiresOwnNode`); the bot's harness needs a brain; the caller's
+(the governing registry definition is an installed package's controller-inline bot, or one of the
+reviewed static app concierges below; never another static entry, a kernel identity or a
+`requiresOwnNode` bot); the bot's harness needs a brain; the caller's
 resolved brain is `antigravity-cli`; and `GET <url>/api/health` answers 2xx within 2 seconds (the
 answer is cached for 15 seconds). Every other turn keeps its existing path, and a blank URL turns the
 route off. When the node is unhealthy the turn stays inline; if the hosted ladder is then empty, the
@@ -108,9 +109,7 @@ Eleven store-package concierges are also static registry entries (camera, drone,
 pumpkin, world, vids, feeds, federal-capture, capture-crm and video). They are listed by agent id in
 `src/app/extensions/swarm/concierge-static-app-bots.ts` and qualify like package-governed bots while
 an installed package declares them in its `bots:` block; no other static or core bot can reach the
-concierge node. federal-capture and capture-crm reference their concierges (capture-specialist,
-capture-coordinator) without a `bots:` block, so those two qualify only once their packages declare
-them.
+concierge node.
 
 **Limits.**
 
