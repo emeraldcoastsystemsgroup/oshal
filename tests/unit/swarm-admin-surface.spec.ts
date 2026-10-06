@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the budgets screen is guarded like the home, listed in the navigation, carries the containers and templates its script fills, inserts values as text only (the one innerHTML-free render path is pinned), and keeps the style order the glass spec requires.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): the connectors screen is guarded like the home, listed in the navigation, carries the containers its script fills, inserts values as text only, confirms a remove, and keeps the style order the glass spec requires. Every page's style-order check now also asserts its stylesheet link is present: indexOf answers -1 for a missing link, which made the order check pass vacuously.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): the shared-knowledge screen is guarded like the home, listed in the navigation, carries the containers and forms its script fills, inserts values as text only, confirms a document removal and asks for a collection's name before deleting it, and keeps the style order the glass spec requires.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-7): the devices screen is guarded like the home, listed in the navigation, carries the containers and the bind template its script fills, inserts values as text only, confirms unbind and rotate, and keeps the style order the glass spec requires.
  */
 
 import fs from 'node:fs';
@@ -219,6 +220,29 @@ describe('the /swarm-admin surface', () => {
       expect(await screen.text()).toContain('Add to the shared corpus');
       expect((await app.get('/swarm-admin/knowledge/knowledge.js', USER)).status).toBe(403);
       expect((await app.get('/swarm-admin/knowledge', null)).status).toBe(302);
+    } finally { await app.close(); }
+  });
+
+  it('serves the devices screen under the same guard, with its table, filters and bind template, text-only', async () => {
+    const page = pages().find((p) => p.routePath === '/swarm-admin/devices');
+    expect(page?.extraGuards).toEqual([requiresOperator]);
+    expect(path.basename(page!.pageDir)).toBe('devices');
+    const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    for (const id of ['posture', 'devices', 'search', 'boundFilter', 'stateFilter', 'bindRowTemplate', 'tokenNote', 'statusBanner']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/devices/devices.css')).toBeGreaterThan(-1);
+    expect(html.indexOf('/swarm-admin/devices/devices.css')).toBeLessThan(html.indexOf('surface-glass.css'));
+    const script = fs.readFileSync(path.join(page!.pageDir, 'devices.js'), 'utf8');
+    expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(script).toContain("requestJson('/api/remote-clients')");
+    expect(script.match(/window\.confirm\(/g)?.length).toBe(2);
+    expect(SWARM_ADMIN_NAVIGATION.some((item) => item.path === '/swarm-admin/devices' && item.group === 'swarm-admin')).toBe(true);
+    const app = await serve((a) => registerUiSurfaceRoutes({ app: a, requiresAuth, serveHtml: sendHtmlResponse, pages: pages() }));
+    try {
+      const screen = await app.get('/swarm-admin/devices', OPERATOR);
+      expect(screen.status).toBe(200);
+      expect(await screen.text()).toContain('Every computer and node');
+      expect((await app.get('/swarm-admin/devices/devices.js', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/devices', null)).status).toBe(302);
     } finally { await app.close(); }
   });
 

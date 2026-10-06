@@ -1,0 +1,137 @@
+/*
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-7): the devices screen's own styles on top of the Swarm
+    | Admin home's: the sticky status banner, the fleet strip, the filter toolbar, the devices
+    | table (sideways-scrolling on a phone) with state (online, silent, degraded, offline) and
+    | binding pills from the theme's tokens, the inline bind form, the once-shown token note. Nothing hard-coded. Loaded before
+    | surface-glass.css, as the glass spec requires.
+*/
+
+.sa-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0.6rem 1.5rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.sa-status[data-tone="error"] { opacity: 1; color: var(--status-error); }
+.sa-status[data-tone="success"] { opacity: 1; color: var(--status-success); }
+.sa-lead { margin-bottom: 1rem; }
+.sa-crumbs { font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.5rem; }
+.sa-crumbs a { color: var(--accent-primary); text-decoration: none; }
+
+.sd-posture {
+  list-style: none;
+  margin: 0;
+  padding: 0.9rem 1.25rem;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.95rem;
+}
+
+.sd-posture li strong { font-variant-numeric: tabular-nums; margin-right: 0.3rem; }
+.sd-posture li[data-key="unbound"] strong { color: var(--status-warning, var(--text-primary)); }
+.sd-posture li[data-key="note"] { flex-basis: 100%; opacity: 0.8; font-size: 0.9rem; }
+
+.sd-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.sd-toolbar h2 { margin: 0; align-self: center; }
+
+.sd-filter {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.sd-filter input,
+.sd-filter select,
+.sd-bind select {
+  font: inherit;
+  color: inherit;
+  background: color-mix(in srgb, var(--bg-primary) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 20%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  min-width: 9rem;
+}
+
+.sd-count { margin: 0 0 0.5rem; font-size: 0.9rem; opacity: 0.8; }
+
+.sd-table-wrap {
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+}
+
+.sd-table {
+  width: 100%;
+  min-width: 58rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.sd-table th,
+.sd-table td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.sd-table td.num { font-variant-numeric: tabular-nums; }
+.sd-table td.empty { opacity: 0.75; font-style: italic; }
+.sd-table .sd-sub { display: block; font-size: 0.8rem; opacity: 0.7; word-break: break-all; }
+
+.pill {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.pill[data-state="online"] { color: var(--status-success); }
+.pill[data-state="offline"] { color: var(--status-error); }
+.pill[data-state="silent"],
+.pill[data-state="degraded"] { color: var(--status-warning, var(--text-primary)); }
+.pill[data-bound="no"] { color: var(--status-warning, var(--text-primary)); }
+
+.sd-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+.sd-bind {
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+
+.sd-bind label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+
+.sd-token {
+  margin: 0.75rem 0 0;
+  padding: 0.9rem 1.25rem;
+  border-radius: 0.75rem;
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+.sd-token[hidden] { display: none; }
+.sd-token code { font-size: 0.95rem; }
+.sd-copy-feedback { font-size: 0.85rem; opacity: 0.85; }

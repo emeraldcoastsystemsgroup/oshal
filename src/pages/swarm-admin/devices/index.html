@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-7): the devices screen under Swarm Admin, served at
+    | /swarm-admin/devices to the operator role only. Every computer and node that has joined the
+    | swarm, whoever it is bound to: platform, who it is bound to (named from the directory), online
+    | silent, degraded or offline, last heartbeat, queued work, tools; bind a node to a person,
+    | unbind it, rotate its node token (returned once); an honest note that the registry is in
+    | memory and never times a node out. The person's own Devices tool keeps the installer and
+    | their own computers; this is every device.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Devices</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/devices/devices.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the devices…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Devices</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-device-desktop"></span>
+      <h1>Devices</h1>
+    </div>
+    <p class="sa-lead">
+      Every computer and node that has joined this swarm, whoever it is bound to. A node runs a person's own work only
+      when it is bound to them; no person's work is dispatched to an unbound node, though operators and platform jobs
+      can still reach it. A person adds their own computer from their Devices tool, which binds it to their account;
+      here you can bind or unbind any device and rotate its node token.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="postureHeading">
+      <h2 id="postureHeading">Fleet</h2>
+      <ul id="posture" class="sd-posture surface-card"></ul>
+    </section>
+
+    <section class="sa-section" aria-labelledby="devicesHeading">
+      <div class="sd-toolbar">
+        <h2 id="devicesHeading">Devices</h2>
+        <label class="sd-filter">Search <input id="search" type="search" autocomplete="off" placeholder="name, id, platform or person" /></label>
+        <label class="sd-filter">Bound
+          <select id="boundFilter">
+            <option value="" selected>All</option>
+            <option value="bound">Bound</option>
+            <option value="unbound">Unbound</option>
+          </select>
+        </label>
+        <label class="sd-filter">State
+          <select id="stateFilter">
+            <option value="" selected>All</option>
+            <option value="online">Online</option>
+            <option value="silent">Silent</option>
+            <option value="degraded">Degraded</option>
+            <option value="offline">Offline</option>
+          </select>
+        </label>
+        <button type="button" id="reload">Reload</button>
+      </div>
+      <p id="count" class="sd-count"></p>
+      <div class="sd-table-wrap surface-card">
+        <table class="sd-table" aria-describedby="devicesHeading">
+          <thead><tr><th>Device</th><th>Platform</th><th>Bound to</th><th>State</th><th>Last heartbeat</th><th>Work</th><th>Tools</th><th>Actions</th></tr></thead>
+          <tbody id="devices"></tbody>
+        </table>
+      </div>
+      <p id="tokenNote" class="sd-token surface-card" hidden></p>
+    </section>
+  </main>
+
+  <template id="bindRowTemplate">
+    <tr class="sd-bind-row">
+      <td colspan="8">
+        <form class="sd-bind surface-card">
+          <label>Bind to <select name="ownerSub"><option value="">Choose a person</option></select></label>
+          <div class="sd-actions"><button type="submit">Bind</button><button type="button" class="sd-bind-cancel">Cancel</button></div>
+        </form>
+      </td>
+    </tr>
+  </template>
+
+  <script type="module" src="/swarm-admin/devices/devices.js"></script>
+</body>
+</html>
