@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /data-model page (data-model explorer). requiresAuth only at the page, like /users and /app-loader: a non-operator gets the explanatory screen, and every read is fenced by requiresOperator on /api/admin/data-model.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /access-review page - the joined read-only answer to "what am I allowed to do". requiresAuth only, like /users: the whole point is that a person who cannot open something can see WHY without being an administrator, and naming somebody else's subject is fenced inside /api/access-review.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-2): register the /swarm-admin surface, the home of the Swarm Admin screens, guarded by the operator role (requiresOperator, Amendment A1) after requiresAuth, so users get 403 and never see it while an operator sees it beside their ordinary screens. The guard is fixed here (no parameter a caller could weaken), so server.ts, at its line cap, does not change. The leaf directory is named like the route, so no asset alias is mounted.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-3): register /swarm-admin/ai-defaults, the AI defaults screen, under the same operator-role guard as the Swarm Admin home. Its leaf directory is named like the route, so no asset alias is mounted; as a nested route it also gives the standalone pages a /swarm-admin/shared mount of the shared helpers, behind requiresAuth like the others.
  */
 
 import express from 'express';
@@ -241,6 +242,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const dataModelDir = resolveExistingPath([path.resolve(__dirname, '../pages/data-model'), path.resolve(process.cwd(), 'src/pages/data-model')]);
   const accessReviewDir = resolveExistingPath([path.resolve(__dirname, '../pages/access-review'), path.resolve(process.cwd(), 'src/pages/access-review')]);
   const swarmAdminDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin'), path.resolve(process.cwd(), 'src/pages/swarm-admin')]);
+  const swarmAdminAiDefaultsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/ai-defaults'), path.resolve(process.cwd(), 'src/pages/swarm-admin/ai-defaults')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -288,5 +290,6 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     { routePath: '/pumpkin', pageDir: pumpkinDir },
     // ADR-174 Amendment B: the Swarm Admin home. Operator role only; users get 403 and no link.
     { routePath: '/swarm-admin', pageDir: swarmAdminDir, extraGuards: [requiresOperator] },
+    { routePath: '/swarm-admin/ai-defaults', pageDir: swarmAdminAiDefaultsDir, extraGuards: [requiresOperator] },
   ];
 }
