@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Require installer proof and commit first account/root together before creating a session.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Respect established external identities in setup and serialize root status and credential recovery guards with role changes.
  * 10 | maintainer@emeraldcoastsystemsgroup.com | GET /api/local-auth/state reports resetEmail: whether a reset email has a configured rail (SMTP or a connector sender). A fresh install has neither, and the login page's "Email me a reset link" then answered "a reset link is on its way" for a mail that could never be sent; the page now shows the server-side link command instead.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 slice 2b-i: the swarm-admin account never gets a session without a working second factor. On its first sign-in the correct password returns secondFactor 'enrol' with the QR, typed key and recovery codes, and only a correct authenticator code confirms the factor and starts the session. After that it signs in with password plus code like any enrolled account. It cannot switch the factor off.
  */
 
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -567,7 +568,20 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
       // probe which accounts have 2FA enabled.
       const factor = await getTotpState(pool, user.userSub);
       const code = String(body.code ?? '').trim();
-      if (factor?.enabled) {
+      if (user.accountKind === 'swarm-admin' && factor?.enabled !== true) {
+        // ADR-174: the swarm admin never gets a session without a working second factor. Its first
+        // sign-in enrols the authenticator inside the login: the password returns the QR, and only a
+        // correct code from the app starts the session.
+        if (!code) {
+          res.json({ ok: false, secondFactor: 'enrol', ...(await startAdminEnrolment(user.userSub, user.email)) });
+          return;
+        }
+        if (!await confirmTotpEnrolment(pool, user.userSub, code, Date.now())) {
+          recordLoginFailure(key);
+          res.status(401).json({ error: 'that code did not match \u2014 check the clock on your phone and try the current code' });
+          return;
+        }
+      } else if (factor?.enabled) {
         if (!code) {
           // No session yet, and deliberately NOT counted as a failure: the credential was
           // correct and the client simply has one more step to complete.
@@ -684,6 +698,18 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
   }
 
   /** Answers 401 and returns null when the caller has no session. */
+  /** Starts the swarm admin's authenticator enrolment and returns what the login page shows: the QR, the typed key and the one-time recovery codes. */
+  async function startAdminEnrolment(sub: string, account: string) {
+    const issuer = (process.env.TOTP_ISSUER || 'oshal').trim() || 'oshal';
+    const enrolment = await beginTotpEnrolment(pool, sub, issuer, account);
+    return {
+      qrDataUri: await QRCode.toDataURL(enrolment.otpauthUri, { margin: 1, width: 240 }),
+      otpauthUri: enrolment.otpauthUri,
+      secret: formatSecretForDisplay(enrolment.secretBase32),
+      recoveryCodes: enrolment.recoveryCodes,
+    };
+  }
+
   function requireSelf(req: Request, res: Response): string | null {
     const sub = callerSub(req);
     if (!sub) {
@@ -773,6 +799,10 @@ export function createLocalAuthRoutes(pool: Pool, options: LocalAuthRoutesOption
         return;
       }
       const state = await getTotpState(pool, sub);
+      if (snapshot.accountKind === 'swarm-admin') {
+        res.status(403).json({ error: 'the swarm admin always signs in with a second factor' });
+        return;
+      }
       if (state?.required) {
         res.status(403).json({ error: 'an administrator requires a second factor on this account' });
         return;
