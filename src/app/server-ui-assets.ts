@@ -8,9 +8,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148: register the /users swarm access-management surface. requiresAuth only, deliberately — the page is where a signed-in user learns they are NOT an admin, and where the first person on a virgin swarm claims root before any operator exists; the privileged reads and every write are fenced by requiresOperator inside /api/swarm/roles.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /data-model page (data-model explorer). requiresAuth only at the page, like /users and /app-loader: a non-operator gets the explanatory screen, and every read is fenced by requiresOperator on /api/admin/data-model.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Registered the /access-review page - the joined read-only answer to "what am I allowed to do". requiresAuth only, like /users: the whole point is that a person who cannot open something can see WHY without being an administrator, and naming somebody else's subject is fenced inside /api/access-review.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-2): register the /swarm-admin surface, the home of the Swarm Admin screens, guarded by the operator role (requiresOperator, Amendment A1) after requiresAuth, so users get 403 and never see it while an operator sees it beside their ordinary screens. The guard is fixed here (no parameter a caller could weaken), so server.ts, at its line cap, does not change. The leaf directory is named like the route, so no asset alias is mounted.
  */
 
 import express from 'express';
+import { requiresOperator } from '@/shared/middleware/authz';
 import fs from 'fs';
 import path from 'path';
 import { createChildLogger } from '@/shared/logger';
@@ -238,6 +240,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const pumpkinDir = resolveExistingPath([path.resolve(__dirname, '../pages/pumpkin'), path.resolve(process.cwd(), 'src/pages/pumpkin')]);
   const dataModelDir = resolveExistingPath([path.resolve(__dirname, '../pages/data-model'), path.resolve(process.cwd(), 'src/pages/data-model')]);
   const accessReviewDir = resolveExistingPath([path.resolve(__dirname, '../pages/access-review'), path.resolve(process.cwd(), 'src/pages/access-review')]);
+  const swarmAdminDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin'), path.resolve(process.cwd(), 'src/pages/swarm-admin')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -283,5 +286,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     { routePath: '/access-review', pageDir: accessReviewDir },
     // Pumpkin projector — the full-screen jack-o'-lantern display for the Halloween prop (?app=pumpkin).
     { routePath: '/pumpkin', pageDir: pumpkinDir },
+    // ADR-174 Amendment B: the Swarm Admin home. Operator role only; users get 403 and no link.
+    { routePath: '/swarm-admin', pageDir: swarmAdminDir, extraGuards: [requiresOperator] },
   ];
 }
