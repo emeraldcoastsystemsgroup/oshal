@@ -176,16 +176,20 @@ export REMOTE_CLIENT_MCP_COMMAND="mcp-server-macos-use"
 export REMOTE_CLIENT_PLATFORM="macos"
 ```
 
-Starting shape for a Windows Unreal Engine worker (see [ADR-051](../adr/051-unreal-engine-mcp-worker.md)). The endpoint must have Unreal Engine 5.5+ installed with the `UnrealMCP` editor plugin built and the project open; the Python server bridges to the editor over TCP `55557`:
+Starting shape for a Windows Unreal Engine worker (see [ADR-051](../adr/051-unreal-engine-mcp-worker.md) Amendment 1). The
+satellite PC runs UE 5.x with the ChiR24 *McpAutomationBridge* plugin enabled and the project open; the stdio server
+`unreal-engine-mcp-server` reaches the plugin on `127.0.0.1:8090` and finds its capability token through
+`UE_PROJECT_PATH`. Pin the server and the plugin to the same release:
 
-```bash
-export REMOTE_CLIENT_CONTROL_PLANE_URL="http://localhost:3456"
-export REMOTE_CLIENT_SHARED_SECRET="replace-me"
-export REMOTE_CLIENT_PLATFORM="windows"
-export REMOTE_CLIENT_NAME="unreal-worker"
-export REMOTE_CLIENT_MCP_COMMAND="uv"
-export REMOTE_CLIENT_MCP_ARGS='["--directory","./unreal-mcp/Python","run","unreal_mcp_server.py"]'
-# REMOTE_CLIENT_MCP_CWD defaults to the repo root; set it if the daemon runs elsewhere.
+```powershell
+$env:REMOTE_CLIENT_CONTROL_PLANE_URL = "https://<control-plane>"
+$env:REMOTE_CLIENT_CONTROL_PLANE_TOKEN = "<device token from POST /api/join/enroll>"
+$env:REMOTE_CLIENT_ID = "<the enrollment's nodeClientId>"
+$env:REMOTE_CLIENT_PLATFORM = "windows"
+$env:REMOTE_CLIENT_NAME = "unreal-worker"
+$env:REMOTE_CLIENT_MCP_COMMAND = "npx"
+$env:REMOTE_CLIENT_MCP_ARGS = '["-y","unreal-engine-mcp-server@0.5.30"]'
+$env:UE_PROJECT_PATH = "C:/Path/To/YourProject"
 ```
 
 ## Current Implementation Files

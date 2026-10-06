@@ -252,11 +252,10 @@ sim/nasa42/case/Ac.csv
 sim/nasa42/case/Epoch.csv
 sim/nasa42/case/Sc.csv
 
-# 2026-07-23: unreal-mcp/ is NOT vendored (ADR-051 reversed). It is chongdashu/unreal-mcp (MIT) whose
+# 2026-07-23: unreal-mcp/ is NOT vendored (ADR-051 reversed). It was chongdashu/unreal-mcp (MIT) whose
 # MCPGameProject carries Epic Games copyright under the UE EULA — neither is redistributable under
-# this repo's AGPL-3.0. A GPU worker clones it from upstream at bring-up (into ./unreal-mcp/ so the
-# `uv --directory ./unreal-mcp/Python ...` launch preset still resolves). Ignored so that clone can
-# never be re-committed back into the core tree.
+# this repo's AGPL-3.0. Since ADR-051 Amendment 1 (2026-10-05) the worker runs ChiR24/Unreal_mcp from
+# npm and needs no clone; the path stays ignored so an old clone can never be committed back.
 unreal-mcp/
 
 # Internal coordination thread — deliberately LOCAL, never tracked here (ADR-115).
