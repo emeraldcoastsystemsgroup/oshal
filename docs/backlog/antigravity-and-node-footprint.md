@@ -1,5 +1,27 @@
 # Antigravity CLI, node sizing, and how harnesses reach a bot
 
+## Status, 2026-10-06: Antigravity executes
+
+Core #788 (2026-09-22) got the binary running without changing the base image. The vendor binary and
+its glibc libraries are staged in `/opt/agy-runtime`, and `/usr/local/bin/agy` calls that private
+loader. The Alpine base, Node and the musl native addons stay as they were (`Dockerfile.oshal`,
+change 10). Against the done-when in section 5:
+
+- **(d) met.** In a bot node, `agy --version` answers 1.2.8. `chat_tasks` holds 1,676 turns on
+  `providerId: antigravity-cli` from 2026-09-22 to 2026-10-06, and 1,674 of them carry tokens or cost.
+  `antigravity-cli` has been the operator box's fleet default since 2026-09-22.
+- **(e) did not arise**, because the base stayed Alpine.
+- **(b) partly.** The nodes mount the Antigravity account login (compose `gemini-auth-volume`). Two
+  things are still unmeasured: whether a turn authenticates with the login or with the key, and
+  which quota it draws on.
+- **(a) and (c) are open:** the per-node footprint decision in section 3, and its numbers.
+
+Section 1 below records the 2026-09-18 measurement that led to the private loader. It no longer
+describes the image. One reader in code still says it does: `SWARM_APP_BOT_HARNESS_TYPES`
+(`src/features/swarm-apps/types.ts`) leaves out `antigravity-cli`, with a comment that no node can
+run it. That list did not stop packaged bots from answering on Antigravity through the fleet default
+(2026-10-06 sweep, see the In-app assistants section of [BACKLOG.md](../BACKLOG.md)).
+
 **Enhancement, not a defect.** Nothing is broken: `gemini-cli` runs today on the same Google key and
 the same models, and the Antigravity harness is registered, typed and selectable — it refuses on this
 image with a measured reason rather than failing mysteriously. This entry is the roadmap for turning
