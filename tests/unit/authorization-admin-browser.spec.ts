@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify inline additive roles, exact row scope, live catalog changes and stale response refusal.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Exercise calendar expiry, compact layout and reviewed bulk role changes.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Verify the page asks what is being given and shows only that path, and that the user picker shows each account's email.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | The access-mode radios keep their own size beside their text (not stretched by the page's full-width input rule).
  */
 /** Chromium drives the real Access Administration page and shared policy HTTP service on loopback. */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +57,8 @@ describe('Access Administration browser workflow', () => {
     const paths = async () => ({ single: await visible('applications-panel'), advanced: await visible('advanced-access'),
       picker: await visible('application-field'), composite: await visible('experience-access') });
     expect(await page.locator('input[name="access-mode"]:checked').getAttribute('value')).toBe('single');
+    const radios = await page.locator('input[name="access-mode"]').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().width));
+    expect(radios.every(width => width > 0 && width < 30), 'each radio keeps its own size beside its text').toBe(true);
     expect(await paths()).toEqual({ single: true, advanced: true, picker: true, composite: false });
     await page.locator('input[name="access-mode"][value="composite"]').check();
     expect(await paths()).toEqual({ single: false, advanced: false, picker: false, composite: true });
