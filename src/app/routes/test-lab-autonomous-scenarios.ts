@@ -45,6 +45,7 @@
  * 39 | maintainer@emeraldcoastsystemsgroup.com | Register fixed no-lineage completion notice refusals and ordinary work compatibility through real isolated PostgreSQL and current application policy.
  * 40 | maintainer@emeraldcoastsystemsgroup.com   | Register idle persistence cooldown recovery, SYSTEM retry isolation and truthful readiness with the existing isolated store-persistence runner.
  * 41 | maintainer@emeraldcoastsystemsgroup.com   | Register the guest demo seed own-read regression on the protected remote application execution scenario: the rows the real seeder writes are read through the real guest chain by their guest, and refused to another guest and to the same sub from another issuer.
+ * 42 | maintainer@emeraldcoastsystemsgroup.com | Register protected inline concierge authority, empty histories, pending approval streams, real PostgreSQL conversation reload and isolated native recovery browser coverage through the existing fixed runner.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -187,11 +188,17 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
   ],
   steps: [{ id: 'sources', app: 'jarvis', label: 'Caller-visible sources', run: briefingSources }],
 }, {
-  id: 'protected-remote-application-execution', title: 'Protected remote application execution', group: 'tool',
-  description: 'Current per-user application rights across signed controller dispatch, hosted worker reasoning, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL/Redis fixtures cover allowed, forged, replayed, revoked and stale requests. Queued dispatch is covered in the same supported direct/hosted shape, including the refusal that names a missing owner connection.',
+  id: 'protected-remote-application-execution', title: 'Protected remote and inline application execution', group: 'tool',
+  description: 'Current per-user rights across signed dispatch, inline concierges, immutable queued initiators, history, caches and SSE. Isolated HTTP/SQLite/PostgreSQL/Redis fixtures prove owner-only empty histories, durable reply reload, pending approval controls and current policy revocation. An isolated browser proves explicit unavailable-thread recovery with an application adapter; deployed native concierge and real model acceptance are separate. Queued dispatch retains its supported direct/hosted shape and missing-owner-connection refusal.',
   regressionTests: [
     { level: 'integration', path: 'tests/unit/application-remote-execution.spec.ts' },
     { level: 'integration', path: 'tests/unit/application-remote-execution-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/application-inline-execution.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-empty-task-access.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-task-control-access.spec.ts' },
+    { level: 'unit', path: 'tests/unit/protected-inline-stream-events.spec.ts' },
+    { level: 'integration', path: 'tests/unit/protected-inline-thread-postgres.spec.ts' },
+    { level: 'browser', path: 'tests/unit/swarmbot-conversation-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-controller-permit.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-protected-execution.spec.ts' },
     { level: 'integration', path: 'tests/unit/bot-node-remote-authorization-client.spec.ts' },
@@ -238,9 +245,9 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/queued-protected-dispatch.spec.ts' },
     { level: 'unit', path: 'tests/unit/autonomous-test-lab-registration.spec.ts' },
   ],
-  steps: [{ id: 'runner', app: 'test-lab', label: 'Protected remote authorization fixtures', run: async () => ({
-    app: 'test-lab', label: 'Protected remote authorization fixtures', state: 'degraded',
-    detail: 'Run npm run test:remote-authorization with local Node and Docker. Fixtures create disposable databases and SQLite workspaces; no live provider, application data or account is changed. No tests ran from this step.',
+  steps: [{ id: 'runner', app: 'test-lab', label: 'Protected application execution fixtures', run: async () => ({
+    app: 'test-lab', label: 'Protected application execution fixtures', state: 'degraded',
+    detail: 'Run npm run test:remote-authorization with local Node, Docker and Chromium. Fixtures own their databases, SQLite workspaces and browser; no live provider, deployed application data or account is changed. No tests ran from this step.',
   }) }],
 }, {
   id: 'embedded-llm-tool-tier', title: 'Provider-embedded tool tier', group: 'tool',

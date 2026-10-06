@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover the construction shape production actually uses — an endpoint resolver and the controller environment, with no injected issuer — for both outcomes: signing material configured records a real delegation and dispatches; compose-supplied empty keys refuse with a message naming them. The previous cases injected an issuer, so neither the env-derived success nor the live refusal was proven.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove an unrecordable protected dispatch exposes the typed refusal contract and canonical operator remedy without weakening the denial.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Preserve explicit controller-side result-persistence refusals through the real protected BotNodeClient path while continuing to sanitize generic remote/result failures.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Keep the remote dispatch fixture closed to the separate inline and pending-control authority methods.
  */
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -55,6 +56,10 @@ afterEach(async () => { configureSpecialistContextRegistry(undefined); server.cl
 
 function controllerAuthority(): ApplicationRemoteExecutionAuthority {
   return {
+    startInline: vi.fn(async () => { throw new Error('Not used by remote controller dispatch'); }),
+    completeInline: vi.fn(async () => { throw new Error('Not used by remote controller dispatch'); }),
+    assertEmptyTaskAccess: vi.fn(async () => { throw new Error('Not used by remote controller dispatch'); }),
+    assertTaskControlAccess: vi.fn(async () => { throw new Error('Not used by remote controller dispatch'); }),
     prepare: vi.fn(async caller => {
       events.push('prepare'); if (caller.sub !== actor.sub || caller.issuer !== actor.issuer || !caller.isActive) throw new Error('invalid actor');
       return { executionId, expiresAt: new Date(Date.now() + 300000).toISOString(), binding: { executionId, app: 'fixture-app',

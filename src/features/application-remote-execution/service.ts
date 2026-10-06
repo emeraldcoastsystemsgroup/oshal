@@ -5,12 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Revalidate controller-owned remote executions against current account, package generation and permission state.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Refuse effective grant expansion as well as revocation across context loading, signing and execution.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Reuse original policy evidence for destination-validated controller inline start/completion and pending tool control without accepting worker transport or signing authority.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { AuthorizationActor, AuthorizationGrant, AuthorizationOperation } from '@/shared/application-authorization';
 import { REMOTE_EXECUTION_PATH, REMOTE_PERMIT_AUDIENCE, REMOTE_PERMIT_SCOPE,
   type ApplicationRemoteExecutionAuthority, type PrepareRemoteExecutionInput, type PreparedRemoteExecution,
-  type RemoteExecutionCheck, type RemoteExecutionPermit, type SignedRemoteExecutionPermit } from '@/shared/application-remote-execution';
+  type RemoteExecutionCheck, type RemoteExecutionPermit, type SignedRemoteExecutionPermit,
+  type StartedInlineExecution, type RemoteApplicationSnapshot } from '@/shared/application-remote-execution';
 import { SWARM_EXECUTE_DELEGATION_METHOD, SWARM_EXECUTE_DELEGATION_PATH, SWARM_EXECUTE_DELEGATION_SCOPE } from '@/shared/security/delegation-http-policy';
 import { delegationRequestBodySha256 } from '@/shared/security/delegation-request-binding';
 import type { RecordedDelegationToken } from '@/shared/security/delegation-token';
@@ -34,12 +36,76 @@ export class ApplicationRemoteExecutionService implements ApplicationRemoteExecu
    * @param original Trusted initiating actor. @param raw Exact dispatch identifiers. @returns Prepared reference or confirmed legacy null.
    */
   async prepare(original: AuthorizationActor, raw: PrepareRemoteExecutionInput): Promise<PreparedRemoteExecution | null> {
+    const record = await this.buildRecord(original, raw, 'remote');
+    if (!record) return null;
+    await this.store.insert(record);
+    this.assertGeneration(record);
+    return { executionId: record.binding.executionId, expiresAt: record.expiresAt, binding: structuredClone(record.binding) };
+  }
+
+  /** @description Atomically start controller inline work with the same durable original grant evidence as remote work.
+   * @param original Verified caller. @param raw Exact controller task/workspace identifiers.
+   * @param validateDestination Trusted identity-only destination check before insertion.
+   * @returns Restricted started provenance or confirmed unprotected null.
+   */
+  async startInline(original: AuthorizationActor, raw: PrepareRemoteExecutionInput,
+    validateDestination?: (actor: AuthorizationActor) => Promise<void>): Promise<StartedInlineExecution | null> {
+    const record = await this.buildRecord(original, raw, 'inline');
+    if (!record) return null;
+    await validateDestination?.(structuredClone(record.actor));
+    await this.checkPolicy(record, record.actor);
+    record.status = 'started'; record.startedAt = new Date(this.now()).toISOString();
+    record.resultTaskIds = [record.binding.taskId];
+    record.expiresAt = new Date(Date.parse(record.createdAt) + 5_400_000).toISOString();
+    this.assertLive(record); this.assertGeneration(record);
+    await this.store.insert(record);
+    this.assertLive(record); this.assertGeneration(record);
+    return { executionId: record.binding.executionId, expiresAt: record.expiresAt,
+      binding: structuredClone(record.binding), actor: structuredClone(record.actor) };
+  }
+
+  /** @description Make successful inline output readable only after exact-owner and current original-scope revalidation.
+   * @param executionId Controller-generated inline reference. @param original Verified initiating actor. @returns Durable completion before output release.
+   */
+  async completeInline(executionId: string, original: AuthorizationActor): Promise<void> {
+    const actor = executionActor(original);
+    await this.store.update(requireExecutionId(executionId), async record => {
+      if (record.transport !== 'inline' || record.status !== 'started') refuse('inline_execution_phase_refused', 409);
+      this.assertLive(record);
+      if (actor.sub !== record.binding.sub || actor.issuer !== record.binding.issuer) refuse('remote_execution_result_owner_mismatch');
+      await this.checkPolicy(record);
+      await this.checkPolicy(record, executionActor(actor, record.actor.allowedPermissions));
+      this.assertLive(record); this.assertGeneration(record);
+      record.status = 'completed'; record.completedAt = new Date(this.now()).toISOString();
+    });
+  }
+
+  /** @description Check an empty thread's current protected bot policy without creating or completing any execution.
+   * @param agentId Exact persisted task agent. @param original Verified thread owner. @returns Completion only while current bot access remains allowed.
+   */
+  async assertEmptyTaskAccess(agentId: string, original: AuthorizationActor): Promise<void> {
+    if (!agentId || agentId.length > 512 || /[\x00-\x1f\x7f]/.test(agentId)) refuse('invalid_remote_execution_binding', 400);
+    const owner = await this.ports.owner('bots', agentId);
+    if (!owner?.protected) refuse('remote_execution_owner_changed');
+    const actor = await this.freshActor(executionActor(original));
+    const snapshot = this.ports.snapshot(owner.app); if (!snapshot) refuse('remote_execution_app_unavailable', 503);
+    const decision = await this.authorize(actor, { app: owner.app, kind: 'bots', operation: agentId });
+    this.assertSnapshot(snapshot);
+    if (!decision.allowed) refuse(decision.reason);
+    const current = await this.ports.owner('bots', agentId);
+    if (!current?.protected || current.app !== owner.app) refuse('remote_execution_owner_changed');
+    await this.freshActor(actor);
+    this.assertSnapshot(snapshot);
+  }
+
+  private async buildRecord(original: AuthorizationActor, raw: PrepareRemoteExecutionInput,
+    transport: 'remote' | 'inline'): Promise<RemoteExecutionRecord | null> {
     const input = parseRemotePreparation(raw);
     const owner = await this.ports.owner('bots', input.agentId);
     if (!owner?.protected) return null;
     const actor = await this.freshActor(executionActor(original));
     const snapshot = this.ports.snapshot(owner.app); if (!snapshot) refuse('remote_execution_app_unavailable', 503);
-    const record: RemoteExecutionRecord = { version: 1, actor, snapshot, status: 'prepared', nonces: [],
+    const record: RemoteExecutionRecord = { version: 1, actor, snapshot, transport, status: 'prepared', nonces: [],
       binding: { executionId: randomUUID(), app: owner.app, agentId: input.agentId, taskId: input.taskId,
         workspaceId: input.workspaceId, sub: actor.sub, issuer: actor.issuer, ...(input.tenantId ? { tenantId: input.tenantId } : {}) },
       createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + 300_000).toISOString() };
@@ -50,9 +116,7 @@ export class ApplicationRemoteExecutionService implements ApplicationRemoteExecu
     record.actor = executionActor(actor, [...new Set(ceiling)]);
     record.permissionGrants = structuredClone(effective.permissions);
     await this.checkPolicy(record, record.actor); this.assertGeneration(record);
-    await this.store.insert(record);
-    this.assertGeneration(record);
-    return { executionId: record.binding.executionId, expiresAt: record.expiresAt, binding: structuredClone(record.binding) };
+    return record;
   }
 
   /** @description Bind the exact controller-issued token and body without retaining prompts or secrets.
@@ -60,6 +124,7 @@ export class ApplicationRemoteExecutionService implements ApplicationRemoteExecu
    */
   async bind(executionId: string, receipt: RecordedDelegationToken, request: Record<string, unknown>): Promise<void> {
     await this.store.update(requireExecutionId(executionId), async record => {
+      if (record.transport === 'inline') refuse('remote_execution_transport_refused');
       this.assertLive(record);
       if (record.status !== 'prepared') refuse('remote_execution_already_bound', 409);
       const binding = record.binding;
@@ -87,6 +152,7 @@ export class ApplicationRemoteExecutionService implements ApplicationRemoteExecu
   async revalidate(raw: RemoteExecutionCheck): Promise<SignedRemoteExecutionPermit> {
     const input = parseRemoteExecutionCheck(raw);
     return this.store.update(input.executionId, async record => {
+      if (record.transport === 'inline') refuse('remote_execution_transport_refused');
       this.assertLive(record); this.verifyOriginal(record, input.token); this.assertPhase(record, input);
       const actor = await this.checkPolicy(record);
       if (input.action) await this.checkAction(record, actor, input.action);
@@ -129,6 +195,30 @@ export class ApplicationRemoteExecutionService implements ApplicationRemoteExecu
     const records = await this.store.byTask(taskId);
     if (!records.length) refuse('remote_execution_result_unavailable');
     for (const record of records) await this.assertResultAccess(record.binding.executionId, actor, { taskId });
+  }
+
+  /** @description Keep tool approval interactive while requiring all durable task provenance and retaining unreadable pending results.
+   * @param taskId Exact controller task, never an aggregate pending-result destination.
+   * @param viewer Verified current principal. @returns Completion after every current original-scope control check.
+   */
+  async assertTaskControlAccess(taskId: string, viewer: AuthorizationActor): Promise<void> {
+    const actor = executionActor(viewer);
+    const records = await this.store.byTask(taskId);
+    if (!records.length) refuse('remote_execution_control_unavailable');
+    for (const record of records) {
+      if (record.status === 'completed') {
+        await this.assertResultAccess(record.binding.executionId, actor, { taskId });
+        continue;
+      }
+      if (record.transport !== 'inline' || record.status !== 'started' || record.binding.taskId !== taskId) {
+        refuse('remote_execution_control_unavailable');
+      }
+      this.assertLive(record);
+      if (actor.sub !== record.binding.sub || actor.issuer !== record.binding.issuer) refuse('remote_execution_result_owner_mismatch');
+      await this.checkPolicy(record);
+      await this.checkPolicy(record, executionActor(actor, record.actor.allowedPermissions));
+      this.assertLive(record); this.assertGeneration(record);
+    }
   }
 
   /** @description Detect output provenance even when a caller supplies no lineage metadata.
@@ -208,8 +298,11 @@ export class ApplicationRemoteExecutionService implements ApplicationRemoteExecu
       principalIssuer: actor.issuer, isOperator: false }, () => this.ports.authorize(actor, operation)));
   }
   private assertGeneration(record: RemoteExecutionRecord): void {
-    const current = this.ports.snapshot(record.binding.app);
-    if (!current || Object.keys(record.snapshot).some(key => current[key as keyof typeof current] !== record.snapshot[key as keyof typeof current])) {
+    this.assertSnapshot(record.snapshot);
+  }
+  private assertSnapshot(snapshot: RemoteApplicationSnapshot): void {
+    const current = this.ports.snapshot(snapshot.app);
+    if (!current || Object.keys(snapshot).some(key => current[key as keyof typeof current] !== snapshot[key as keyof typeof current])) {
       refuse('remote_execution_generation_changed');
     }
   }

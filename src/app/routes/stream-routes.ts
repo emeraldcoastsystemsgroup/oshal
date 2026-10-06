@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Added dedicated /api/stream/debug SSE channel with real runtime summaries for the debug window
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Normalized Change Log attribution for governance compliance during engineering-screen retrofit work
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Authorize current task ownership and protected result policy before subscription, debug summaries and every task event.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Deliver exact approval controls under current pending inline authority while completed-result policy continues to guard every output event.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -15,6 +16,9 @@ import type { AppContext } from '../composition-root';
 import { randomUUID } from 'node:crypto';
 import { getCaller } from '@/shared/middleware/authz';
 import { callerCanReadStoredTaskResult, callerCanReadTaskResult } from './protected-result-access';
+import { callerCanReadTaskControlEvent } from './protected-task-control-access';
+import { APPROVAL_EVENTS } from '@/features/tool-approval';
+import type { StreamEventType } from '@/shared/types';
 
 const logger = createChildLogger({ module: 'stream-routes' });
 
@@ -89,10 +93,10 @@ function handleStreamConnect(ctx: AppContext) {
 
     logger.info({ clientId, taskId }, 'GET /api/stream/:taskId — SSE connect');
 
-    if (!await callerCanReadStoredTaskResult(ctx, req, taskId)) {
+    if (!await callerCanReadStoredTaskResult(ctx, req, taskId) && !await callerCanReadTaskControlEvent(ctx, req, taskId)) {
       res.status(404).json({ error: 'Task not found' }); return;
     }
-    ctx.streamManager.registerClient(clientId, taskId, res, id => callerCanReadStoredTaskResult(ctx, req, id));
+    ctx.streamManager.registerClient(clientId, taskId, res, (id, eventType) => authorizeStreamEvent(ctx, req, id, eventType));
   };
 }
 
@@ -109,8 +113,19 @@ function handleSessionStream(ctx: AppContext) {
 
     logger.info({ clientId }, 'GET /api/stream — session SSE connect');
 
-    ctx.streamManager.registerClient(clientId, 'all', res, id => callerCanReadStoredTaskResult(ctx, req, id));
+    ctx.streamManager.registerClient(clientId, 'all', res, (id, eventType) => authorizeStreamEvent(ctx, req, id, eventType));
   };
+}
+
+/** @description Recheck pending controls separately from completed results; event names never grant access themselves.
+ * @param ctx Controller authority/stores. @param req Verified subscriber. @param taskId Actual event task.
+ * @param eventType Server-emitted event kind. @returns Current exact-principal authorization for that event only.
+ */
+function authorizeStreamEvent(ctx: AppContext, req: Request, taskId: string, eventType?: StreamEventType): Promise<boolean> {
+  if (eventType && Object.values(APPROVAL_EVENTS).some(type => type === eventType)) {
+    return callerCanReadTaskControlEvent(ctx, req, taskId);
+  }
+  return callerCanReadStoredTaskResult(ctx, req, taskId);
 }
 
 async function emitDebugSummary(ctx: AppContext, req: Request, res: Response): Promise<void> {

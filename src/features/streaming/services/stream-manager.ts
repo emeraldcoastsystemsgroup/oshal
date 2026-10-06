@@ -6,12 +6,18 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — ported from any-bot StreamController.js
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added task update broadcast helper for chat runtime status transitions
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Revalidate scoped SSE events in order with bounded queues and stop protected delivery when current access is revoked.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Defer protected inline output until durable completion, isolating concurrent scopes and current-authorized pending approval controls.
  */
 
 import { createChildLogger } from '@/shared/logger';
 import type { StreamEventType } from '@/shared/types';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const logger = createChildLogger({ module: 'stream-manager' });
+
+function isApprovalControlEvent(type: StreamEventType): boolean {
+  return type === 'tool:approval:request' || type === 'tool:approval:response' || type === 'tool:approval:timeout';
+}
 
 /**
  * @description Internal SSE client state tracked by the stream manager.
@@ -22,9 +28,27 @@ interface SSEClientState {
   connectedAt: number;
   knownTaskIds: Set<string>;
   heartbeatTimer?: ReturnType<typeof setInterval>;
-  authorize?: (taskId: string) => Promise<boolean>;
+  authorize?: (taskId: string, eventType?: StreamEventType) => Promise<boolean>;
   delivery: Promise<void>;
   pendingEvents: number;
+}
+
+interface DeferredTaskEvents {
+  taskId: string;
+  events: Array<{ type: StreamEventType; data: Record<string, unknown> }>;
+  bytes: number;
+  closed: boolean;
+  refusal?: Error;
+  parent?: DeferredTaskEvents;
+}
+
+/** @description Refuse a protected turn whose unpublished event buffer cannot remain bounded. */
+export class DeferredTaskStreamError extends Error {
+  readonly code = 'deferred_task_stream_unavailable';
+  /** @description Keep the refusal free of task output or account details.
+   * @returns The bounded public stream refusal.
+   */
+  constructor() { super('deferred_task_stream_unavailable'); this.name = 'DeferredTaskStreamError'; }
 }
 
 /**
@@ -53,11 +77,32 @@ export interface SSEWritable {
 export class StreamManager {
   private sseClients: Map<string, SSEClientState>;
   private heartbeatIntervalMs: number;
+  private readonly deferredTaskEvents = new AsyncLocalStorage<DeferredTaskEvents>();
 
   constructor(heartbeatIntervalMs = 30000) {
     this.sseClients = new Map();
     this.heartbeatIntervalMs = heartbeatIntervalMs;
     logger.info({ heartbeatIntervalMs }, 'Stream manager initialized');
+  }
+
+  /**
+   * @description Publish protected inline events only after the trusted caller completes its entire durable authorization boundary.
+   * @param taskId Exact controller task to defer; unrelated tasks continue through their normal subscribers.
+   * @param execute Work including result completion, persistence and final access verification.
+   * @returns The outcome after ordered replay through unchanged per-client authorization; rejection discards all unpublished events.
+   */
+  async withDeferredTaskEvents<T>(taskId: string, execute: () => Promise<T>): Promise<T> {
+    const buffer: DeferredTaskEvents = { taskId, events: [], bytes: 0, closed: false, parent: this.deferredTaskEvents.getStore() };
+    try {
+      const result = await this.deferredTaskEvents.run(buffer, execute);
+      if (buffer.refusal) throw buffer.refusal;
+      buffer.closed = true;
+      for (const event of buffer.events) this.broadcast(taskId, event.type, event.data);
+      return result;
+    } finally {
+      buffer.closed = true;
+      buffer.events.length = 0;
+    }
   }
 
   /**
@@ -68,7 +113,7 @@ export class StreamManager {
    * @param res - Writable response object
    * @param authorize - Optional trusted current-access check used for every task event.
    */
-  registerClient(clientId: string, taskId: string, res: SSEWritable, authorize?: (taskId: string) => Promise<boolean>): void {
+  registerClient(clientId: string, taskId: string, res: SSEWritable, authorize?: (taskId: string, eventType?: StreamEventType) => Promise<boolean>): void {
     this.setupSSEHeaders(res);
     this.sendEvent(res, 'connection', { clientId, taskId, message: 'Connected to streaming' });
 
@@ -179,13 +224,40 @@ export class StreamManager {
    * @param data - Event payload
    */
   broadcast(taskId: string, eventType: StreamEventType, data: Record<string, unknown>): void {
+    const deferred = this.deferTaskEvent(taskId, eventType, data);
+    if (deferred === 'buffered') return;
     this.sseClients.forEach((client, clientId) => {
       if (this.shouldReceiveEvent(client, taskId)) {
         if (client.authorize) this.queueAuthorizedEvent(clientId, client, taskId, eventType, data);
-        else this.sendEvent(client.response, eventType, { ...data, taskId });
+        else if (!isApprovalControlEvent(eventType)) this.sendEvent(client.response, eventType, { ...data, taskId });
       }
     });
     logger.debug({ taskId, eventType }, 'Event broadcast');
+  }
+
+  private deferTaskEvent(taskId: string, type: StreamEventType, data: Record<string, unknown>): 'buffered' | 'control' | false {
+    let buffer = this.deferredTaskEvents.getStore();
+    while (buffer && buffer.taskId !== taskId) buffer = buffer.parent;
+    if (!buffer) return false;
+    if (buffer.closed || buffer.refusal) throw buffer.refusal ?? new DeferredTaskStreamError();
+    if (isApprovalControlEvent(type)) return 'control';
+    let serialized: string;
+    try {
+      const encoded = JSON.stringify(data);
+      if (typeof encoded !== 'string') throw new DeferredTaskStreamError();
+      serialized = encoded;
+    }
+    catch (err) {
+      logger.error({ err }, 'Unable to retain protected inline stream event');
+      buffer.refusal = new DeferredTaskStreamError(); throw buffer.refusal;
+    }
+    const bytes = Buffer.byteLength(serialized, 'utf8');
+    if (buffer.events.length >= 128 || buffer.bytes + bytes > 1_048_576) {
+      buffer.refusal = new DeferredTaskStreamError(); throw buffer.refusal;
+    }
+    buffer.events.push({ type, data: JSON.parse(serialized) as Record<string, unknown> });
+    buffer.bytes += bytes;
+    return 'buffered';
   }
 
   private queueAuthorizedEvent(clientId: string, client: SSEClientState, taskId: string,
@@ -193,7 +265,7 @@ export class StreamManager {
     if (++client.pendingEvents > 128) { this.unregisterClient(clientId); return; }
     client.delivery = client.delivery.then(async () => {
       if (this.sseClients.get(clientId) !== client) return;
-      const allowed = await this.authorizeEvent(client, taskId);
+      const allowed = await this.authorizeEvent(client, taskId, eventType);
       if (this.sseClients.get(clientId) !== client) return;
       if (!allowed) {
         client.knownTaskIds.delete(taskId);
@@ -204,10 +276,10 @@ export class StreamManager {
     }).catch(() => this.unregisterClient(clientId)).finally(() => { client.pendingEvents -= 1; });
   }
 
-  private async authorizeEvent(client: SSEClientState, taskId: string): Promise<boolean> {
+  private async authorizeEvent(client: SSEClientState, taskId: string, eventType: StreamEventType): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([client.authorize!(taskId), new Promise<boolean>(done => {
+      return await Promise.race([client.authorize!(taskId, eventType), new Promise<boolean>(done => {
         timer = setTimeout(() => done(false), 2_000);
       })]);
     } catch { return false; }

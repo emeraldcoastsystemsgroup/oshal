@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Reuse the verified request actor and current stored task for protected result reads.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Report a stored-task access check that could not be DETERMINED rather than answering "denied" in silence. The fail-closed return is unchanged  this is a per-event stream callback and a throw here would reach the stream loop  but a store error is now logged at ERROR with the task it was deciding, so an outage stops reading as a refusal.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Apply current canonical row ownership before ordinary or protected task reads, preserving strict guest provenance and the explicitly inherited bare-service ordinary rail.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Admit genuinely empty protected thread shells through exact stamped ownership and current bot policy while retaining all completed-result checks.
  */
 import type { Request } from 'express';
 import type { AppContext } from '../composition-root';
@@ -15,6 +16,7 @@ import { canReadProtectedResult, type ProtectedResultTask } from '@/shared/prote
 import { createChildLogger } from '@/shared/logger';
 import { createRecordOwnership, guestOwnsRecord, type OwnedRecord } from './record-ownership';
 import { readOwnerPrincipalIssuer } from '@/shared/security/owner-principal-issuer';
+import { callerCanReadEmptyProtectedTask } from './protected-empty-task-access';
 
 const logger = createChildLogger({ module: 'protected-result-access' });
 
@@ -39,11 +41,12 @@ export async function callerCanReadTaskResult(ctx: AppContext, req: Request, tas
     if (!owned) return false;
     // Only task metadata participates in protected-result lineage. Bare services and guests
     // have no application actor; they retain ordinary compatibility but cannot read protected output.
-    return canReadProtectedResult({ taskId: task.taskId, ownerSub: ownership.ownerSub,
+    const readable = await canReadProtectedResult({ taskId: task.taskId, ownerSub: ownership.ownerSub,
       agentId: task.agentId, metadata: task.metadata }, async () => {
       if (guest || !authenticated) throw new Error('protected_result_identity_unavailable');
       return checks.actor();
     });
+    return readable || (!guest && authenticated && await callerCanReadEmptyProtectedTask(ctx, req, task));
   } catch (err) {
     logger.error({ err, taskId: task.taskId }, 'task result ownership undetermined; failing closed');
     return false;
