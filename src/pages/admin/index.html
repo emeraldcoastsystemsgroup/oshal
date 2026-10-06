@@ -5,6 +5,7 @@ SEQ | AUTHOR | DESCRIPTION
 -----------------------------------------------------------------------------
 1 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
 2 | maintainer@emeraldcoastsystemsgroup.com | Admin tools link to the data-model explorer (/data-model).
+3 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (B4): the console stays the operations console and links to Swarm Admin (/swarm-admin), the operator role's screens for the swarm's defaults, from its hero actions.
 -->
 <!doctype html>
 <html lang="en" data-theme="midnight">
@@ -30,6 +31,9 @@ SEQ | AUTHOR | DESCRIPTION
         <button class="icon-btn" id="refreshAdmin" type="button" title="Refresh admin snapshot" aria-label="Refresh admin snapshot">
           <span class="codicon codicon-refresh"></span>
         </button>
+        <a class="icon-btn" href="/swarm-admin" title="Open Swarm Admin: the swarm's defaults, logins, connectors, budgets, knowledge, devices and households" aria-label="Open Swarm Admin">
+          <span class="codicon codicon-settings-gear"></span>
+        </a>
         <a class="icon-btn" href="/cockpit/" title="Open Cockpit" aria-label="Open Cockpit">
           <span class="codicon codicon-rocket"></span>
         </a>
