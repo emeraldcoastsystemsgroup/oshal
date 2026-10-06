@@ -26,6 +26,7 @@
  * 21 | maintainer@emeraldcoastsystemsgroup.com   | Add registryDeclaredProvider(agentId): the registry apiType a bot declares, ADR-034 section 1a tier 3. Dispatch stamping needs it because agent_config is written only when something CHANGES a bot provider, so a bot that has always run its declared provider has no row and push-on-dispatch reported no actionable record — the bot then refused the dispatch and the ticket escalated.
  * 22 | maintainer@emeraldcoastsystemsgroup.com   | Add registryHarnessEntry(agentId): the harnessType/apiType pair the switch rule needs (fleet default reaches LLM harnesses only) for dispatch stamping, read from the active registry by id or name exactly as registryDeclaredProvider does.
  * 23 | maintainer@emeraldcoastsystemsgroup.com  | Build-lane child execution crosses the signed bot-node hop: code-developer, code-reviewer, documentation-writer, test-engineer, devops-bot, research-bot and tester-bot take requiresOwnNode (each names a running compose node; the codex rule sent them inline, where signed delegation refuses them). documentation-writer gains accessRoles ['operator','swarm'] so owning a node does not make it a Jarvis call-out target. Guard: tests/unit/signed-swarm-child-dispatch.spec.ts. Catalog rows mirror the local ones (local shadows them at runtime).
+ * 24 | maintainer@emeraldcoastsystemsgroup.com  | dynamicAppBotsByApp(): a read-only view of the package-contributed definitions keyed by owning app. The concierge route (inline-app-bots.ts) needs to know WHICH installed package owns a governing inline bot, and getActiveRegistry() flattens that away. Read-only accessor, no behaviour change.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -142,6 +143,15 @@ export function registerAppBots(appName: string, defs: SwarmBotDefinition[]): vo
  */
 export function unregisterAppBots(appName: string): void {
   DYNAMIC_APP_BOTS.delete(appName);
+}
+
+/**
+ * @description The package-contributed definitions keyed by the app that registered them, so a
+ * caller can name the package owning a governing inline bot (getActiveRegistry() flattens it away).
+ * @returns A read-only view of the dynamic registrations; callers must not mutate it.
+ */
+export function dynamicAppBotsByApp(): ReadonlyMap<string, ReadonlyArray<SwarmBotDefinition>> {
+  return DYNAMIC_APP_BOTS;
 }
 
 /** @returns The dynamically registered (package-contributed) bot definitions. */

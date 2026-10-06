@@ -36,6 +36,7 @@
  * 31 | maintainer@emeraldcoastsystemsgroup.com   | BotNodeRequest.renderInstruction (SEC-05 carve for image turns, ADR-130 amendment 2026-10-02): the server-authored render instruction an image turn carries beside `text`, which on that turn is the user's brief and stays untrusted data. Written only by the storyboard render executor; the bot files it under TRUSTED CONFIGURATION and names the harness's image tool in the rebind.
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Carry verified replay producer subject and issuer for caller-scoped spending and cost attribution.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Protected bot-persona carrier. BotNodeRequest gains the reserved, controller-set `botPersona`: a caller-supplied value is refused (bot_persona_carrier_reserved) beside the existing applicationExecutionId reservation, and sendAuthorized adds the persona the owning application registered for the prepared binding's app and agentId (resolveBotPersonaByApp) to the protected body BEFORE buildDelegatedDispatch, so it is inside body_sha256 and the durable bind. Unprotected dispatches never carry it.
+ * 34 | maintainer@emeraldcoastsystemsgroup.com | createConciergeEndpointResolver: the endpoint resolver for the concierge node, which runs inline app bots on the caller's CLI login. It answers the configured base URL only while a URL is set AND the target is an inline app bot (inlineAppBotOwner, loaded with the same require-then-warm pattern as the registry loader, so the ESM/vitest transform reports no endpoint until warmed instead of throwing); every other bot, and every bot when the URL is blank, resolves to null, so the feature is off by default. createRegistryEndpointResolver is unchanged.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -862,6 +863,84 @@ export function createRegistryEndpointResolver(
 
     return `http://localhost:${entry.port}`;
   };
+}
+
+/** Resolves the installed package that owns an inline app bot, or undefined (inline-app-bots.ts). */
+export type InlineAppBotOwnerResolver = (agentId: string) => string | undefined;
+
+/**
+ * @description Normalizes a configured concierge node URL to the base the client appends its
+ * routes to: surrounding whitespace and trailing slashes are removed, and a blank value is absent.
+ * @param url - The configured value (OSHAL_CONCIERGE_NODE_URL), possibly unset.
+ * @returns The base URL, or null when nothing usable is configured.
+ */
+export function normalizeConciergeNodeUrl(url: string | null | undefined): string | null {
+  const base = (url ?? '').trim().replace(/\/+$/, '');
+  return base.length > 0 ? base : null;
+}
+
+/**
+ * @description The endpoint resolver for the concierge node: one bot-node process that runs inline
+ * app bots on the caller's own CLI login, which the controller may never run itself (SEC-05). It
+ * resolves ONLY an inline app bot (an installed package's bot registered controller-inline), and
+ * only while the URL is configured; a core, static, kernel or dedicated-node bot, and every bot when
+ * the URL is blank, resolves to null so the caller keeps its existing path. The URL is read per call
+ * so the controller follows its environment without a restart.
+ * @param url - Reads the configured concierge base URL (OSHAL_CONCIERGE_NODE_URL in production).
+ * @param owner - Names the package owning an inline app bot; production loads inline-app-bots.ts.
+ * @returns A resolver answering the concierge base URL or null.
+ */
+export function createConciergeEndpointResolver(
+  url: () => string | null | undefined,
+  owner: InlineAppBotOwnerResolver = loadInlineAppBotOwner,
+): BotEndpointResolver {
+  return (agentId: string): string | null => {
+    const base = normalizeConciergeNodeUrl(url());
+    if (!base) return null;
+    return owner(agentId) ? base : null;
+  };
+}
+
+/** Dynamic-import fallback cache for the inline app-bot owner, mirroring the registry loader below. */
+let warmedOwnerModule: { inlineAppBotOwner: InlineAppBotOwnerResolver } | null = null;
+let ownerWarmStarted = false;
+
+/**
+ * @description Load inline-app-bots.ts through a dynamic import and cache the module, for contexts
+ * (the ESM/vitest transform) where the synchronous require cannot resolve the .ts source. The
+ * compiled dist never needs it; specs that exercise the concierge route await it first.
+ * @returns Resolves once the owner module is cached for the synchronous loader.
+ */
+export async function warmInlineAppBotOwner(): Promise<void> {
+  const mod = await import('../../../app/extensions/swarm/inline-app-bots.js');
+  warmedOwnerModule = mod as never;
+}
+
+/**
+ * @description The production owner lookup. Require first (the compiled dist); on failure kick the
+ * async warm once and report no owner until it lands, so the caller keeps its existing inline path
+ * instead of failing the turn.
+ * @param agentId - The target bot's agent UUID.
+ * @returns The owning package, or undefined when none is known (yet).
+ */
+function loadInlineAppBotOwner(agentId: string): string | undefined {
+  if (warmedOwnerModule) return warmedOwnerModule.inlineAppBotOwner(agentId);
+  let lookup: InlineAppBotOwnerResolver;
+  try {
+    // Lazy require: the swarm extension sits above this feature slice, as for the registry loader.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    lookup = require('../../../app/extensions/swarm/inline-app-bots').inlineAppBotOwner;
+  } catch (err) {
+    if (!ownerWarmStarted) {
+      ownerWarmStarted = true;
+      void warmInlineAppBotOwner().catch((warmErr) => {
+        logger.error({ err: warmErr }, 'Inline app-bot owner warm failed - the concierge node stays unresolved');
+      });
+    }
+    logger.error({ err, agentId }, 'Inline app-bot owner not synchronously loadable - no concierge endpoint until warmed');
+    return undefined;
+  }
+  return lookup(agentId);
 }
 
 /** Dynamic-import fallback cache for contexts where the CJS require below cannot resolve. */

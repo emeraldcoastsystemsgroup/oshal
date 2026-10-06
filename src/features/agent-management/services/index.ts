@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Exported BrainFallbackMarker, the wire marker a hot-fallback turn carries (operator decision 2026-09-22).
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | Exported BotNodeTailReplayClient and the /api/token-chase/replay-tail wire contract (BACKLOG "Workspace-bound checkpoint and tail replay"): the controller delegates the hermetic no-edit tail to the accountable bot node through it.
  * 14 | maintainer@emeraldcoastsystemsgroup.com | Export existing replay request/response wire types for caller-bound app composition.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Export the concierge node resolver (createConciergeEndpointResolver, normalizeConciergeNodeUrl, warmInlineAppBotOwner, InlineAppBotOwnerResolver) so the controller's chat chokepoint can route inline app bots to the concierge node.
  */
 
 export { RedisMeshTransport, type RedisMeshTransportOptions } from './redis-mesh-transport';
@@ -163,6 +164,10 @@ export {
   type ReplayCallRequest,
   type ReplayCallResponse,
   createRegistryEndpointResolver,
+  createConciergeEndpointResolver,
+  normalizeConciergeNodeUrl,
+  warmInlineAppBotOwner,
+  type InlineAppBotOwnerResolver,
   isControllerInlineContainer,
   resolveDisplayOnline,
   type BotNodeResponse,
