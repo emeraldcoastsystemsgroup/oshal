@@ -7,8 +7,10 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | mode:'graph' (Branch C) compiles a full canvas graph (branches/parallel/decisions) to an executable nodeGraph; per-workflow autoStart passthrough; agent-cluster node accepted (config.agents>=1, counts as an agent node).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-097: both emit paths stamp suite: ai-productivity — published workflows are user-authored automations and must not land unshelved (loader warns on a missing suite).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Comment correction only. The normalize comment said 'staged' remained available for hand-authored manifests; it does not. Its executor was retired in favour of the graph engine, so a manifest declaring pipeline: staged routes to manifest-worker and silently drops every approval gate. Two governance documents repeated the same false statement and were corrected with it.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): a published workflow never claims a privileged ticket type and never names the privileged worker, in any mode (single-shot workerBot, a staged bot, a graph node binding). assertPublishableWorkflow applies superadmin's privilegedManifestRefusal (workflow and bot declarations) to the compiled manifest and throws, which the publish route answers with 400. Before this, POST /api/swarm/apps/publish with ticketType 'oshal-dev' and the graph pipeline compiled cleanly and, once loaded, replaced the gated lane.
  */
 
+import { isPrivilegedLaneOwnerName, isPrivilegedTicketType, privilegedManifestRefusal } from '@/shared/middleware/superadmin';
 import type { SwarmAppManifest, SwarmAppScope, SwarmAppWorkflow } from '../types';
 
 /** One authored stage (Branch B): an existing bot pinned to a step, optional gate. */
@@ -113,7 +115,7 @@ export function compileWorkflowSpec(spec: WorkflowPublishSpec, scope: SwarmAppSc
   // Branch C — a full authored canvas graph. Compile it straight to the engine's nodeGraph
   // (branches, parallel splits, gates, decisions) rather than flattening to a linear stage list.
   if (spec.mode === 'graph') {
-    return compileGraphSpec(spec, scope, name, displayName, ticketType);
+    return assertPublishableWorkflow(compileGraphSpec(spec, scope, name, displayName, ticketType));
   }
 
   // Normalize both modes to an ordered stage list, then compile to a graph the engine runs.
@@ -166,7 +168,7 @@ export function compileWorkflowSpec(spec: WorkflowPublishSpec, scope: SwarmAppSc
         }))
     : undefined;
 
-  return {
+  return assertPublishableWorkflow({
     name,
     displayName,
     description: spec.description ? String(spec.description) : undefined,
@@ -177,7 +179,30 @@ export function compileWorkflowSpec(spec: WorkflowPublishSpec, scope: SwarmAppSc
     ...(bots && bots.length ? { bots } : {}),
     ticketType,
     workflow,
-  };
+  });
+}
+
+/**
+ * @description ADR-081: a published workflow never claims a privileged ticket type (that lane's
+ * workflow ships with the platform, not through publish), never names the privileged worker, never
+ * declares it among its bots (a declaration would rename the developer bot's row), and never takes
+ * the lane owner's reserved name (which would borrow its right to declare that bot). The same
+ * rule manifest load applies, raised here so the author learns at publish.
+ * @param manifest - the compiled manifest
+ * @returns the same manifest
+ * @throws Error naming the refusal, which the route maps to a 400
+ */
+function assertPublishableWorkflow(manifest: SwarmAppManifest): SwarmAppManifest {
+  const ticketType = manifest.ticketType ?? manifest.name;
+  if (isPrivilegedTicketType(ticketType)) {
+    throw new Error(`ticketType '${ticketType}' is privileged (ADR-081): a published workflow cannot claim it`);
+  }
+  if (isPrivilegedLaneOwnerName(manifest.name)) {
+    throw new Error(`name '${manifest.name}' is reserved for the privileged lane's own app (ADR-081): a published workflow cannot use it`);
+  }
+  const refusal = privilegedManifestRefusal({ ...manifest, ticketType });
+  if (refusal) throw new Error(refusal);
+  return manifest;
 }
 
 /**

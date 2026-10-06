@@ -53,6 +53,7 @@
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Thread the queue's DeadLetterService into manifest dispatch so typed deterministic refusals can terminate atomically instead of collapsing to generic escalation.
  * 49 | maintainer@emeraldcoastsystemsgroup.com | Pass optional evidence/result binding to the canonical manifest-worker dispatcher.
  * 50 | maintainer@emeraldcoastsystemsgroup.com   | One approved ticket is claimed once. After an event-loop stall two poll ticks ran back to back, both read the same approved ticket, and the loser's claim conflict (TicketStatusConflictError) was handled as a dispatch failure: it rolled the ticket back to approved while the winner's planning was still running on a node, the next tick claimed it a third time, planning ran twice, and the first round came back to a ticket with no active orchestration (live, 2026-10-02 14:29-14:31 UTC). Now a tick that fires while a cycle is still running is skipped; dispatchTicket takes the active slot before its first await and refuses a ticket already in the set; a claim-time status conflict logs and returns without rolling anything back, since the ticket is wherever the committed transition left it.
+ * 51 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): runPollCycle runs refusePrivilegedDispatchForTicket (queue-manager-dispatch-helpers) before choosing a branch, so a privileged worker named by the resolved workflow (workerBot, reviewerBot, a graph node binding) or by the ticket's agent-selection metadata is reached only by a privileged ticket type owned by a super-admin, on every branch. The refusal is recorded as an escalated status (never rolled back to approved), so a refused ticket cannot re-dispatch every poll.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
@@ -129,6 +130,7 @@ import {
   resolveRootTicketCapabilities,
   resolveSpecialistCapabilities,
   summarizeFailedWorkItems,
+  refusePrivilegedDispatchForTicket,
 } from './queue-manager-dispatch-helpers';
 
 const DEFAULT_POLL_INTERVAL_MS = Number(process.env.QUEUE_POLL_INTERVAL_MS) || (process.env.NODE_ENV === 'development' ? 30_000 : 60_000);
@@ -649,6 +651,8 @@ export class QueueManagerService {
         );
         continue;
       }
+      // ADR-081: a privileged worker is reached only by a privileged ticket type owned by a super-admin, on every branch.
+      if (await refusePrivilegedDispatchForTicket(this.ticketService, ticket, ticketType, workflow, decision)) continue;
       switch (decision) {
         case 'defer':
           // Startup race guard: registry hasn't loaded the manifest yet.

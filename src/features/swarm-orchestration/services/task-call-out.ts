@@ -7,8 +7,10 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Initial — ADR-083 knowledge-owner call-out for the generic 'task' lane: broadcast a BID_REQUEST to online owners (they self-score), decide via the AgentRouter cascade (bid → LLM → keyword → score), and report whether a REAL owner claimed the ticket. Replaces the deleted free-text resolveTaskBotAgentId regex in jarvis-routes; the queue manager now engages on every task instead of trusting a keyword guess.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-087: jarvis-sourced tickets (metadata.source==='jarvis') are role-gated — the injected isAgentAccessibleTo checker (wired from the bot registry at composition, keeping FSD layering) drops candidates whose accessRoles exclude 'jarvis' AND adds them to the BID_REQUEST exclusion list so scoped bots never even see the broadcast. Non-jarvis tickets are unaffected.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | fix(a2a): review finding (CRITICAL) — the ADR-087 role gate only fired for metadata.source==='jarvis', so an inbound A2A ticket (a2a-rpc-service.ts stamps metadata.source:'a2a-gateway') skipped isAgentAccessibleTo entirely: every operator/swarm-scoped bot (trading, ambient-analyst, agent-factory, drone/sat-operator, task-manager, quality-judge, identity/vault, ...) stayed a live call-out candidate for a low-trust external credential holder. a2a-gateway tickets now resolve the SAME 'jarvis' caller role the A2A agent-card curator already gates discovery on (a2a-routes.ts's default isAccessible is isBotAccessibleTo(id,'jarvis')), so anything hidden from the public agent card is now also unreachable via dispatch — discovery and execution can no longer drift apart.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): the excluded set reads the privileged worker's id from shared/middleware/superadmin (PRIVILEGED_WORKER_AGENT_IDS) instead of its own copy.
  */
 
+import { PRIVILEGED_WORKER_AGENT_IDS } from '@/shared/middleware/superadmin';
 import type { SwarmAccessRole } from '@/shared/types';
 import type { InternalTicket } from '@/entities/ticket';
 import { createChildLogger } from '@/shared/logger';
@@ -30,7 +32,7 @@ const logger = createChildLogger({ module: 'task-call-out' });
 const CALL_OUT_EXCLUDED_AGENT_IDS: ReadonlySet<string> = new Set([
   'a0000000-0000-0000-0000-000000000001', // project-manager
   'a0000000-0000-0000-0000-000000000050', // oshal-assistant (Jarvis brain)
-  'de000000-0000-0000-0000-000000000001', // oshal-developer (ADR-081 privileged)
+  ...PRIVILEGED_WORKER_AGENT_IDS, // oshal-developer (ADR-081 privileged)
   'f0000000-0000-0000-0000-000000000001', // queue-bot (reviewer, not an owner)
 ]);
 

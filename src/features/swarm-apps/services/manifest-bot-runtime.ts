@@ -4,12 +4,14 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Seed authoritative manifest runtime records without replacing operator selections.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-081 privileged lane (general fix): upsertManifestBots refuses, as the last line behind readManifest, a manifest that declares the privileged worker's id or name unless the app owns a privileged lane, because this upsert sets the agents row's name and would rename the developer bot for any workflow that then names the alias.
  */
 import type { Pool } from 'pg';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import yaml from 'js-yaml';
 import { createChildLogger } from '@/shared/logger';
+import { privilegedManifestRefusal } from '@/shared/middleware/superadmin';
 import { ApiProviderSchema } from '@/shared/types/api-provider';
 import type { SwarmAppBotDeclaration, SwarmAppManifest } from '../types';
 import { readBotSelectorSeed } from './swarm-app-manifest-mapping';
@@ -103,6 +105,9 @@ export async function seedManifestBotRuntime(pool: Pool, agentId: string, seed: 
  */
 export async function upsertManifestBots(pool: Pool, manifest: SwarmAppManifest, manifestPath: string,
   defaults?: ManifestBotRuntimeDefaultsResolver): Promise<void> {
+  // ADR-081, last line: this upsert sets the agents row's name, so no other app may declare the privileged worker.
+  const privileged = privilegedManifestRefusal(manifest);
+  if (privileged) throw new Error(`Manifest ${manifest.name}: ${privileged}`);
   for (const bot of manifest.bots ?? []) await upsertManifestBot(pool, manifest, bot, manifestPath, defaults);
 }
 

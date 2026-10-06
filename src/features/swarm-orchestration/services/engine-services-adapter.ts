@@ -15,9 +15,11 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Prohibit the unsigned localhost execution fallback whenever the bot client reports that signed HTTP delegation is enforced.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Thread the persisted workflow-ticket owner and principal issuer through bot delegation, and authenticate every localhost machine fallback with that owner.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Preserve workflow owner subjects exactly and use the canonical base64url trusted-service identity header on localhost fallbacks.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): every engine dispatch judges the RESOLVED agent id (refusePrivilegedResolvedWorker over the ticket's type and owner) after a name or binding resolves, because the agents table's name column is what a binding resolves through and a manifest may rename a row; runExecution returns a refused outcome, and dispatchPrompt (decisions, cluster members and reviewers, plan steps) throws, so the run ends without sending the privileged worker anything.
  */
 
 import type { InternalTicket } from '@/entities/ticket';
+import { refusePrivilegedResolvedWorker, type DispatchGateRefusal } from './dispatch-ticket-gates';
 import type { TicketService } from '@/features/ticketing';
 import type { BotNodeClient } from '@/features/agent-management';
 import { createChildLogger } from '@/shared/logger';
@@ -122,6 +124,8 @@ export class EngineServicesAdapter implements EngineServices {
       logger.error({ ticketId, config }, 'Stage has no resolvable bot — cannot execute node');
       return { outcome: { dispatched: false, reason: 'no bot resolved' }, strategy: 'unresolved' };
     }
+    const refused = this.refusePrivilegedTarget(ticket, agentId);
+    if (refused) return { outcome: { dispatched: false, reason: refused.escalation.reason, message: refused.escalation.message }, agentId, strategy: 'refused' };
 
     const port = this.deps.port ?? process.env.PORT ?? '5000';
     const text = [
@@ -360,6 +364,21 @@ export class EngineServicesAdapter implements EngineServices {
    * localhost /api/send-message fallback). chatOnly (default true) makes it a quick answer for the
    * ai-decision branch question; plan steps pass chatOnly=false for a full accountable task run.
    */
+  /**
+   * @description ADR-081, judged on the RESOLVED id: a privileged worker is reached only by a privileged ticket
+   * type owned by a super-admin. A binding resolves through the agents table's name column, which a manifest can
+   * change, so the name a workflow declares is not what is judged here; the id the dispatch would go to is.
+   * @param ticket - The engine's ticket context (its raw ticket carries the type and owner).
+   * @param agentId - The resolved target.
+   * @returns The refusal, or null when the target may be sent work.
+   */
+  private refusePrivilegedTarget(ticket: EngineTicketContext, agentId: string): DispatchGateRefusal | null {
+    const raw = ticket.raw as Partial<InternalTicket> | undefined;
+    const refusal = refusePrivilegedResolvedWorker({ ticketType: String(raw?.ticketType ?? ''), ownerSub: raw?.ownerSub, agentId });
+    if (refusal) logger.warn({ ticketId: this.ticketIdOf(ticket), agentId, ownerSub: raw?.ownerSub ?? null }, refusal.logMessage);
+    return refusal;
+  }
+
   private async dispatchPrompt(
     ticket: EngineTicketContext,
     agentId: string,
@@ -367,6 +386,8 @@ export class EngineServicesAdapter implements EngineServices {
     chatOnly = true,
   ): Promise<string | undefined> {
     const ticketId = this.ticketIdOf(ticket);
+    const refused = this.refusePrivilegedTarget(ticket, agentId);
+    if (refused) throw new Error(`${refused.escalation.reason}: ${refused.escalation.message}`);
     const dispatchIdentity = resolveEngineDispatchIdentity(ticket);
     if (this.deps.botNodeClient) {
       try {

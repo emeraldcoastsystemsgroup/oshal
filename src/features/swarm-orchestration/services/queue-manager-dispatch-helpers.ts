@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from queue-manager-service.ts (1000-line cap decomposition): module-level dispatch helpers — planning-role normalization/inference, work-item→capability routing maps, dispatch entry-state resolution, ExternalWorkItem conversion, failed-work-item summarization, non-retryable-error detection, and child-ticket creation from PM planning output. Pure logic + the child-ticket factory; no queue state lives here. queue-manager-service re-exports the previously-public symbols so every existing call site and test is unchanged.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Children created from PM planning inherit the root's owner (and, through the metadata spread, its verified issuer) and record subtaskIndex, subtaskCount and siblingTitles (the other subtasks' titles). Before, every child was ownerless, so it could never run as the root's owner.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): refusePrivilegedDispatchForTicket is the poll loop's gate, kept out of queue-manager-service.ts (already past the 800-line rule): it records a refusal as the ticket's escalated status, terminally, and reports whether the loop must skip the ticket.
  */
 
 import {
@@ -16,6 +17,8 @@ import {
 } from '@/entities/ticket';
 import type { TicketService } from '@/features/ticketing';
 import { createChildLogger } from '@/shared/logger';
+import { refusePrivilegedDispatch } from './dispatch-ticket-gates';
+import type { WorkflowWorkerFacts } from '@/shared/middleware/superadmin';
 import type { TaskFolderService } from './task-folder-service';
 
 const logger = createChildLogger({ module: 'queue-manager-dispatch-helpers' });
@@ -570,4 +573,31 @@ export async function createChildTicketsFromPlanningOutput(
   );
 
   return { childTicketIds };
+}
+
+/**
+ * @description ADR-081 for the poll loop: a privileged worker named by the resolved workflow or pinned by the ticket is
+ * reached only by a privileged ticket type owned by a super-admin, whichever branch would run. A refusal is recorded as
+ * the ticket's escalated status (never rolled back to approved, so it cannot re-dispatch every poll).
+ * @param ticketService - The ticket service.
+ * @param ticket - The approved ticket about to be dispatched.
+ * @param ticketType - Its resolved ticket type.
+ * @param workflow - The registry's workflow for that type, if any.
+ * @param decision - The branch chosen, for the log line.
+ * @returns true when the ticket was refused and the loop must skip it.
+ */
+export async function refusePrivilegedDispatchForTicket(
+  ticketService: Pick<TicketService, 'updateStatus'>,
+  ticket: { ticketId: string; ownerSub?: string | null; metadata?: unknown },
+  ticketType: string,
+  workflow: WorkflowWorkerFacts | null | undefined,
+  decision: string,
+): Promise<boolean> {
+  const refusal = refusePrivilegedDispatch({ ticketType, ownerSub: ticket.ownerSub, workflow, metadata: ticket.metadata });
+  if (!refusal) return false;
+  logger.warn({ ticketId: ticket.ticketId, ticketType, ownerSub: ticket.ownerSub ?? null, decision }, refusal.logMessage);
+  await ticketService.updateStatus(ticket.ticketId, 'escalated', refusal.escalation).catch((err) => {
+    logger.warn({ err, ticketId: ticket.ticketId }, 'Failed to mark privileged dispatch refusal escalated');
+  });
+  return true;
 }

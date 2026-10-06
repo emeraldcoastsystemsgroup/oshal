@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | IMP-1: Integrated adaptive rerouting — routing failures now attempt alternative agent selection before escalating
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | RI-2: Post-routing validation warns when selected agent is not in canonical DB roster
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Scrubbed legacy-codebase naming from comments (reworded to 'the legacy implementation')
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): adaptive rerouting never chooses a privileged worker. Its alternatives come from the eligibility service, not normalizeCandidates, so they are filtered here (withoutPrivilegedWorkers) before the reroute decision.
  */
 
 import type { ExternalWorkItem } from '@/entities/ticket';
@@ -32,6 +33,7 @@ import { PhaseRoutingService, type PhaseRoutingContext } from './phase-routing-s
 import { SWARM_PHASES } from '@/features/operational-intelligence';
 import { createChildLogger } from '@/shared/logger';
 import { attemptAdaptiveReroute, type RoutingDecisionExplanation } from './adaptive-reroute-service';
+import { withoutPrivilegedWorkers } from './swarm-privileged-worker-gate';
 
 const logger = createChildLogger({ module: 'swarm-routing-handler' });
 
@@ -304,7 +306,8 @@ export class SwarmRoutingHandler {
       requiredCapabilities: input.requiredCapabilities,
       phase: phaseInput._currentPhase ? Number(phaseInput._currentPhase) : undefined,
     });
-    const eligible = allCandidates.filter((c) => c.eligible);
+    // ADR-081: a privileged worker is never an alternative; only its own workflow names it.
+    const eligible = withoutPrivilegedWorkers(allCandidates.filter((c) => c.eligible));
 
     const decision = attemptAdaptiveReroute({
       requestedAgentId: phaseInput._pmAssignedAgentId ? String(phaseInput._pmAssignedAgentId) : undefined,

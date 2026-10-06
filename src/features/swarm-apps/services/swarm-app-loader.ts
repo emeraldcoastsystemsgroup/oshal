@@ -33,6 +33,7 @@
  * 27 | maintainer@emeraldcoastsystemsgroup.com | Refuse undeclared or malformed experience contracts before installation; hosting compatibility remains unavailable until discovery and shell hosting ship.
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
  * 29 | maintainer@emeraldcoastsystemsgroup.com  | ADR-175 amendment 1: an `auth: node` route must mount beneath /api/<manifest name>/<segment>; anything broader would let device credentials authenticate on core or another app's routes, so the manifest is refused.
+ * 30 | maintainer@emeraldcoastsystemsgroup.com  | ADR-081 privileged lane (general fix): readManifest refuses a manifest that declares the privileged worker among its bots unless the app owns a privileged lane (superadmin privilegedManifestRefusal), and accepts a lane owner's reserved name only from the kernel's swarm-apps directory, before any loader path writes anything: a manifest's bots are upserted by id, name included, so another app declaring the developer bot's id would rename its row and a workflow could then reach it under the alias.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -43,6 +44,7 @@ import yaml from 'js-yaml';
 import { CronExpressionParser } from 'cron-parser';
 import { createChildLogger } from '@/shared/logger';
 import { KERNEL_SKILL_IDS, isKernelSkillId } from '@/shared/kernel-skills';
+import { isPrivilegedLaneOwnerName, privilegedManifestRefusal } from '@/shared/middleware/superadmin';
 import { validateAppRating } from './swarm-app-rating';
 import { SKILL_CAPABILITY_IDS, isSkillCapabilityId } from '@/shared/skill-profiles';
 import { SWARM_ACCESS_ROLES, isSwarmAccessRole } from '@/shared/types/access-roles';
@@ -703,6 +705,15 @@ export function readManifest(manifestPath: string): SwarmAppManifest {
   // bots: key is a mistake worth failing on; a deliberately bot-less app omits it).
   if (manifest.bots !== undefined && (!Array.isArray(manifest.bots) || manifest.bots.length === 0)) {
     throw new Error(`Manifest ${absPath}: bots, when present, must be a non-empty array`);
+  }
+  // ADR-081: no app but the privileged lane's own declares the privileged worker (a bot upsert would rename its row)
+  // or claims its ticket type; refused here, before any loader path writes anything.
+  const privileged = privilegedManifestRefusal(manifest);
+  if (privileged) throw new Error(`Manifest ${absPath}: ${privileged}`);
+  // The lane owner's name is reserved for the kernel's own manifest: from anywhere else it would borrow the owner's
+  // standing (the right to declare the privileged worker as its bot, which renames the bot's row).
+  if (isPrivilegedLaneOwnerName(manifest.name) && !absPath.startsWith(path.resolve(process.cwd(), 'swarm-apps') + path.sep)) {
+    throw new Error(`Manifest ${absPath}: name '${manifest.name}' is reserved for the privileged lane's own app under swarm-apps/ (ADR-081)`);
   }
 
   // ADR-090 D8: `uses:` names KERNEL SKILLS, and validation is fail-closed. An unknown id here

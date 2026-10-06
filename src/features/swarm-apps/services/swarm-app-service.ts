@@ -51,6 +51,7 @@
  * 45 | maintainer@emeraldcoastsystemsgroup.com | Fail closed on ambiguous or inactive external/fallback concierge names. A workflow fallback resolves only inside the app's executable agent_ids; only a metadata-only external chatBot may resolve globally, and then exactly one ACTIVE row must carry the name. A declared local concierge stays pinned directly to its explicit manifest agentId, so a lower-id namesake cannot shadow it.
  * 46 | maintainer@emeraldcoastsystemsgroup.com | Reconcile a distinct external workflow.workerBot alongside declared bots during activation/deactivation. The prior early return after bots[] left Social active while social-writer stayed inactive after every boot; the canonical external-association selector now adds only the executable worker, never a borrowed metadata-only chatBot.
  * 47 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
+ * 48 | maintainer@emeraldcoastsystemsgroup.com | ADR-081 privileged lane (general fix): registerWorkflow records when the pipeline registry refuses a manifest's workflow (a privileged ticket type from an app that does not own it, or another type naming the privileged worker), so an app that loads without its workflow says why in the log instead of its tickets deferring silently.
  */
 
 import type { Pool } from 'pg';
@@ -1230,7 +1231,7 @@ export class SwarmAppService {
    */
   private registerWorkflow(manifest: SwarmAppManifest): void {
     if (!manifest.workflow || !manifest.ticketType) return;
-    WorkflowPipelineRegistry.getInstance().registerFromApp(manifest.name, {
+    const registered = WorkflowPipelineRegistry.getInstance().registerFromApp(manifest.name, {
       ticketType: manifest.ticketType,
       name: manifest.workflow.name,
       pipeline: manifest.workflow.pipeline,
@@ -1246,6 +1247,7 @@ export class SwarmAppService {
       // Per-workflow auto-start — tickets of this type auto-approve so the workflow runs on arrival.
       autoStart: manifest.workflow.autoStart,
     });
+    if (!registered) logger.warn({ appName: manifest.name, ticketType: manifest.ticketType }, 'Manifest workflow not registered — the pipeline registry refused it (built-in collision or ADR-081 privileged lane)');
   }
 
   private async deactivate(record: SwarmApplicationRecord): Promise<void> {

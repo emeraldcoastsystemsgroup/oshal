@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | SEC-05: carry the durable TicketService authority into lifecycle memory ownership resolution.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | CKR-17 step 2: the inline workspace-root chain here resolves through resolveSharedWorkspaceRoot() like every other site. It read ONE of the six.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | While delegation signing is configured, build execution crosses the signed bot-node hop through the injected SignedChildDispatcher and never falls back to the mesh, which every node refuses then. The mesh dispatch moved, unchanged, into dispatchExecutionOverMesh.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-081 privileged lane (general fix): the unsigned mesh hop refuses a privileged worker as the signed hop refuses any target off BUILD_EXECUTION_TARGETS. dispatchExecutionOverMesh returns the failure record and dispatchSubtaskOverMesh (the subtask callback, lifted out of the inline closure) throws, before anything is sent; the policy runner records a failed attempt.
  */
 
 import fs from 'node:fs';
@@ -39,6 +40,7 @@ import type { SwarmProcessedTicketResult } from './swarm-run-store';
 import type { SwarmRoutingHandler } from './swarm-routing-handler';
 import type { SwarmSubtaskHandler } from './swarm-subtask-handler';
 import type { SignedChildDispatcher } from './signed-child-dispatch';
+import { privilegedWorkerDispatchRefusal } from './swarm-privileged-worker-gate';
 import {
   buildExecutionEnvelope,
   buildVerificationFailureMessage,
@@ -199,13 +201,7 @@ export class SwarmExecutionLifecycleService {
             executorAgentId: routing.winner.agentId,
           });
         },
-        dispatchSubtask: async (nextRouting, subtask) => {
-          const envelope = buildExecutionEnvelope(runId, nextRouting.winner.agentId, subtask.unitId, [subtask], workspaceTaskId);
-          await this.deps.meshService.send(envelope);
-          const output = await this.awaitExecutionOutput(subtask.unitId, policy);
-          await this.deps.subtaskHandler.persistSubtaskStatus(subtask.unitId, output ? 'subtask-completed' : 'subtask-failed', output);
-          return output;
-        },
+        dispatchSubtask: (nextRouting, subtask) => this.dispatchSubtaskOverMesh(nextRouting, subtask, { runId, policy, workspaceTaskId }),
       },
       runStartedAt,
       workspaceTaskId,
@@ -227,12 +223,36 @@ export class SwarmExecutionLifecycleService {
   }
 
   /**
-   * @description Sends one execution over the Redis mesh and waits for the worker's stored output.
+   * @description Sends one subtask over the Redis mesh, waits for its stored output and records the subtask's status.
+   * A privileged worker is refused before anything is sent (ADR-081); the policy runner records that subtask as failed.
+   * @param nextRouting - The routing winner.
+   * @param subtask - The subtask to execute.
+   * @param context - Run id, policy and workspace folder.
+   * @returns The stored execution output, or undefined on timeout.
+   * @throws Error naming privileged_worker_not_dispatchable when the winner is a privileged worker.
+   */
+  private async dispatchSubtaskOverMesh(
+    nextRouting: RouteDecision,
+    subtask: DecomposedWorkUnit,
+    context: { runId: string; policy: SwarmCyclePolicy; workspaceTaskId: string },
+  ): Promise<unknown> {
+    const refused = privilegedWorkerDispatchRefusal(subtask.unitId, nextRouting.winner.agentId);
+    if (refused) throw new Error(refused.error);
+    const envelope = buildExecutionEnvelope(context.runId, nextRouting.winner.agentId, subtask.unitId, [subtask], context.workspaceTaskId);
+    await this.deps.meshService.send(envelope);
+    const output = await this.awaitExecutionOutput(subtask.unitId, context.policy);
+    await this.deps.subtaskHandler.persistSubtaskStatus(subtask.unitId, output ? 'subtask-completed' : 'subtask-failed', output);
+    return output;
+  }
+
+  /**
+   * @description Sends one execution over the Redis mesh and waits for the worker's stored output. A privileged
+   * worker is refused first (ADR-081), with the failure shape the signed hop uses for a target off its allowlist.
    * @param item - Ticket being processed.
    * @param nextRouting - The routing winner.
    * @param nextWorkUnits - Work units to execute.
    * @param context - Run id, policy, workspace folder and any retry feedback.
-   * @returns The stored execution output, or undefined on timeout.
+   * @returns The stored execution output, undefined on timeout, or the refusal's failure record.
    */
   private async dispatchExecutionOverMesh(
     item: ExternalWorkItem,
@@ -240,6 +260,8 @@ export class SwarmExecutionLifecycleService {
     nextWorkUnits: DecomposedWorkUnit[],
     context: { runId: string; policy: SwarmCyclePolicy; workspaceTaskId: string; retryFeedback?: string },
   ): Promise<unknown> {
+    const refused = privilegedWorkerDispatchRefusal(item.externalId, nextRouting.winner.agentId);
+    if (refused) return refused;
     const envelope = buildExecutionEnvelope(context.runId, nextRouting.winner.agentId, item.externalId, nextWorkUnits, context.workspaceTaskId);
     const payload = envelope.payload as Record<string, unknown>;
     payload.phase = 4;
