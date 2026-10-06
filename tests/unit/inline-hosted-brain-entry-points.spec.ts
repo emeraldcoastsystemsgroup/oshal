@@ -9,12 +9,14 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Codex fleet default (2026-08-12): pickCliHarnessAgentId selects a codex-cli registry bot (the registry no longer declares claude-code), and the ADR-127 stamp expectation follows DEMO_CLI_ORDER's new first rung (openai-codex).
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | BUG-17 node half: both node-dispatch cases now assert the body posted to /api/swarm-execute carries no `creds` and no `providerIntent`. The controller-to-node boundary is where a connector credential would cross, and nothing observed it: a route that added both to a chat turn left all 16 cases green.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Exercise hosted-brain HTTP entry points with actual owned task storage, a stamped verified issuer and the current workspace ownership contract; require the anonymous no-work refusal already present in shipping sequence24.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | The send-message app context carries a real StreamManager. The node branch now publishes its persisted reply on the task stream (message-routes seq 27), so the two node-dispatch cases run that publish on the real manager instead of its logged error path. No expectation changed: the unprotected node body is byte-identical.
  */
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryTaskStore } from '@/entities/task';
 import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
+import { StreamManager } from '@/features/streaming';
 import { getCaller } from '@/shared/middleware/authz';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
@@ -117,6 +119,7 @@ async function bootSendMessageApp(): Promise<string> {
     pool: {},
     orchestrator: { processMessage },
     messageStore: { save: messageSave },
+    streamManager: new StreamManager(),
   } as unknown as Parameters<typeof createMessageRoutes>[0];
 
   const app = express();

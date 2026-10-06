@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Keep task and actual ticket ownership separate from protected lineage, refuse unresolved existing threads and prioritize authenticated users over legacy service headers.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Record inline protected conversation lineage and defer stream publication until completion and current owner access are proved.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Diagnose protected empty-thread and inline refusals with ERROR, bounded identifiers, duration and scrubbed stacks while preserving response contracts.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 protected node bots accept cockpit and rail chat. Every chat client posts agenticMode:true or omits it, and a protected node admits only direct configured reasoning (direct:true, agenticMode:false, one server-resolved brain), so each turn to a protected node bot was refused with authorization_remote_hosted_reasoning_required. nodeChatTurnShape decides the node request shape server-side with isApplicationExecutionProtected, the predicate queued protected dispatch uses: an interactive turn to a protected bot is non-agentic whatever the body says; machine calls and unprotected bots keep their shape. The node reply the controller persists is now also published on the task stream after protected lineage, both turns and the caller read are proved, so the rail shows it without a reload; the stream route still authorizes every subscriber per event. Guards: tests/unit/protected-node-chat-turn.spec.ts, tests/unit/bot-node-protected-execution.spec.ts.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -52,6 +53,7 @@ import { hasProtectedTaskResults, readProtectedResultExecutions, type ProtectedR
 import { readOwnerPrincipalIssuer, OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 import { isAuthenticatedGuest, type OwnedRecord } from './record-ownership';
 import { ProtectedInlineTaskUnavailableError, runProtectedInlineTurn } from './protected-inline-execution';
+import { isApplicationExecutionProtected } from '@/shared/application-authorization-execution';
 
 const logger = createChildLogger({ module: 'message-routes' });
 
@@ -174,6 +176,52 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
 }
 
 /**
+ * @description Decide a node-bound chat turn's request shape on the server. Every chat client posts
+ * agenticMode:true or omits it, while a protected node admits only direct configured reasoning
+ * (direct:true, agenticMode:false, one server-resolved brain), so an interactive turn to a protected
+ * bot is made non-agentic whatever the body says. The protection check is the one queued protected
+ * dispatch uses, and it runs only for interactive identity callers: a bare service-secret call
+ * (swarm dispatch) and an unprotected bot keep exactly the shape they had.
+ * @param req - The inbound request; only its identity and service-secret facts are read.
+ * @param agentId - The node-bound bot the turn executes on.
+ * @param requestedAgenticMode - The client's agenticMode, honoured only for an unprotected target.
+ * @returns The agenticMode the node receives and the seq-9 interactive direct flag, in wire order.
+ * @throws ApplicationOwnershipUnavailableError when the installed owner cannot be read, so the turn
+ *   fails closed before a ticket, a brain-ladder walk or a dispatch.
+ */
+async function nodeChatTurnShape(req: Request, agentId: string, requestedAgenticMode: boolean | undefined):
+  Promise<{ agenticMode: boolean; direct: boolean }> {
+  const sessionSub = hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : null;
+  // Same interactive-vs-swarm distinction assertSendMessageEntitlement applies (seq 9): only a bare
+  // service call is swarm dispatch; independently authenticated users stay direct.
+  const direct = !isBareServiceMessage(req) && Boolean(sessionSub);
+  const protectedTarget = direct && await isApplicationExecutionProtected({ kind: 'bots', operation: agentId });
+  return { agenticMode: protectedTarget ? false : requestedAgenticMode ?? true, direct };
+}
+
+/**
+ * @description Publish a node reply the controller has already persisted on the task stream, so the
+ * rail and /chat render it live the way they render an inline reply (the orchestrator publishes
+ * those itself). The caller invokes this only after protected lineage, both saved turns and the
+ * caller's read re-check are proved; the stream route still re-authorizes every subscriber for the
+ * event. A failed publish never fails the turn, because the reply is durable and replays on reload.
+ * @param ctx - Application context holding the stream manager.
+ * @param taskId - The thread both turns were persisted to.
+ * @param response - The node's reply, normalized to the same text persistJarvisTurn stored.
+ * @returns Nothing; a publish fault is logged at ERROR with the task id only, never the reply text.
+ */
+function publishNodeAssistantTurn(ctx: AppContext, taskId: string, response: unknown): void {
+  const text = String(response || '').trim();
+  if (!text) return;
+  const startedAt = Date.now();
+  try {
+    ctx.streamManager.broadcastMessage(taskId, { role: 'assistant', type: 'say', text });
+  } catch (error) {
+    logOperationError(logger, 'publishNodeAssistantTurn', { taskId }, error, startedAt);
+  }
+}
+
+/**
  * @description Establish least-privilege database identity for every machine-reachable chat write.
  * The shared guard narrows fleet-secret calls to their asserted owner. A PAT is already a verified
  * user principal, but an operator-owned PAT inherits the global operator stamp; narrow that
@@ -287,6 +335,8 @@ function handleSendMessage(ctx: AppContext) {
       // it is how a career chat turn kept landing on an exhausted hosted key while a healthy CLI
       // login sat mounted at the bot's node. Ticket/chat-task bookkeeping is identical to inline.
       if (botClient.hasEndpoint(resolvedAgentId)) {
+        // Decided before ticket intake, so an ownership read that cannot be determined opens nothing.
+        const turnShape = await nodeChatTurnShape(req, resolvedAgentId, agenticMode);
         const nodeContext = await resolveProjectManagerTicketExecutionContext(
           { taskStore: ctx.taskStore, ticketService: ctx.ticketService },
           {
@@ -307,17 +357,12 @@ function handleSendMessage(ctx: AppContext) {
           ticketStatus: nodeContext.ticketStatus ?? null,
           ticketTitle: nodeContext.ticketTitle ?? null,
         };
-        const isMachineCall = isBareServiceMessage(req);
-        const sessionSub = hasAuthenticatedUserIdentity(req) ? getCaller(req).sub : null;
         const result = await executeBotOrInline(ctx, botClient, resolvedAgentId, {
           text,
           taskId: nodeContext.taskId,
           workspaceFolderId: nodeContext.taskId,
           agentId: resolvedAgentId,
-          agenticMode: agenticMode ?? true,
-          // Same interactive-vs-swarm distinction assertSendMessageEntitlement applies (seq 9):
-          // only a bare service call is swarm dispatch; independently authenticated users stay direct.
-          direct: !isMachineCall && Boolean(sessionSub),
+          ...turnShape,
           userSub: callerSub,
         });
         const executionId = (result as { applicationExecutionId?: string }).applicationExecutionId;
@@ -334,6 +379,8 @@ function handleSendMessage(ctx: AppContext) {
         if (executionId && !await callerMayReadMessages(ctx, req, nodeContext.taskId)) {
           res.status(404).json({ error: 'not found' }); return;
         }
+        // The inline protected order: complete, persist, re-check, and only then publish.
+        publishNodeAssistantTurn(ctx, nodeContext.taskId, result.response);
 
         res.json({
           ...result,
