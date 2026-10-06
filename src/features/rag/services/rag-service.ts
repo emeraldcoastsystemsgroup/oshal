@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Ingest embeds BEFORE any Chroma round-trip and the add POST retries once on a thrown network error: tens-of-seconds WASM embedding left the pooled keep-alive socket half-closed (uvicorn ~5s idle) and the big vector add died with EPIPE — undici never retries POSTs on its own.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-091: RAG_ENGINE=pgvector routes storage/retrieval to PgvectorRagEngine (rag_chunks in the existing Postgres, both legs indexed, RLS'd) with sticky feature-detected fallback to the chroma path; chunking/embedding/permissions stay here, engine-neutral. New deleteCollection() for engine-agnostic reseeds. The chroma code is kept in place unchanged during the soak — formal port extraction rides the eventual Chroma removal.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Name the caller on every localEmbeddings.embed() call (ingest, pgvector search, chroma vectorSearch) so a backend failure is logged against the call site and its input size instead of an anonymous text count.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): deleteDocumentChunks(collection, knowledgeId) removes one document's chunks by the knowledge_id the ingest stamped into their metadata: pgvector by a keyed DELETE, Chroma by the collection's /delete with a where filter. An absent collection is already the end state (0): a 404, or Chroma 0.4's 500 "does not exist", which deleteCollection now also treats as already absent. Chunks ingested before ids were stamped match nothing, and the route says so instead of claiming a removal.
  */
 
 import { createChildLogger } from '@/shared/logger';
@@ -28,6 +29,18 @@ const PERMISSION_OVERFETCH = 5;
 const PERMISSION_OVERFETCH_CAP = 50;
 
 const logger = createChildLogger({ module: 'rag-service' });
+
+/**
+ * @description Whether a failed Chroma collection call says the collection is absent. Chroma 0.4
+ * (the pinned image) answers HTTP 500 with "Collection x does not exist." for a lookup or delete of
+ * an absent collection; newer versions answer 404. Both mean the same thing to a delete.
+ * @param status - The HTTP status.
+ * @param body - The response body text.
+ * @returns True when the collection is simply not there.
+ */
+export function isChromaAbsentCollection(status: number, body: string): boolean {
+  return status === 404 || /does not exist/i.test(body);
+}
 
 /**
  * Minimal English-leaning tokeniser for BM25.
@@ -667,13 +680,54 @@ export class RagService {
       return;
     }
     const res = await this.chromaFetch(`${this.chromaUrl}/api/v1/collections/${collection}`, { method: 'DELETE' });
-    // 404 = already absent — that is the desired end state, not an error.
-    if (!res.ok && res.status !== 404) {
+    // Already absent is the desired end state, not an error: a 404, or Chroma 0.4's 500 "does not exist".
+    if (!res.ok) {
       const body = await res.text();
-      logger.error({ collection, status: res.status, body: body.slice(0, 200) }, 'ChromaDB collection delete failed');
-      throw new Error(`ChromaDB delete error: ${res.status}`);
+      if (!isChromaAbsentCollection(res.status, body)) {
+        logger.error({ collection, status: res.status, body: body.slice(0, 200) }, 'ChromaDB collection delete failed');
+        throw new Error(`ChromaDB delete error: ${res.status}`);
+      }
     }
     logger.info({ collection, engine: 'chroma' }, 'RAG collection deleted');
+  }
+
+  /**
+   * @description Remove ONE document's chunks from a collection: those whose metadata carries
+   * `knowledge_id` = the given id (stamped by the upload and ingest routes). An absent collection
+   * is already the desired end state and answers 0.
+   * @param collection - Collection name.
+   * @param knowledgeId - The knowledge record's id.
+   * @returns The number of chunks removed, or null when the engine does not report a count.
+   */
+  async deleteDocumentChunks(collection: string, knowledgeId: string): Promise<number | null> {
+    if (await this.usePgvector()) {
+      const removed = await pgvectorRagEngine.deleteByKnowledgeId(collection, knowledgeId);
+      logger.info({ collection, knowledgeId, removed, engine: 'pgvector' }, 'RAG document chunks deleted');
+      return removed;
+    }
+    const colRes = await this.chromaFetch(`${this.chromaUrl}/api/v1/collections/${collection}`);
+    if (!colRes.ok) {
+      // An absent collection holds no chunks: a 404, or Chroma 0.4's 500 "Collection x does not exist".
+      const body = await colRes.text();
+      if (isChromaAbsentCollection(colRes.status, body)) return 0;
+      throw new Error(`ChromaDB collection lookup error: ${colRes.status}`);
+    }
+    const colId = ((await colRes.json()) as { id?: string }).id;
+    if (!colId) throw new Error('ChromaDB collection lookup answered no id');
+    const res = await this.chromaFetch(`${this.chromaUrl}/api/v1/collections/${colId}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ where: { knowledge_id: knowledgeId } }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      logger.error({ collection, knowledgeId, status: res.status, body: body.slice(0, 200) }, 'ChromaDB document delete failed');
+      throw new Error(`ChromaDB delete error: ${res.status}`);
+    }
+    const body = await res.json().catch(() => null);
+    const removed = Array.isArray(body) ? body.length : null;
+    logger.info({ collection, knowledgeId, removed, engine: 'chroma' }, 'RAG document chunks deleted');
+    return removed;
   }
 
   /**

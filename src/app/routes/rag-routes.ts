@@ -21,8 +21,10 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | /upload and /ingest refuse (403) grants a non-operator may not give: they may share only with tenants they belong to. Naming other users, other groups (public:anyone, which every signed-in user carries, or an email-domain group) or a foreign tenant, in the body or in metadata, put the caller's text into other users' retrieval (route review 2026-10-05).
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 S02: the configuration-only swarm admin writes the shared corpus and keeps no documents of its own. /upload and /ingest answer 403 swarm_admin_not_a_user, before anything is extracted or stored, when the swarm admin's ingest would be owned by the admin itself: an explicit private ingest (private:true or visibility 'private'), an /ingest metadata owner_sub naming the admin, or any ingest while the admin lacks the operator role (a non-operator's ingest is always owned by its caller). The owner comes from the request body, which the global gate (swarm-admin-scope.ts) does not read, so the refusal sits here. The admin's shared-corpus writes and everyone else's ingests are unchanged; no admin page uploads or ingests.
  * 18 | maintainer@emeraldcoastsystemsgroup.com   | Entry 17 removed (Roger's admin-role decision, 2026-10-06: admin is the existing operator role on a person's own account, so there is no configuration-only account that must keep no documents). refuseSwarmAdminOwnDocument and its two call sites in /upload and /ingest are gone, with the isSwarmAdminPrincipal import from the deleted swarm-admin-identity.ts. Upload and ingest ownership, the kernel-collection check and the foreign-grant refusal (entry 16) are exactly as before entry 17.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6, shared knowledge): /upload and /ingest mint the knowledge id FIRST and stamp it onto every chunk (metadata.knowledge_id, a caller's own knowledge_id in /ingest metadata is overridden) and mark the record chunksTagged, so one document can later be removed. New DELETE /knowledge/:knowledgeId removes a document's chunks and then its record: an operator any document (the shared corpus is theirs to curate), a person only their own private one; 404 for an unknown or invisible id; a document stored before ids were stamped loses its record and the reply says its chunks stay until the collection is deleted. One access-audit event (knowledge.remove) per removal; a record gone between the read and the delete is a 404 with no event. A failed record write after the chunks went in removes those chunks again. /upload and /ingest answer the knowledgeId; the knowledge view says chunksTagged, so a screen can warn before removing an untagged document.
  */
 
+import { randomUUID } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import multer from 'multer';
@@ -34,7 +36,7 @@ import {
   sourceAclToRagAcl,
   type RagPermissionContext,
 } from '@/features/rag';
-import { callerFromRequest, resolveRole, Role } from '@/features/governance';
+import { callerFromRequest, emitAuditEvent, resolveRole, Role } from '@/features/governance';
 import { getUserTenantIds } from './connector-tenancy';
 import { classifyKnowledgeScope, type MemoryLayerService } from '@/features/memory';
 import { extractDocText } from '@/features/doc-extract';
@@ -49,6 +51,31 @@ const logger = createChildLogger({ module: 'rag-routes' });
  */
 export function tenantGroup(tenantId: string): string {
   return `tenant:${String(tenantId).trim()}`;
+}
+
+/** A knowledge record id: the UUID the catalog minted, nothing else reaches the store. */
+const KNOWLEDGE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * @description Writes the catalog record for chunks already stored under `knowledgeId`; when the
+ * record write fails, the chunks are removed again so no id-stamped chunks survive without a record
+ * (such chunks would be unreachable by the remove route), and the failure is rethrown.
+ * @param ragService - The vector store.
+ * @param collection - The collection the chunks went into.
+ * @param knowledgeId - The id stamped on the chunks.
+ * @param write - The record write.
+ * @returns The written record.
+ */
+async function recordOrRollback<T>(ragService: RagService, collection: string, knowledgeId: string, write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } catch (err) {
+    logger.warn({ err, collection, knowledgeId }, 'knowledge record write failed; removing the chunks stored for it');
+    await ragService.deleteDocumentChunks(collection, knowledgeId).catch((rollbackErr) => {
+      logger.error({ err: rollbackErr, collection, knowledgeId }, 'chunk rollback failed; id-stamped chunks remain without a record');
+    });
+    throw err;
+  }
 }
 
 /**
@@ -427,13 +454,16 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
       const uploadRefusal = await refuseForeignRagGrants(req, pool, (req.body ?? {}) as Record<string, unknown>);
       if (uploadRefusal) { res.status(403).json({ error: uploadRefusal }); return; }
       const acl = ragAclFromRequest(req);
+      const knowledgeId = randomUUID();
       const result = await ragService.ingest(texts, collection, {
         source: 'upload',
         uploadedAt: new Date().toISOString(),
         ...acl,
+        knowledge_id: knowledgeId,
       });
       if (memoryService) {
-        await memoryService.recordKnowledgeDocument({
+        await recordOrRollback(ragService, collection, knowledgeId, () => memoryService.recordKnowledgeDocument({
+          knowledgeId,
           agentId: typeof req.body?.agentId === 'string' ? req.body.agentId : undefined,
           taskId: typeof req.body?.taskId === 'string' ? req.body.taskId : undefined,
           ownerSub: acl.owner_sub || undefined,
@@ -449,13 +479,15 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
             formats: accepted.map((f) => f.format),
             rejected,
             truncated,
+            chunksTagged: true,
           },
-        });
+        }));
       }
 
       logger.info({ collection, chunkCount: result.chunkCount, accepted: accepted.length, rejected: rejected.length }, 'RAG upload complete');
       res.json({
         success: true,
+        knowledgeId,
         count: result.documentCount,
         chunks: result.chunkCount,
         collection,
@@ -496,15 +528,18 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
       if (refusal) { res.status(403).json({ error: refusal }); return; }
       const acl = ragAclFromRequest(req);
       const ownerSub = acl.owner_sub || metadata.owner_sub;
+      const knowledgeId = randomUUID();
       const result = await ragService.ingest([content], collection, {
         ...metadata,
         format,
         source: metadata.source || 'ingest-api',
         ...acl,
         ...(ownerSub ? { owner_sub: ownerSub } : {}),
+        knowledge_id: knowledgeId, // last: a caller's own knowledge_id never names another document's chunks
       });
       if (memoryService) {
-        await memoryService.recordKnowledgeDocument({
+        await recordOrRollback(ragService, collection, knowledgeId, () => memoryService.recordKnowledgeDocument({
+          knowledgeId,
           agentId: typeof req.body?.agentId === 'string' ? req.body.agentId.trim() || undefined : undefined,
           taskId: typeof req.body?.taskId === 'string' ? req.body.taskId.trim() || undefined : undefined,
           ownerSub: ownerSub || undefined,
@@ -516,10 +551,10 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
           documentCount: result.documentCount,
           embeddingProviderId: metadata.embeddingProviderId,
           embeddingModelId: metadata.embeddingModelId,
-          metadata,
-        });
+          metadata: { ...metadata, chunksTagged: true },
+        }));
       }
-      res.json({ success: true, ...result });
+      res.json({ success: true, knowledgeId, ...result });
     } catch (err) {
       logger.error({ err }, 'RAG ingest endpoint failed');
       res.status(500).json({ error: 'RAG ingestion failed' });
@@ -577,6 +612,69 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
     } catch (err) {
       logger.error({ err }, 'RAG knowledge listing failed');
       res.status(500).json({ error: 'RAG knowledge listing failed' });
+    }
+  });
+
+  /**
+   * @openapi
+   * /api/rag/knowledge/{knowledgeId}:
+   *   delete:
+   *     summary: Remove one knowledge document (its chunks, then its record)
+   *     tags: [RAG]
+   */
+  router.delete('/knowledge/:knowledgeId', async (req, res) => {
+    const knowledgeId = String(req.params.knowledgeId ?? '').trim();
+    if (!KNOWLEDGE_ID_PATTERN.test(knowledgeId)) {
+      res.status(400).json({ error: 'knowledge_id_invalid' });
+      return;
+    }
+    if (!memoryService) {
+      res.status(503).json({ error: 'knowledge_store_unavailable' });
+      return;
+    }
+    const caller = callerFromRequest(req);
+    const isOperator = resolveRole(caller) === Role.Admin;
+    try {
+      const doc = await memoryService.getKnowledgeDocument(knowledgeId);
+      if (!doc) {
+        res.status(404).json({ error: 'knowledge_not_found' });
+        return;
+      }
+      const ownPrivate = Boolean(doc.ownerSub) && doc.ownerSub === caller.sub;
+      if (!isOperator && !ownPrivate) {
+        res.status(403).json({ error: 'knowledge_remove_forbidden', message: 'An operator removes shared knowledge; a person removes only their own private documents.' });
+        return;
+      }
+      const chunksTagged = doc.metadata?.chunksTagged === true;
+      // Chunks first: if their removal fails the record stays and the removal can be retried.
+      const chunksRemoved = chunksTagged ? await ragService.deleteDocumentChunks(doc.collection, knowledgeId) : null;
+      const removed = await memoryService.deleteKnowledgeDocument(knowledgeId);
+      if (!removed) {
+        // Gone between the read and the delete: someone else removed it. Not this caller's removal, so no event.
+        res.status(404).json({ error: 'knowledge_not_found' });
+        return;
+      }
+      const scope = classifyKnowledgeScope(doc);
+      if (pool) {
+        void emitAuditEvent(pool, {
+          actorSub: caller.sub ?? null, action: 'knowledge.remove', resourceType: 'knowledge', resourceId: knowledgeId, decision: 'allow',
+          metadata: { collection: doc.collection, scope, chunksTagged, chunksRemoved, operator: isOperator },
+        }).catch((err) => { logger.warn({ err, knowledgeId }, 'knowledge.remove audit event not written'); });
+      }
+      logger.info({ knowledgeId, collection: doc.collection, scope, chunksTagged, chunksRemoved, sub: caller.sub }, 'DELETE /api/rag/knowledge removed');
+      res.json({
+        success: true,
+        removed: true,
+        knowledgeId,
+        collection: doc.collection,
+        scope,
+        chunksTagged,
+        chunksRemoved,
+        ...(chunksTagged ? {} : { note: 'This document was stored before its chunks carried an id, so its chunks stay in the collection until the collection is deleted.' }),
+      });
+    } catch (err) {
+      logger.error({ err, knowledgeId }, 'RAG knowledge removal failed');
+      res.status(500).json({ error: 'RAG knowledge removal failed' });
     }
   });
 
@@ -699,6 +797,7 @@ function toKnowledgeView(
     chunkCount?: number;
     documentCount?: number;
     createdAt: string;
+    metadata?: Record<string, unknown>;
   },
   isOperator: boolean,
 ): Record<string, unknown> {
@@ -714,6 +813,8 @@ function toKnowledgeView(
     chunkCount: doc.chunkCount ?? 0,
     documentCount: doc.documentCount ?? 0,
     createdAt: doc.createdAt,
+    /** False for a document stored before ids were stamped: removing it leaves its chunks until the collection is deleted. */
+    chunksTagged: doc.metadata?.chunksTagged === true,
   };
 }
 

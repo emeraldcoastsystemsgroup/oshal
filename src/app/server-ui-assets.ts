@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): register /swarm-admin/logins, the swarm logins screen, under the same operator-role guard as the other Swarm Admin pages.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): register /swarm-admin/budgets, the budgets screen, under the same operator-role guard as the other Swarm Admin pages.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-5): register /swarm-admin/connectors, the connectors screen, under the same operator-role guard as the other Swarm Admin pages.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): register /swarm-admin/knowledge, the shared-knowledge screen, under the same operator-role guard as the other Swarm Admin pages.
  */
 
 import express from 'express';
@@ -249,6 +250,7 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
   const swarmAdminLoginsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/logins'), path.resolve(process.cwd(), 'src/pages/swarm-admin/logins')]);
   const swarmAdminBudgetsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/budgets'), path.resolve(process.cwd(), 'src/pages/swarm-admin/budgets')]);
   const swarmAdminConnectorsDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/connectors'), path.resolve(process.cwd(), 'src/pages/swarm-admin/connectors')]);
+  const swarmAdminKnowledgeDir = resolveExistingPath([path.resolve(__dirname, '../pages/swarm-admin/knowledge'), path.resolve(process.cwd(), 'src/pages/swarm-admin/knowledge')]);
 
   return [
     { routePath: '/task-explorer', pageDir: taskExplorerDir },
@@ -300,5 +302,6 @@ export function resolveUiSurfacePages(adminConsoleGuards: express.RequestHandler
     { routePath: '/swarm-admin/logins', pageDir: swarmAdminLoginsDir, extraGuards: [requiresOperator] },
     { routePath: '/swarm-admin/budgets', pageDir: swarmAdminBudgetsDir, extraGuards: [requiresOperator] },
     { routePath: '/swarm-admin/connectors', pageDir: swarmAdminConnectorsDir, extraGuards: [requiresOperator] },
+    { routePath: '/swarm-admin/knowledge', pageDir: swarmAdminKnowledgeDir, extraGuards: [requiresOperator] },
   ];
 }

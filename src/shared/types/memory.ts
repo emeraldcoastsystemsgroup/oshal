@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added non-swarm memory layer schemas for checkpoints, per-agent memory, and knowledge memory persistence
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6, shared knowledge): RecordKnowledgeMemoryInput accepts a pre-generated knowledgeId, so a route can stamp the same id onto the chunks it writes BEFORE the record exists; a document's chunks can then be removed by that id.
  */
 
 import { z } from 'zod';
@@ -143,6 +144,8 @@ export type KnowledgeMemoryDocument = z.infer<typeof KnowledgeMemoryDocumentSche
  * @description Input for recording one knowledge-memory document.
  */
 export const RecordKnowledgeMemoryInputSchema = z.object({
+  /** A pre-generated id, when the caller stamped it onto the chunks first; otherwise one is minted. */
+  knowledgeId: z.string().uuid().optional(),
   agentId: z.string().optional(),
   taskId: z.string().optional(),
   /** Owner sub to scope this document to one user; omit for shared (swarm/bot) knowledge. */
