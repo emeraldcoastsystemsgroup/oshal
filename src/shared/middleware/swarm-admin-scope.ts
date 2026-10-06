@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 slice 2c: the swarm admin is not a user of the swarm. One global gate, mounted after identity resolution and before every route, lets the swarm-admin principal reach only swarm administration (admin pages, operator APIs, the mixed routers whose admin functions it runs, and its own sign-in) and refuses every personal surface: chat, tickets, tasks, connections, calendar, content, access tokens. A trusted service call acting as the admin's sub is refused outright. No-op for everyone else.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The reach list now covers what the admin's own pages call. Access management (/api/authorization) and the user directory are allowed. The operations dashboards get exact GET-only reads (runs and work items, active tickets, the scheduler, metrics, the mesh, refusals, the trace viewer shell), so those routers' write paths stay refused. The session (/api/auth/user) and /api/health are reachable too. /cockpit/tools narrows to the dead-letter and chat-channel tools; the other tool pages are personal.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The admin's pages load their assets. /config loads its CSS and JS from the /config-admin static alias (src/pages/config-admin only, inferred in ui-surface-routes), which the gate redirected to /admin, so /config never rendered for the admin: /config-admin joins the surface paths. Two static cockpit files get exact GET/HEAD reads: /cockpit/js/theme-manager.js, which the /config module graph imports (it imports nothing and holds no user data), and /cockpit/css/themes/<id>.css, which surface-themes.css imports on every admin page and the optimizer page links. The rest of the cockpit stays refused. SWARM_ADMIN_DASHBOARD_READS is renamed SWARM_ADMIN_EXACT_READS, since it now holds those asset reads too; its only references were in this file.
  */
 
 import type { Request, RequestHandler } from 'express';
@@ -21,7 +22,8 @@ export const SWARM_ADMIN_SUB = 'local-8c6976e5b5410415';
 export const SWARM_ADMIN_SURFACE_PATHS: readonly string[] = [
   '/login/admin', '/logout/admin', '/logout', '/api/admin-auth', '/api/local-auth/2fa', '/api/user', '/api/auth/user',
   '/api/health', '/shared', '/fonts', '/favicon.ico',
-  '/admin', '/users', '/access', '/access-review', '/app-loader', '/applications', '/config', '/data-model',
+  // /config-admin is /config's own directory (src/pages/config-admin) under the static alias its page loads from.
+  '/admin', '/users', '/access', '/access-review', '/app-loader', '/applications', '/config', '/config-admin', '/data-model',
   '/utilities', '/governance', '/eval-wall', '/process-lab', '/workflow-studio', '/health-dashboard',
   '/system-health', '/redis-visibility', '/queue-dashboard', '/queue-manager-admin', '/mesh-dashboard',
   '/ops-dashboard', '/swarm-control', '/alert-pipeline-admin', '/rag-center',
@@ -50,14 +52,18 @@ export const SWARM_ADMIN_API_PREFIXES: readonly string[] = [
 ];
 
 /**
- * Read-only calls the operations dashboards make into routers that are otherwise personal or mixed: the run and
- * work queues, the active-ticket queue, the scheduler, metrics, the mesh, refusals and the trace viewer shell.
- * GET only, matched exactly, so the routers' write paths (submitting tickets or schedules) stay refused.
+ * Exact reads into routers and directories that are otherwise personal or mixed. The operations dashboards read the
+ * run and work queues, the active-ticket queue, the scheduler, metrics, the mesh, refusals and the trace viewer shell.
+ * The admin pages load two static files from the cockpit directory: the theme catalogue the /config page imports
+ * (theme-manager.js, which imports nothing and holds no user data) and the theme stylesheets that surface-themes.css
+ * and the optimizer page pull in. GET and HEAD only, matched exactly, so the routers' write paths (submitting tickets
+ * or schedules) and the rest of the cockpit stay refused.
  */
-export const SWARM_ADMIN_DASHBOARD_READS: readonly RegExp[] = [
+export const SWARM_ADMIN_EXACT_READS: readonly RegExp[] = [
   /^\/api\/swarm\/(runs|work-items)(\/[^/]+)?$/, /^\/api\/tickets\/active$/, /^\/api\/v1\/agent\/scheduler\/status$/,
   /^\/api\/v1\/agent\/schedules$/, /^\/api\/v1\/metrics\/(summary|agents)$/, /^\/api\/health-dashboard\/registry$/,
   /^\/api\/mesh\/channels$/, /^\/api\/ops\/refusals$/, /^\/api\/trace\/app(\/.*)?$/,
+  /^\/cockpit\/js\/theme-manager\.js$/, /^\/cockpit\/css\/themes\/[a-z0-9-]+\.css$/,
 ];
 
 const ALLOWED = [...SWARM_ADMIN_SURFACE_PATHS, ...SWARM_ADMIN_API_PREFIXES];
@@ -70,7 +76,7 @@ function under(pathname: string, prefix: string): boolean {
 /** @description Whether the swarm admin may make this call. */
 export function swarmAdminMayReach(pathname: string, method = 'GET'): boolean {
   if (ALLOWED.some((prefix) => under(pathname, prefix))) return true;
-  return (method === 'GET' || method === 'HEAD') && SWARM_ADMIN_DASHBOARD_READS.some((pattern) => pattern.test(pathname));
+  return (method === 'GET' || method === 'HEAD') && SWARM_ADMIN_EXACT_READS.some((pattern) => pattern.test(pathname));
 }
 
 /** @description True when the request's signed-in principal is the configuration-only swarm admin. */
