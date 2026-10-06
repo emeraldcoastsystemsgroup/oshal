@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Compose each manifest bot's persona for protected node turns and register it on activation. The persona is read through the owning manifest (resolveManifestBotPersonaPath, which refuses a path that leaves the package) and composed from identity (name, role), the scalar personality entries and a perspective: the explicit `protected_perspective` when the persona declares one, otherwise the ordinary `perspective` only when it passes a conservative screen for shell, script and secret-carrier wording (operator choice: a failing perspective is dropped and identity and personality are still carried, with a WARN). A fixed sentence closes the text saying the persona grants no tool, scope or credential. Capabilities, allowed_tools, authorizations, runtime, selectors and system_prompt are never read. A composed text that names a secret identifier, exceeds MAX_BOT_PERSONA_BYTES, is not valid UTF-8 or carries control characters refuses that bot's whole persona (ERROR, skipped, never truncated). Registration is non-fatal: a failure logs and retracts the application's personas. retractBotPersonas is the deactivate half of the pair, so swarm-app-service (at its code-line cap) imports one module for both.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | Independent security review: the screens matched raw substrings, so `curl` followed by a newline or tab, a zero-width character inside a word, a full-width spelling, or a token at the very end slipped through. Both screens now compare against screenableText (NFKC fold, format characters stripped, whitespace collapsed, end padded). protected_perspective stays an author-trusted override (reviewed in the package PR) that skips the perspective screen; the secret, size, UTF-8 and control-character refusals still apply to the whole composed text.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -41,6 +42,20 @@ const SECRET_IDENTIFIERS: readonly string[] = [
 
 const DISALLOWED_CONTROLS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/;
 
+/** Invisible format characters that can split a screened word without changing how it reads. */
+const FORMAT_CHARACTERS = /[\u00AD\u200B-\u200F\u2060-\u2064\uFEFF]/g;
+
+/**
+ * The text the screens compare against: compatibility-folded (full-width letters become ASCII),
+ * invisible format characters removed, every whitespace run collapsed to one space and the end
+ * padded, so `curl\thttp`, `cu<ZWSP>rl `, a full-width `ｃｕｒｌ` and a trailing `curl` all match the
+ * `curl ` token. Lower-cased. The screens stay best-effort: a protected turn is tool-less and the
+ * final authority rebind decides tools, so this narrows what trusted text can ask for, nothing more.
+ */
+function screenableText(text: string): string {
+  return `${text.normalize('NFKC').replace(FORMAT_CHARACTERS, '').replace(/\s+/g, ' ').toLowerCase()} `;
+}
+
 /** @description Where a persona is composed: the application and bot it belongs to, for logs and fallbacks. */
 export interface BotPersonaContext {
   app: string;
@@ -75,8 +90,8 @@ function personalityLines(value: unknown): string[] {
  * @returns True when the perspective passes the screen.
  */
 export function perspectivePassesScreen(perspective: string): boolean {
-  const lower = perspective.toLowerCase();
-  return !PERSPECTIVE_SCREEN.some(token => lower.includes(token));
+  const screened = screenableText(perspective);
+  return !PERSPECTIVE_SCREEN.some(token => screened.includes(token));
 }
 
 function selectPerspective(doc: Record<string, unknown>, context: BotPersonaContext): string | undefined {
@@ -119,8 +134,8 @@ export function composeProtectedBotPersona(doc: Record<string, unknown>, context
  * @returns A stable refusal code, or null.
  */
 export function botPersonaRefusal(text: string): 'secret_identifier' | 'oversized' | 'invalid_utf8' | 'control_characters' | null {
-  const lower = text.toLowerCase();
-  if (SECRET_IDENTIFIERS.some(token => lower.includes(token))) return 'secret_identifier';
+  const screened = screenableText(text);
+  if (SECRET_IDENTIFIERS.some(token => screened.includes(token))) return 'secret_identifier';
   const bytes = Buffer.from(text, 'utf8');
   if (bytes.length > MAX_BOT_PERSONA_BYTES) return 'oversized';
   if (bytes.toString('utf8') !== text) return 'invalid_utf8';
