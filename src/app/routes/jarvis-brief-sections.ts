@@ -28,6 +28,7 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial morning-brief composition: four guarded sections (trading recap from deck-data.json operator-gated fail-closed, career preview via findNewHits + the digest cursor read-only, world headlines via the memoized WorldIntelligenceService, Gmail unread via one labels/UNREAD GET), injectable BriefDeps for unit tests, per-section error isolation.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: BriefDeps.isOperator and composeMorningBrief take the caller's verified principal issuer, so the operator-scoped trading recap binds exactly as isOperator does (a local principal by subject only). The cron, which has no request, passes none and keeps the subject match.
  *
  * @module jarvis-brief-sections
  */
@@ -96,8 +97,11 @@ export interface WorldHeadline {
  * (mock these) and keeps this module free of hard environmental coupling.
  */
 export interface BriefDeps {
-  /** Operator allowlist check (fail-closed: empty allowlist = nobody). Matches on sub OR email. */
-  isOperator(userSub: string, email: string | null): boolean;
+  /**
+   * Operator check (fail-closed: no roles and an empty allowlist = nobody). Matches on sub OR
+   * email, bound to the caller's verified issuer when known (authz operatorMatchKeys).
+   */
+  isOperator(userSub: string, email: string | null, issuer?: string | null): boolean;
   /** The daily-recap truth file, or null when the pipeline hasn't produced one. */
   readDeckData(): DeckData | null;
   /** Whether this user has a career-hunter store at all. */
@@ -168,7 +172,7 @@ async function readGmailUnread(token: string): Promise<{ messagesUnread: number;
  */
 export function defaultBriefDeps(ctx: AppContext): BriefDeps {
   return {
-    isOperator: (userSub, email) => isOperatorIdentity(userSub, email),
+    isOperator: (userSub, email, issuer) => isOperatorIdentity(userSub, email, issuer),
     readDeckData: readDeckDataFromDisk,
     hasCareerStore: (userSub) => briefHasCareerStore(userSub),
     readCareerCursor: async (userSub) => {
@@ -214,9 +218,9 @@ function usd(n: number): string {
 }
 
 /** Trading recap — operator-scoped (fail-closed) view over the recap pipeline's truth file. */
-async function tradingSection(deps: BriefDeps, userSub: string, email: string | null): Promise<BriefSection> {
+async function tradingSection(deps: BriefDeps, userSub: string, email: string | null, issuer: string | null | undefined): Promise<BriefSection> {
   const base = { section: 'trading', title: 'Trading recap' };
-  if (!deps.isOperator(userSub, email)) {
+  if (!deps.isOperator(userSub, email, issuer)) {
     return { ...base, skipped: true, reason: 'Trading recap is scoped to the deployment operator (OSHAL_OPERATOR_SUBS/EMAILS allowlist; fail-closed).' };
   }
   const deck = deps.readDeckData();
@@ -304,11 +308,13 @@ async function commsSection(deps: BriefDeps, userSub: string): Promise<BriefSect
  * @param email - The caller's email, for the operator allowlist (email-only-configured
  *   deployments match on OSHAL_OPERATOR_EMAILS); null when unknown (e.g. cron delivery,
  *   where the operator gate falls back to the sub allowlist).
+ * @param issuer - The issuer the operator gate binds to (authz operatorRequestIssuer: a local principal, or a
+ *   request carrying no verified issuer, matches by subject only); omitted by the cron, which has no request.
  * @returns The composed brief with a generatedAt stamp.
  */
-export async function composeMorningBrief(deps: BriefDeps, userSub: string, email: string | null = null): Promise<MorningBrief> {
+export async function composeMorningBrief(deps: BriefDeps, userSub: string, email: string | null = null, issuer?: string | null): Promise<MorningBrief> {
   const builders: Array<[string, string, () => Promise<BriefSection>]> = [
-    ['trading', 'Trading recap', () => tradingSection(deps, userSub, email)],
+    ['trading', 'Trading recap', () => tradingSection(deps, userSub, email, issuer)],
     ['career', 'Career digest', () => careerSection(deps, userSub)],
     ['world', 'World headlines', () => worldSection(deps)],
     ['comms', 'Email', () => commsSection(deps, userSub)],

@@ -17,12 +17,13 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial /api/jarvis/brief (JSON) + /api/jarvis/brief.html (rendered) routes over the guarded section composer; per-route requiresAuth; starts the opt-in morning-delivery cron.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: both routes compose the brief with the issuer isOperator binds to (authz operatorRequestIssuer), so the operator-scoped trading recap binds exactly as isOperator does.
  *
  * @module jarvis-brief-routes
  */
 import { Router, type Request, type Response, type RequestHandler } from 'express';
 import { createChildLogger } from '@/shared/logger';
-import { getCaller } from '@/shared/middleware/authz';
+import { getCaller, operatorRequestIssuer } from '@/shared/middleware/authz';
 import type { AppContext } from '@/app/composition/app-context';
 import {
   composeMorningBrief, defaultBriefDeps,
@@ -118,7 +119,7 @@ export function createJarvisBriefRoutes(
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).json({ error: 'unauthorized' }); return; }
     try {
-      const brief = await composeMorningBrief(deps, sub, email);
+      const brief = await composeMorningBrief(deps, sub, email, operatorRequestIssuer(req));
       logger.info({ sub, sections: brief.sections.length, skipped: brief.sections.filter((s) => s.skipped).length, durationMs: Date.now() - startedAt }, 'GET /api/jarvis/brief');
       res.json(brief);
     } catch (err) {
@@ -132,7 +133,7 @@ export function createJarvisBriefRoutes(
     const { sub, email } = getCaller(req);
     if (!sub) { res.status(401).send('unauthorized'); return; }
     try {
-      const brief = await composeMorningBrief(deps, sub, email);
+      const brief = await composeMorningBrief(deps, sub, email, operatorRequestIssuer(req));
       logger.info({ sub, durationMs: Date.now() - startedAt }, 'GET /api/jarvis/brief.html');
       res.type('html').send(renderBriefHtml(brief));
     } catch (err) {

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Created the governance feature barrel (FSD deep-import burn-down): surfaces the audit capture/emit API, the RBAC policy middleware + role/permission model, and the DLP egress redactor that consumers were reaching via deep paths.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Surface the swarm-role grant-source resolver so routes can name WHICH axis granted a role instead of deep-importing the RBAC internals.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Surface isOperatorRolesConfigured (ADR-174 Amendment A) so the governance posture can report whether swarm_roles holds a root or admin, the fact that now restricts the admin console on its own.
  */
 
 /**
@@ -28,6 +29,7 @@ export {
   callerFromRequest,
   isEnforcementEnabled,
   requireAdminConsoleAccess,
+  isOperatorRolesConfigured,
   onBreakGlassAllowlist,
   type RbacCaller,
 } from './rbac/policy';

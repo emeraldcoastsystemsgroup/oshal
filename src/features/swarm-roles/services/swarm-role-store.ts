@@ -4,13 +4,17 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Swarm root (ADR-148): the role store behind the operator gate. Before this, "the first account" (oshal_local_users.bootstrapFirstAdmin, which code calls "the installer is the first admin") and "the admin" (the hand-typed OSHAL_OPERATOR_SUBS env allowlist) were two unconnected systems — no role column, no code path linking them — so on a LOCAL_AUTH box the person who set the very first password got no privilege from it, and on a MOCK_OIDC box privilege came from an installer prompt. That is the "default passwords are confusing" report. swarm_roles makes root a ROW: exactly one, enforced by a partial unique index in the DATABASE rather than by application code, transferable but never deletable while it is the only root. The env allowlist is retained forever as break-glass (operator decision) so an existing deployment adopts this with zero configuration change and a lost root is always recoverable.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: claimRoot, grantRole and transferRoot store an email only when it is an email address (contains '@'), through roleEmail. A local login or an identity-provider preferred_username without '@' reaches the routes as the caller's email, and a row carrying one would make every identity reporting that username a privileged email; a local-auth-shaped subject (isLocalAuthSubject) stores no email at all, because a local account's address was never verified and a stored one would be a key for any identity-provider principal reporting it. A failed refresh now calls dropPrivilegedIdentitiesAfterFailure: every identity is still dropped, but the cache keeps the fact that roles were configured, so the admin console stays restricted instead of reopening to everyone.
  */
 
 import type { Pool } from 'pg';
 import { createChildLogger } from '@/shared/logger';
 import { runRuntimeSchemaBootstrap } from '@/shared/services/database';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
-import { setPrivilegedIdentities, clearPrivilegedIdentities } from '@/shared/middleware/privileged-identities';
+import { isLocalAuthSubject } from '@/shared/middleware/principal-issuer';
+import {
+  setPrivilegedIdentities, dropPrivilegedIdentitiesAfterFailure, isEmailAddress,
+} from '@/shared/middleware/privileged-identities';
 
 const logger = createChildLogger({ module: 'swarm-role-store' });
 
@@ -160,10 +164,32 @@ export async function refreshPrivilegedCache(pool: Pool): Promise<number> {
     logger.info({ count: rows.length }, 'privileged identity cache refreshed');
     return rows.length;
   } catch (err) {
-    clearPrivilegedIdentities();
+    dropPrivilegedIdentitiesAfterFailure();
     logger.error({ err }, 'privileged identity cache refresh FAILED — cache cleared, env break-glass allowlist is now the only operator path');
     throw err;
   }
+}
+
+/**
+ * @description The email a role row may store: the caller's email when it is an email address,
+ * otherwise null. A login is not an address, and an identity-provider username without '@' is
+ * reported the same way, so storing either would let every identity reporting that username
+ * match the row by email.
+ * @param userSub - the identity the row is for, for the log line.
+ * @param email - the email the caller supplied.
+ * @returns the email to store, or null.
+ */
+function roleEmail(userSub: string, email: string | null | undefined): string | null {
+  if (email === null || email === undefined || email === '') return null;
+  if (isLocalAuthSubject(userSub)) {
+    // A local account's email was never verified; stored here it would become a key any identity-provider
+    // principal reporting that address could match. The row binds the account by its subject.
+    logger.info({ userSub }, 'role email not stored: a local account is bound by its subject, not its unverified email');
+    return null;
+  }
+  if (isEmailAddress(email)) return email;
+  logger.info({ userSub }, 'role email not stored: a login without "@" is not an email address');
+  return null;
 }
 
 /**
@@ -201,7 +227,7 @@ export async function claimRoot(
        ON CONFLICT (user_sub) DO UPDATE SET role = 'root', email = EXCLUDED.email,
              display_name = EXCLUDED.display_name, granted_at = NOW(), note = EXCLUDED.note
        RETURNING user_sub, email, display_name, role, granted_by_sub, granted_at, note`,
-      [userSub, input.email ?? null, input.displayName ?? null, input.note ?? null],
+      [userSub, roleEmail(userSub, input.email), input.displayName ?? null, input.note ?? null],
     ));
     await refreshPrivilegedCache(pool);
     logger.warn({ userSub }, 'SWARM ROOT CLAIMED');
@@ -252,7 +278,7 @@ export async function grantRole(
            display_name = EXCLUDED.display_name, granted_by_sub = EXCLUDED.granted_by_sub,
            granted_at = NOW(), note = EXCLUDED.note
      RETURNING user_sub, email, display_name, role, granted_by_sub, granted_at, note`,
-    [userSub, input.email ?? null, input.displayName ?? null, input.role, input.grantedBySub, input.note ?? null],
+    [userSub, roleEmail(userSub, input.email), input.displayName ?? null, input.role, input.grantedBySub, input.note ?? null],
   ));
   await refreshPrivilegedCache(pool);
   logger.info({ userSub, role: input.role, by: input.grantedBySub }, 'swarm role granted');
@@ -319,7 +345,7 @@ export async function transferRoot(
                display_name = EXCLUDED.display_name, granted_by_sub = EXCLUDED.granted_by_sub,
                granted_at = NOW(), note = EXCLUDED.note
          RETURNING user_sub, email, display_name, role, granted_by_sub, granted_at, note`,
-        [toSub, input.toEmail ?? null, input.toDisplayName ?? null, input.bySub,
+        [toSub, roleEmail(toSub, input.toEmail), input.toDisplayName ?? null, input.bySub,
           `root transferred from ${currentRoot}`],
       );
       await client.query('COMMIT');

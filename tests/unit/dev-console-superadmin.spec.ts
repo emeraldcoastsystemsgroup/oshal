@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Security tests for the ADR-077 super-admin double-gate on the Developer Console.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Guard exact, case-sensitive super-admin subject matching at both request and queue-side gates; email matching remains case-insensitive.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: the email-matched super-admin is an identity-provider principal, so the fixture carries a verified issuer; a local-issuer principal with that email is refused (it qualifies by subject), and a request carrying no verified issuer is refused by email too.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -113,9 +114,14 @@ describe('Developer Console super-admin double-gate (ADR-077)', () => {
   it('matches the allowlist by email, case-insensitively', async () => {
     process.env.OSHAL_DEV_CONSOLE_ENABLED = 'true';
     process.env.OSHAL_SUPERADMIN_EMAILS = 'boss@example.test';
-    const res = await hit(appFor({ sub: 'x', email: 'BOSS@EXAMPLE.TEST' }), '/api/dev-console/health-snapshot');
+    const res = await hit(appFor({ sub: 'x', email: 'BOSS@EXAMPLE.TEST', iss: 'https://login.example.test/tenant' }), '/api/dev-console/health-snapshot');
     expect(res.status).toBe(200);
     expect(res.body.scanned).toBe(0);
+    // A local account that typed that address, or a request carrying no verified issuer, is not admitted by it (ADR-174 Amendment A).
+    expect((await hit(appFor({ sub: 'local-0123456789abcdef', email: 'boss@example.test', iss: 'urn:oshal:local-auth' }), '/api/dev-console/health-snapshot')).status).toBe(403);
+    expect((await hit(appFor({ sub: 'pat-owner', email: 'boss@example.test' }), '/api/dev-console/health-snapshot')).status).toBe(403);
+    process.env.OSHAL_SUPERADMIN_SUBS = 'local-0123456789abcdef';
+    expect((await hit(appFor({ sub: 'local-0123456789abcdef', email: 'boss@example.test', iss: 'urn:oshal:local-auth' }), '/api/dev-console/health-snapshot')).status).toBe(200);
   });
 
   it('is a SEPARATE role from operator — an operator is NOT a super-admin', async () => {

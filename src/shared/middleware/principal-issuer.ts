@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | Centralize verified principal issuer constants and extraction so non-OIDC session rails preserve the identity namespace that authenticated the user
  * 2   | maintainer@emeraldcoastsystemsgroup.com     | Read verified protocol claims before the filtered OIDC presentation user; a present invalid protocol issuer fails closed.
+ * 3   | maintainer@emeraldcoastsystemsgroup.com     | ADR-174 Amendment A: isLocalAuthSubject names the subject shape the local-auth store derives (local-<16 hex>), so a role row written for a local account can be stored without its unverified email wherever the issuer is not on hand (the Users-page grant, the installer, plain SQL read back by the cache).
  * -----------------------------------------------------------------------------
  */
 
@@ -14,6 +15,20 @@ import type { Request } from 'express';
 export const LOCAL_AUTH_PRINCIPAL_ISSUER = 'urn:oshal:local-auth';
 export const MOCK_OIDC_PRINCIPAL_ISSUER = 'urn:oshal:mock-oidc';
 export const GUEST_PRINCIPAL_ISSUER = 'urn:oshal:guest';
+
+/** The subject shape the local-auth store derives for an account (localSubForEmail: 'local-' + 16 hex). */
+const LOCAL_AUTH_SUBJECT = /^local-[0-9a-f]{16}$/;
+
+/**
+ * @description Whether a subject has the shape the local-auth store derives for its accounts. The
+ * MOCK_OIDC subject is minted the same way, so this says "could be a local account", never "is not
+ * a mock identity"; callers use it to withhold an unverified email, which is right for both.
+ * @param sub - The subject to test.
+ * @returns true for a local-auth-shaped subject.
+ */
+export function isLocalAuthSubject(sub: string | null | undefined): boolean {
+  return typeof sub === 'string' && LOCAL_AUTH_SUBJECT.test(sub);
+}
 
 /**
  * @description THE predicate for "is this deployment running mock OIDC". One reading, so the

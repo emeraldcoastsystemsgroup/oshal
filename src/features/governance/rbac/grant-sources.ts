@@ -19,6 +19,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Name every axis that independently confers a caller's swarm role, so a break-glass-only operator cannot render identically to a granted admin and an IdP-claim admin is no longer reported as break-glass.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment A: provenance binds exactly as the gate does. The swarm-role source and isRoot read the identity through authz's operatorMatchKeys over the caller's issuer, so a local principal is reported by subject only, never by its unverified email, in step with resolveRole; emailEvaluated says whether the bound email was consulted, so the access review warns when it was not.
  *
  * @module features/governance/rbac/grant-sources
  */
@@ -27,6 +28,7 @@ import { Role } from './roles';
 import { mapClaimRolesToRole } from './claims';
 import { onBreakGlassAllowlist, resolveRole, type RbacCaller } from './policy';
 import { getRootSub, isPrivilegedIdentity, privilegedIdentityStatus } from '@/shared/middleware/privileged-identities';
+import { operatorMatchKeys } from '@/shared/middleware/authz';
 
 /**
  * Every provenance label a joined access view may print. `app-assignment` is not produced here —
@@ -68,14 +70,17 @@ export interface SwarmRoleGrant {
  * Reads exactly what the gate reads — the `swarm_roles` snapshot, the caller's IdP role claims
  * and the environment allowlists — and adds no grant path of its own.
  *
- * @param caller - The identity to describe. `email` may be null when only a subject is known.
+ * @param caller - The identity to describe. `email` may be null when only a subject is known;
+ *   `issuer`, when known, binds the match as the gate binds it.
  * @returns The resolved role plus every axis that independently confers it.
  */
 export function resolveSwarmRoleGrant(caller: RbacCaller | null | undefined): SwarmRoleGrant {
   const identity: RbacCaller = caller ?? { sub: null, email: null };
   const sources: GrantSource[] = [];
+  // The keys the caller's issuer allows, exactly as resolveRole matches them (ADR-174 Amendment A).
+  const keys = operatorMatchKeys(identity.sub, identity.email, identity.issuer);
 
-  if (isPrivilegedIdentity(identity.sub, identity.email)) sources.push('swarm-role');
+  if (isPrivilegedIdentity(keys.sub, keys.email)) sources.push('swarm-role');
 
   const claimed = mapClaimRolesToRole(identity.roles ?? []);
   if (claimed === Role.Admin || claimed === Role.Operator) sources.push('idp-claim');
@@ -87,9 +92,9 @@ export function resolveSwarmRoleGrant(caller: RbacCaller | null | undefined): Sw
     role: resolveRole(identity),
     sources,
     source: sources[0] ?? 'none',
-    isRoot: Boolean(identity.sub) && getRootSub() === identity.sub,
+    isRoot: keys.sub !== null && getRootSub() === keys.sub,
     rootClaimed: getRootSub() !== null,
     rolesLoaded: status.loaded,
-    emailEvaluated: typeof identity.email === 'string' && identity.email.length > 0,
+    emailEvaluated: keys.email !== null,
   };
 }

@@ -31,6 +31,7 @@
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-scope-guard (ADR-174 slice 2c: the swarm admin reaches only swarm administration; its reach list is checked against the real mount table).
  * 27 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-reach-exact (ADR-174 S02: the swarm admin's reach is exact; the never-list for the worker plane, CLI tokens and enrolment is checked first, the routes that act as the caller inside the narrowed routers are refused in any case, and the admin's own calls into them stay allowed).
  * 28 | maintainer@emeraldcoastsystemsgroup.com   | Detach local-swarm-admin-account, local-swarm-admin-login, swarm-admin-sign-in-rail, swarm-admin-scope-guard and swarm-admin-reach-exact (entries 23 to 27): the specs are deleted with the separate configuration-only admin account they guarded (ADR-174 slices 2a to 2c), which Roger's admin-role decision (2026-10-06) replaces with the existing operator role on a person's own account. package.json test:authorization drops the same five paths, so the two lists stay equal.
+ * 29 | maintainer@emeraldcoastsystemsgroup.com   | Register local-principal-operator-binding.spec.ts (ADR-174 Amendment A: a local account's unverified email never grants operator) with the access-administration scenario and the test:authorization command, in step.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -116,6 +117,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/swarm-app-access-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/application-service-activation-routes.spec.ts' },
     { level: 'integration', path: 'tests/unit/application-service-activation-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/local-principal-operator-binding.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-lifecycle-authorization.spec.ts' },
     { level: 'unit', path: 'tests/unit/guc-pool.spec.ts' },
     { level: 'unit', path: 'tests/unit/guc-pool-strict-identity.spec.ts' },

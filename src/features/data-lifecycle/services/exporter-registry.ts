@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Data-lifecycle exporter registry: the uniform export/delete contract over every per-user store (DataExporter), honest per-store aggregation for GET /api/me/export (a failing store is FLAGGED in the manifest, never silently dropped and never a whole-export 500), the two-step delete executor, and the operator-sub refusal guard (OSHAL_OPERATOR_SUBS/EMAILS accounts can never be self-service-deleted).
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Review fix (honesty gap): KnownDataGap contract + manifest.knownGaps — per-user data the platform holds that this surface does NOT yet export/delete (Chroma collections, Arango person graph, ...) is now declared IN the bundle and in the delete responses instead of living only in builder notes.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: isDeleteRefused takes the issuer isOperator binds to, so a local user whose typed email happens to be an operator's is not refused self-service erasure as an operator; the routes pass authz operatorRequestIssuer.
  */
 
 /**
@@ -180,10 +181,11 @@ export async function executeDeleteAll(exporters: DataExporter[], userSub: strin
  * two-click API call. Returns the human-readable refusal reason, or null when deletion may proceed.
  * @param sub - The caller's OIDC subject.
  * @param email - The caller's email (the allowlist also matches emails).
+ * @param issuer - The issuer the operator check binds to (authz operatorRequestIssuer), when the caller has a request.
  * @returns Refusal reason string, or null when the account is deletable.
  */
-export function isDeleteRefused(sub: string | null, email: string | null): string | null {
-  if (isOperatorIdentity(sub, email)) {
+export function isDeleteRefused(sub: string | null, email: string | null, issuer?: string | null): string | null {
+  if (isOperatorIdentity(sub, email, issuer)) {
     return 'This account is on the operator allowlist (OSHAL_OPERATOR_SUBS/OSHAL_OPERATOR_EMAILS). Operator accounts cannot be deleted via self-service — remove it from the allowlist first, or handle deletion out-of-band.';
   }
   return null;

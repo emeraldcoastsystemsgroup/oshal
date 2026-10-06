@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Build application authorization actors from verified sessions/delegation and current local account state.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve native external account status and configured operator continuity through provider-qualified observed identities.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Reads the ONE MOCK_OIDC predicate instead of testing `=== 'true'`. The auth bypass accepts true|1|yes in any case, so a deployment started with MOCK_OIDC=1 was authenticated as the mock user while this site read the flag as OFF - a deployment half in demo mode and half out of it. It failed CLOSED here, which is why it went unnoticed rather than becoming an incident; the hazard is the next person "fixing" the inconsistency in the permissive direction on one site alone. Both readings here - the mock-principal deactivation and the trusted-admin issuer - now agree with the bypass.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: configured management no longer admits a local-issuer principal by OSHAL_OPERATOR_EMAILS. A local account's email was never verified, so a local principal matches by subject (OSHAL_OPERATOR_SUBS or its swarm_roles row) only; a mock principal still matches by operator email, and a delegated or native principal is unchanged.
  */
 import type { Request } from 'express';
 import type { Pool } from 'pg';
@@ -77,13 +78,13 @@ export function createApplicationAuthorizationActorResolver(pool: Pool, options:
     trustedAdminIssuers.add(LOCAL_AUTH_PRINCIPAL_ISSUER);
     if (isMockOidcEnabled(env)) trustedAdminIssuers.add(MOCK_OIDC_PRINCIPAL_ISSUER);
     // External management adoption must name its issuer. Subject/email-only legacy roles cannot
-    // become cross-provider privileges merely because a second provider was configured.
+    // become cross-provider privileges merely because a second provider was configured. A local
+    // principal matches by subject only (ADR-174 Amendment A): its email was never verified.
     const management = async () => {
       if (!trustedAdminIssuers.has(issuer)) return false;
       const subjects = new Set((env.OSHAL_OPERATOR_SUBS ?? '').split(',').map(value => value.trim()).filter(Boolean));
       const emails = new Set((env.OSHAL_OPERATOR_EMAILS ?? '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
-      if (subjects.has(sub) || ((issuer === LOCAL_AUTH_PRINCIPAL_ISSUER || issuer === MOCK_OIDC_PRINCIPAL_ISSUER)
-        && email && emails.has(email.toLowerCase()))) return true;
+      if (subjects.has(sub) || (issuer === MOCK_OIDC_PRINCIPAL_ISSUER && email && emails.has(email.toLowerCase()))) return true;
       const role = await getRole(pool, sub); // Current rights, including revocations, on every invocation.
       return role?.role === 'root' || role?.role === 'admin';
     };

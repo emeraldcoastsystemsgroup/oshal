@@ -9,11 +9,13 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Preserve OIDC subjects as exact case-sensitive identifiers in operator checks, and add a canonical base64url trusted-service subject header so whitespace/case survive HTTP transport without aliasing. Legacy plain headers remain readable during rollout but are never normalized.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Expose an independently authenticated user predicate so legacy service credentials can never override an established browser or PAT principal on user-scoped routes.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-148 swarm root: isOperatorIdentity now consults DATABASE-BACKED roles (swarm_roles, via the synchronous privileged-identity cache) BEFORE the env allowlist, so root/admin are rows an admin can grant and revoke rather than a hand-typed .env nobody can change at runtime. The allowlist is retained forever as break-glass — an existing deployment keeps working with zero config change and a lost root stays recoverable — and isBreakGlassOnlyOperator lets a surface tell an operator their privilege is env-only so the two-disconnected-identity-systems state is visible instead of silent. Both sources stay fail-closed: an unloaded cache and an empty allowlist each grant nothing.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Operator identity is exact (ADR-174 Amendment A: admin is a role on a person's own account). operatorMatchKeys is the one rule for which keys an identity may match the operator sources by (the swarm_roles snapshot and OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS), given its verified principal issuer: a local account's email is whatever was typed when the account was made and was never verified, so a local-issuer principal matches by subject only. isOperator binds to the request's issuer (operatorRequestIssuer: the verified issuer, or null for a request that carries a user principal but no verified issuer, such as an older personal access token, whose email is unverified too; a rail cannot keep an email match by omitting its issuer); isOperatorIdentity and isBreakGlassOnlyOperator take the issuer when the caller knows it and keep their identity-only behaviour otherwise, so the 150+ identity-only call sites (crons, dispatchers, services) are unchanged.
  */
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import crypto from 'crypto';
 import { isPrivilegedIdentity } from './privileged-identities';
+import { getAuthenticatedPrincipalIssuer, LOCAL_AUTH_PRINCIPAL_ISSUER } from './principal-issuer';
 
 /** Identity of the authenticated caller, derived ONLY from the validated OIDC session. */
 export interface CallerIdentity {
@@ -79,15 +81,58 @@ function parseEmailAllowlist(value: string | undefined): Set<string> {
 }
 
 /**
+ * @description The keys an identity may match the operator sources by (the swarm_roles snapshot
+ * and the OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS allowlists), given its verified principal
+ * issuer. One rule for every operator decision (ADR-174 Amendment A): a local account's email is
+ * whatever was typed when the account was made and was never verified, so a local-issuer
+ * principal matches by subject only. An authenticated request that carries NO verified issuer
+ * (`null`: a derived credential minted before issuer provenance, such as an older personal access
+ * token) has an unverified email too, so it matches by subject only as well. Every other identity
+ * matches by its exact subject and its email, as before this binding; a caller with no issuer to
+ * give at all (`undefined`: the identity-only call sites, crons, dispatchers and services) is
+ * matched that way too.
+ *
+ * @param sub - the caller's exact subject, when known
+ * @param email - the caller's email, when known
+ * @param issuer - the verified principal issuer; null for a request that carries none, undefined
+ *   for a caller that holds only an identity (see {@link operatorRequestIssuer})
+ * @returns the subject and email that may be matched, each null when it may not
+ */
+export function operatorMatchKeys(sub?: string | null, email?: string | null, issuer?: string | null): CallerIdentity {
+  const subject = typeof sub === 'string' && sub.length > 0 ? sub : null;
+  const address = typeof email === 'string' && email.length > 0 ? email : null;
+  const unverified = issuer === null || issuer === LOCAL_AUTH_PRINCIPAL_ISSUER;
+  return { sub: subject, email: unverified ? null : address };
+}
+
+/**
+ * @description The issuer the operator checks bind a request to: the verified principal issuer
+ * when the request carries one; `null` for a request that carries a user principal but no
+ * verified issuer (a derived credential minted before issuer provenance, or a rail that forgot to
+ * stamp one), whose email is then unverified; `undefined` only for a request that carries no
+ * principal at all, which has nothing to match anyway. A rail cannot keep an email match by
+ * omitting its issuer or its isAuthenticated: only a verified, non-local issuer counts.
+ * @param req - Express request after authentication.
+ * @returns The issuer to pass to {@link isOperatorIdentity} and friends.
+ */
+export function operatorRequestIssuer(req: Request): string | null | undefined {
+  const issuer = getAuthenticatedPrincipalIssuer(req);
+  if (issuer !== null) return issuer;
+  return (req as { oidc?: { user?: unknown } }).oidc?.user ? null : undefined;
+}
+
+/**
  * @description Operator (admin) check for a request. Operator status is held by a swarm_roles
  * row (`root` or `admin`, managed from the Users page) OR by the env break-glass allowlist —
  * see {@link isOperatorIdentity} for why both exist and in what order they are consulted.
  * FAIL-CLOSED: with no roles loaded and an empty allowlist there are no operators, so
- * operator-gated views scope to the caller instead of leaking everyone's data.
+ * operator-gated views scope to the caller instead of leaking everyone's data. The check binds
+ * to the request's verified principal issuer ({@link operatorMatchKeys}): a local principal
+ * matches by subject only.
  */
 export function isOperator(req: Request): boolean {
   const { sub, email } = getCaller(req);
-  return isOperatorIdentity(sub, email);
+  return isOperatorIdentity(sub, email, operatorRequestIssuer(req));
 }
 
 /**
@@ -107,17 +152,26 @@ export function isOperator(req: Request): boolean {
  * Still fail-closed: an unloaded cache grants nothing and an empty allowlist grants nothing, so a
  * swarm with neither configured has no operators rather than universal access.
  *
+ * A caller that knows the principal's issuer passes it, and the check binds to it
+ * ({@link operatorMatchKeys}: a local principal, or a request carrying no verified issuer,
+ * matches by subject only); a caller with only an identity omits it and keeps the subject and
+ * email match it always had.
+ *
  * @param sub - the caller's OIDC sub, when known
  * @param email - the caller's email, when known
+ * @param issuer - the issuer from {@link operatorRequestIssuer} when the caller has a request; omitted otherwise
  * @returns true when the identity holds root/admin, or is on the break-glass allowlist
  */
-export function isOperatorIdentity(sub?: string | null, email?: string | null): boolean {
-  if (isPrivilegedIdentity(sub, email)) return true;
-  const subs = parseSubjectAllowlist(process.env.OSHAL_OPERATOR_SUBS);
-  const emails = parseEmailAllowlist(process.env.OSHAL_OPERATOR_EMAILS);
-  if (typeof sub === 'string' && sub.length > 0 && subs.has(sub)) return true;
-  if (typeof email === 'string' && email.length > 0 && emails.has(email.toLowerCase())) return true;
-  return false;
+export function isOperatorIdentity(sub?: string | null, email?: string | null, issuer?: string | null): boolean {
+  const keys = operatorMatchKeys(sub, email, issuer);
+  if (isPrivilegedIdentity(keys.sub, keys.email)) return true;
+  return onOperatorAllowlist(keys);
+}
+
+/** True when the match keys name an entry on the OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS break-glass allowlist. */
+function onOperatorAllowlist(keys: CallerIdentity): boolean {
+  if (keys.sub !== null && parseSubjectAllowlist(process.env.OSHAL_OPERATOR_SUBS).has(keys.sub)) return true;
+  return keys.email !== null && parseEmailAllowlist(process.env.OSHAL_OPERATOR_EMAILS).has(keys.email.toLowerCase());
 }
 
 /**
@@ -127,11 +181,13 @@ export function isOperatorIdentity(sub?: string | null, email?: string | null): 
  * problem ADR-148 exists to fix, and nothing else would ever tell them.
  * @param sub - the caller's OIDC sub, when known
  * @param email - the caller's email, when known
+ * @param issuer - the verified principal issuer, when the caller has one (see {@link isOperatorIdentity})
  * @returns true when privilege is break-glass only
  */
-export function isBreakGlassOnlyOperator(sub?: string | null, email?: string | null): boolean {
-  if (isPrivilegedIdentity(sub, email)) return false;
-  return isOperatorIdentity(sub, email);
+export function isBreakGlassOnlyOperator(sub?: string | null, email?: string | null, issuer?: string | null): boolean {
+  const keys = operatorMatchKeys(sub, email, issuer);
+  if (isPrivilegedIdentity(keys.sub, keys.email)) return false;
+  return onOperatorAllowlist(keys);
 }
 
 /**

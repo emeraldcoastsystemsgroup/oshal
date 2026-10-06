@@ -18,6 +18,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | /whoami resolves its `source` through the shared grant-source resolver instead of its own two-way guess. The guess had no third answer, so an admin granted by an IdP ROLE CLAIM was reported as `break-glass` and the console told them to ask for a role that would survive an edit to an environment file they are not in. The resolver also reports every source that independently confers the role, and whether the swarm_roles snapshot has loaded at all — the joined access review reads the same function, so the two surfaces cannot disagree about one fact.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Reads the one MOCK_OIDC predicate instead of a local truthiness helper. Seven places read this variable through FIVE different helpers, and they did not agree: two accepted `on` and five did not, so MOCK_OIDC=on meant "demo" to the deploy-mode resolver and "off" to the auth bypass. The accepted set is deliberately NOT widened to include `on` - widening would newly enable an auth bypass on any box that has the variable set to it, and a half-demo deployment was already not working. Now every reader answers identically by construction. This route's envOn() was one of the two that accepted `on`, so its audit export reported a deployment as mock while the bypass was off.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | GET /posture is portal-admin only (requiresOperator): it maps the platform's security posture (DB role flags, RLS gaps, auth toggles), and rbacMiddleware is a no-op unless OSHAL_RBAC_ENFORCE=true, so any signed-in user could read it (route review 2026-10-05).
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment A: the posture reports operatorRolesConfigured (a swarm_roles root or admin is loaded, or was before a failed refresh) beside operatorAllowlistConfigured, because the admin console and GET /readiness are now restricted by either (governance isAdminConsoleRestricted); operatorAllowlistConfigured counts entries in either list, so a whitespace-only OSHAL_OPERATOR_SUBS no longer hides a populated OSHAL_OPERATOR_EMAILS.
  */
 
 /**
@@ -59,6 +60,7 @@ import {
   callerFromRequest,
   isEnforcementEnabled,
   requireAdminConsoleAccess,
+  isOperatorRolesConfigured,
   Permission,
   ROLE_PERMISSIONS,
 } from '@/features/governance';
@@ -140,7 +142,8 @@ export function buildRuntimeSecurityControls(env: NodeJS.ProcessEnv = process.en
     alertWebhookHmac: Boolean(String(env.ALERT_WEBHOOK_HMAC_SECRET ?? '').trim()),
     mockOidc: isMockOidcEnabled(env),
     tlsRejectUnauthorized: (env.NODE_TLS_REJECT_UNAUTHORIZED ?? '1') !== '0',
-    operatorAllowlistConfigured: Boolean(String(env.OSHAL_OPERATOR_SUBS || env.OSHAL_OPERATOR_EMAILS || '').trim()),
+    operatorAllowlistConfigured: [env.OSHAL_OPERATOR_SUBS, env.OSHAL_OPERATOR_EMAILS].some((list) => String(list ?? '').split(',').some((entry) => entry.trim().length > 0)),
+    operatorRolesConfigured: isOperatorRolesConfigured(),
     // Governance phases 1–4 toggles (single-pane posture):
     rlsEnforce: envOn('OSHAL_RLS_ENFORCE', false, env),
     accessAudit: envOn('OSHAL_ACCESS_AUDIT', false, env),

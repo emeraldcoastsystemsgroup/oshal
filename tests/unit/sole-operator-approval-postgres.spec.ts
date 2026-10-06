@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Sole-operator self-approval on real PostgreSQL under the non-superuser runtime role: the swarm root alone may approve an AUTH-07 catalog migration or an access change touching their own sensitive grant by naming that exact preview, and the reference is stored with the approval and its audit event; a second administrator from ANY source (role store, configured subject, verified provider sign-in, local account) turns the two-person rule back on; a non-root administrator, a delegated root, a reference for another preview and an unreadable census are all refused.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Cover MOCK_OIDC: a mock identity with an operator email is a second administrator, and header-selectable mock identities refuse outright.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment A: a local account is no swarm administrator by its email, which was never verified, so a local account whose email is on OSHAL_OPERATOR_EMAILS no longer turns the two-person rule back on; one named by subject still does. The fixture also applies 185-experience-composite-roles.sql, which the approval path reads (oshal_authorization_composite_assignments) and whose absence had left every case here red.
  */
 /** Disposable local PostgreSQL only. Never consumes DATABASE_URL or deployment credentials. */
 import type { Pool } from 'pg';
@@ -27,7 +28,7 @@ vi.mock('@/shared/logger', () => ({ createChildLogger: () => ({ info: vi.fn(), w
 const RUNTIME = 'sole_operator_runtime';
 const database = new DisposablePostgres({ purpose: 'sole-operator-approval', roles: [{ name: RUNTIME, max: 4 }],
   migrations: ['127-application-authorization.sql', '129-verified-principal-directory.sql', '131-authorization-audit-indexes.sql',
-    '173-authorization-catalog-migrations.sql'] });
+    '173-authorization-catalog-migrations.sql', '185-experience-composite-roles.sql'] });
 const GOOGLE = 'https://accounts.google.com';
 const APP = CLASSROOM_APP;
 const root: AuthorizationActor = { sub: 'fixture-root', issuer: GOOGLE, isActive: true, isSwarmAdmin: true };
@@ -134,10 +135,14 @@ describe('sole-operator self-approval of a catalog migration', () => {
     await database.pool.query('DELETE FROM oshal_verified_principals WHERE user_sub=$1', ['fixture-second-google']);
     await database.pool.query(`INSERT INTO oshal_local_users(id,email,user_sub,status,password_hash)
       VALUES('local-second','second@example.test','local-second-sub','active','fixture-hash')`);
-    await expect(approve('local-account')).rejects.toMatchObject(refused);
-    // An operator email with no account behind it is no administrator yet; the root alone again.
-    await database.pool.query('DELETE FROM oshal_local_users');
-    await expect(approve('sole-again')).resolves.toMatchObject({ approved: true });
+    // A local administrator holds a role row, and is counted...
+    await grantRole(database.pool, { userSub: 'local-second-sub', role: 'admin', grantedBySub: root.sub });
+    await expect(approve('local-account-by-role-row')).rejects.toMatchObject(refused);
+    await database.pool.query('DELETE FROM swarm_roles WHERE user_sub=$1', ['local-second-sub']);
+    // ...but a local account is no administrator by its email, which was never verified (ADR-174
+    // Amendment A): this one's email is on OSHAL_OPERATOR_EMAILS and the root is still the sole
+    // administrator, so the approval goes through (and consumes the preview).
+    await expect(approve('local-account-by-email')).resolves.toMatchObject({ approved: true });
   });
 
   it('counts the MOCK_OIDC administrator and refuses when mock identities are caller-chosen', async () => {

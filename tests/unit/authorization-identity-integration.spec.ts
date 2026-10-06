@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise current account and directory provenance through the real identity bridge and actor resolver.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment A guard through the real configured-management path: a local principal whose unverified email is on OSHAL_OPERATOR_EMAILS is no swarm administrator, one named on OSHAL_OPERATOR_SUBS is, and a mock principal still matches by operator email.
  */
 import type { Pool } from 'pg';
 import type { Request, Response, NextFunction } from 'express';
@@ -44,6 +45,22 @@ describe('verified application actor resolution', () => {
     const resolve = createApplicationAuthorizationActorResolver({ query } as unknown as Pool, { env: {}, now: () => now });
     expect(await resolve(request({ sub: claims.sub }, claims))).toMatchObject({ tenantIds: [], isSwarmAdmin: false });
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it('never makes a local principal a swarm administrator by its unverified email (ADR-174 Amendment A)', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] }); // no swarm_roles row for anybody
+    const env = { OSHAL_OPERATOR_EMAILS: 'Owner@Example.test', MOCK_OIDC: 'true' } as NodeJS.ProcessEnv;
+    const resolve = createApplicationAuthorizationActorResolver({ query } as unknown as Pool, {
+      env, localSnapshot: async () => ({ status: 'active' }), tenantIds: async () => [],
+    });
+    const local = request({ sub: 'local-person', email: 'owner@example.test', iss: 'urn:oshal:local-auth' });
+    expect(await resolve(local)).toMatchObject({ isActive: true, isSwarmAdmin: false });
+    // The mock identity reports that address from the configured mock sign-in, as before.
+    const mock = request({ sub: 'mock-user-001', email: 'owner@example.test', iss: 'urn:oshal:mock-oidc' });
+    expect(await resolve(mock)).toMatchObject({ isActive: true, isSwarmAdmin: true });
+    // A local administrator is named by subject.
+    env.OSHAL_OPERATOR_SUBS = 'local-person';
+    expect(await resolve(local)).toMatchObject({ isActive: true, isSwarmAdmin: true });
   });
 
   it('reads current administrator rights instead of accepting a cached role after revocation', async () => {

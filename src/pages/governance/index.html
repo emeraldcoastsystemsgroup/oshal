@@ -17,6 +17,9 @@
   2 | maintainer@emeraldcoastsystemsgroup.com | Display explicit shared-HKDF DEK-store break-glass
     | as a warning instead of presenting it as the normal per-user envelope posture.
   3 | maintainer@emeraldcoastsystemsgroup.com | Follow the shared portal theme live without replacing page content.
+  4 | maintainer@emeraldcoastsystemsgroup.com | Show 'Operator roles configured' beside the allowlist row (ADR-174
+    | Amendment A): a swarm root or admin row restricts the admin console on its own, so a
+    | roles-only deployment no longer reads as unrestricted.
 -->
 <html lang="en" data-theme="midnight"><head>
   <!-- Shared portal palette: resolve before paint and follow the parent or saved choice live. -->
@@ -182,6 +185,7 @@ function render(p){
     ['Rate limiting', rateTag],
     ['Alertmanager HMAC', hmacTag],
     ['Operator allowlist configured', ctrls.operatorAllowlistConfigured],
+    ['Operator roles configured (swarm root/admin)', ctrls.operatorRolesConfigured],
     ['OIDC mode', mockTag],
     ['TLS cert verification', tlsTag],
   ].map(([label,v]) => '<div class="ctl"><span>'+esc(label)+'</span>'+ctlTag(v)+'</div>').join('');
