@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (B4, step B5-3): the AI defaults screen under Swarm Admin, served at
+    | /swarm-admin/ai-defaults to the operator role only. It hosts the two unchanged /config panels
+    | for the swarm's AI defaults: the fleet-default LLM provider, model and fallback order, and the
+    | capability swarm defaults and prices (voice, speech, images, video; ADR-173). The same APIs,
+    | the same forms, in the admin's own place; a person's own choices stay in their cockpit. The
+    | status line is a sticky bar at the top of the page, so an outcome from a form far down the
+    | page is seen (review).
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — AI defaults</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/config-admin/config-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/ai-defaults/ai-defaults.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the AI defaults…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>AI defaults</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-hubot"></span>
+      <h1>AI defaults</h1>
+    </div>
+    <p class="sa-lead">
+      What everyone gets when they have nothing of their own: the provider the fleet runs on, with its model and
+      fallback order, and the swarm default for each capability. A person's own choices, where you allow them, win
+      over these.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="fleetDefaultHeading">
+      <h2 id="fleetDefaultHeading">Fleet default provider</h2>
+      <div id="fleetDefaultPanel" class="agent-config-panel surface-card"></div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="capabilityHeading">
+      <h2 id="capabilityHeading">Capability defaults and prices</h2>
+      <div id="capabilityProvidersPanel" class="agent-config-panel surface-card"></div>
+    </section>
+  </main>
+
+  <script type="module" src="/swarm-admin/ai-defaults/ai-defaults.js"></script>
+</body>
+</html>

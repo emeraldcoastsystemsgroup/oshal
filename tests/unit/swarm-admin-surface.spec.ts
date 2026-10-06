@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B guards (B4, step B5-2): the /swarm-admin home and its assets are served to the operator role only (a signed-in user gets 403 and a signed-out caller is sent to sign in), through the real surface registration with the real page definitions; the navigation API refuses a user and answers an operator with the home and grouped items, every one of which is a registered standalone surface, so the list never names a page that does not exist; the real mount line in server-auxiliary-routes and the page's fetch path are pinned (review); the page's styles load before the shared glass; the page bundle exists, is named like its route (so no asset alias is mounted), and inserts values as text only. Each fails on the tree before the fix.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-3): the AI defaults screen is guarded like the home (200 operator, 403 user on the page and its script, 302 signed out), listed in the navigation, hosts the two unchanged /config panel modules (every absolute import fetched through the real registration, review) in the containers they expect, and keeps the style order the glass spec requires.
  */
 
 import fs from 'node:fs';
@@ -86,6 +87,40 @@ describe('the /swarm-admin surface', () => {
       // Granting the role admits the same user on the next request, without a restart.
       setPrivilegedIdentities([{ sub: USER.sub, email: USER.email, role: 'admin' }]);
       expect((await app.get('/swarm-admin', USER)).status).toBe(200);
+    } finally { await app.close(); }
+  });
+
+  it('serves the AI defaults screen under the same guard, hosting the unchanged /config panels', async () => {
+    const page = pages().find((p) => p.routePath === '/swarm-admin/ai-defaults');
+    expect(page?.extraGuards).toEqual([requiresOperator]);
+    expect(path.basename(page!.pageDir)).toBe('ai-defaults');
+    const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    for (const id of ['fleetDefaultPanel', 'capabilityProvidersPanel', 'statusBanner']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/ai-defaults/ai-defaults.css')).toBeLessThan(html.indexOf('surface-glass.css'));
+    const script = fs.readFileSync(path.join(page!.pageDir, 'ai-defaults.js'), 'utf8');
+    expect(script).toContain("from '/config-admin/config-admin-fleet-default.js'");
+    expect(script).toContain("from '/config-admin/config-admin-capability-providers.js'");
+    expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(SWARM_ADMIN_NAVIGATION.some((item) => item.path === '/swarm-admin/ai-defaults' && item.group === 'swarm-admin')).toBe(true);
+
+    const app = await serve((a) => registerUiSurfaceRoutes({ app: a, requiresAuth, serveHtml: sendHtmlResponse, pages: pages() }));
+    try {
+      const screen = await app.get('/swarm-admin/ai-defaults', OPERATOR);
+      expect(screen.status).toBe(200);
+      expect(await screen.text()).toContain('AI defaults');
+      expect((await app.get('/swarm-admin/ai-defaults/ai-defaults.js', OPERATOR)).status).toBe(200);
+      expect((await app.get('/swarm-admin/ai-defaults', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/ai-defaults/ai-defaults.js', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/ai-defaults/', null)).status).toBe(302);
+      // The nested route's shared-helper mount stays behind sign-in too.
+      expect((await app.get('/swarm-admin/shared/ui-debug.js', null)).status).toBe(302);
+      // Every absolute module the page imports is really served through the registered surfaces (the /config
+      // page's alias mount for the panel modules, the shared helpers they import), so a moved file cannot break it silently.
+      const imports = Array.from(script.matchAll(/from '(\/[^']+)'/g), (m) => m[1]);
+      expect(imports.length).toBeGreaterThanOrEqual(3);
+      for (const url of [...imports, '/shared/ui-debug.js', '/config-admin/config-admin.css']) {
+        expect((await app.get(url, OPERATOR)).status, url).toBe(200);
+      }
     } finally { await app.close(); }
   });
 
