@@ -1,13 +1,38 @@
 # ADR-174: A local admin that only configures the swarm; "My Account" and "Swarm Admin" are separate places
 
 Date: 2026-10-05
-Status: **Accepted — 2026-10-05, operator decisions.** The operator set D1 to D3 in conversation on 2026-10-05 ("it should
-be a local account", "the local admin account is only to configure the swarm. it is not a user of the swarm", "users can
-bring their own account... this is already coded for"). Slice 1 is built (PR #1065); slices 2 to 4 follow, each as its own PR.
+Status: **Accepted 2026-10-05; D1 superseded by Amendment A (2026-10-06, operator decision).** D2 (separate Swarm Admin
+screens) and D3 (mine, then the portal default) stand. Slice 1 is built (PR #1065). Slices 2a-2c (the separate local
+account, its authenticator-only login and its scope gate, PRs #1081-#1086, #1091, #1093) were built and then removed
+under Amendment A.
 
 Related: [ADR-148](148-swarm-root.md) (the operator gate), [ADR-173](173-capability-providers-resolve-per-user.md)
 (capability providers resolve per user, with swarm defaults behind them), [ADR-162](162-a-bots-brain-is-layered-records.md)
 (a bot's brain is layered records), [ADR-137](137-deploy-modes.md) amendment A (the node's "Log in + push").
+
+
+## Amendment A (2026-10-06): admin is a role on a person's account, and portal defaults are rows
+
+**Decided by the operator on 2026-10-06**, replacing D1:
+
+> "there doesn't have to be an admin user with the same screens there just needs to be an admin role that gets a new set
+> of different screens that allow for portal defaults. the admin user can work in the admin screen and set the portal
+> settings and configuration. the same user has the existing screens where they are configuring their own data. in the
+> table the portal defaults are saved as a user that makes it defined as the portal default... the key is that it has be
+> accessible by the users or backend system that allows it to be defaulted and fall back"
+
+- **A1. Admin is a role, not an account.** It is the existing operator role (swarm root and admin rows, plus the
+  break-glass allowlist; ADR-148, and the terms of ADR-173). A person holding it keeps their ordinary account and screens
+  for their own data, and additionally sees the Swarm Admin screens (D2), which are guarded by that role. There is no
+  separate configuration-only `admin` account; slices 2a-2c, which built one, were removed.
+- **A2. Portal defaults are rows in the same tables as people's own settings,** under the reserved owner
+  `portal-default` (chosen over a blank owner and `default@oshal.ai`: it can never collide with a real subject, since
+  identity-provider subjects are opaque ids and local subjects start with `local-`). Everyone may read the
+  `portal-default` row; only the admin role may write it. A resolver reads the person's own row, then the
+  `portal-default` row, then refuses clearly or uses a built-in default (D3). ADR-173's capability swarm rows already
+  give voice, speech, image and video a "Portal default" this way, in their own tables; they stay as they are.
+- **A3. Kept from the removed slices:** the config secret-wipe fix (PR #1090), which was a real bug for everyone, and the
+  `mountSignInRoutes` helper (`src/app/server-auxiliary-routes.ts`), which keeps `server.ts` under its size limit.
 
 ## Context
 

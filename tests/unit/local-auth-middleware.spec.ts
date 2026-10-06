@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guards for the LOCAL_AUTH middleware set (ADR-117): fail-closed construction (MOCK_OIDC conflict / missing secret both throw at boot instead of degrading to open auth), the cookie injector resolving a live session into the standard req.oidc shape, revocation via token_version, and requiresAuth's API-401 vs browser-redirect split.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Prove a verified local session carries the stable local-auth issuer required by derived credentials and issuer-bound applications.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Pin the whole local session principal, not just issuer and subject: exactly iss, sub, email, name and preferred_username. Guards Roger's admin-role decision (2026-10-06), which removes ADR-174's separate admin account and with it the account-kind claim every local session carried; fails on the tree that still added it.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -44,6 +45,9 @@ function startApp(pool: unknown): Promise<void> {
       issuer: oidc?.user?.iss ?? null,
       sub: oidc?.user?.sub ?? null,
     });
+  });
+  app.get('/claims', (req, res) => {
+    res.json((req as { oidc?: { user?: Record<string, unknown> } }).oidc?.user ?? null);
   });
   app.get('/api/private', set.requiresAuth, (_req, res) => res.json({ ok: true }));
   app.get('/private-page', set.requiresAuth, (_req, res) => res.type('html').send('<b>secret</b>'));
@@ -107,6 +111,18 @@ describe('local-auth session injector', () => {
       authenticated: true,
       issuer: 'urn:oshal:local-auth',
       sub: USER.user_sub,
+    });
+  });
+
+  it('carries exactly the standard local claims: issuer, subject, email, name and username', async () => {
+    await startApp(snapshotPool(USER));
+    const claims = await (await fetch(`${base}/claims`, { headers: { Cookie: sessionCookieFor(1) } })).json();
+    expect(claims).toEqual({
+      iss: 'urn:oshal:local-auth',
+      sub: USER.user_sub,
+      email: USER.email,
+      name: USER.display_name,
+      preferred_username: USER.email,
     });
   });
 

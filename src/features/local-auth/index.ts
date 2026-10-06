@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Barrel for the local-auth feature (ADR-117): the invited-user store behind LOCAL_AUTH mode.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Export createPasswordReset (self-service reset, ADR-117 deferred item).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Export createSwarmAdmin, SWARM_ADMIN_LOGIN and LocalAccountKind (ADR-174 slice 2a).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Stop exporting createSwarmAdmin, SWARM_ADMIN_LOGIN and LocalAccountKind: the store no longer has them. Roger's admin-role decision (2026-10-06) replaces ADR-174's separate configuration-only admin account with the existing operator role on a person's own account, so the account kind and the reserved 'admin' login are gone.
  */
 
 export {
@@ -52,13 +53,11 @@ export {
   getSessionSnapshot,
   isStoreEmpty,
   bootstrapFirstAdmin,
-  createSwarmAdmin,
-  SWARM_ADMIN_LOGIN,
   listUsers,
   setUserStatus,
   getUserById,
 } from './services/local-user-store';
-export type { LocalUser, InviteResult, LocalAccountKind } from './services/local-user-store';
+export type { LocalUser, InviteResult } from './services/local-user-store';
 export {
   LOCAL_SESSION_COOKIE,
   LOCAL_SESSION_ROLLING_MS,

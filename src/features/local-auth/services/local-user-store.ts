@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Require a transaction client for initial account creation; installer proof and table locks precede this primitive.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Allow account lookup/status primitives within the root-safe administration transaction.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 slice 2a: accounts carry an account_kind ('user' | 'swarm-admin', added at runtime like the TOTP columns), reported by toLocalUser and getSessionSnapshot. createSwarmAdmin makes the configuration-only account with the reserved login 'admin' (never replacing an existing one). Invites and email resets touch only 'user' accounts, so they can neither create nor take over the admin.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Slice 2a removed (Roger's admin-role decision, 2026-10-06: admin is the existing operator role on a person's own account, not a separate configuration-only account). Gone: LocalAccountKind, SWARM_ADMIN_LOGIN, createSwarmAdmin, accountKind on LocalUser and the session snapshot, and the account_kind conditions on invites and email resets, which are back to exactly their pre-2a statements. The runtime ALTER that added account_kind no longer runs and the column is no longer a schema requirement. A database that already has the column keeps it, which is harmless: its default is 'user', no statement reads or writes it, and no 'swarm-admin' row exists, because nothing outside the removed tests ever called createSwarmAdmin.
  */
 
 import crypto from 'crypto';
@@ -39,19 +40,8 @@ const SCRYPT_KEYLEN = 32;
 const SCRYPT_SALT_BYTES = 16;
 
 /** A local login account. `passwordHash` never leaves this module. */
-/**
- * What a local account is for. `user` is a person using the swarm. `swarm-admin` is the configuration-only
- * account the install creates (ADR-174 D1): it signs in as the login `admin`, configures the swarm, and is
- * not a user of it.
- */
-export type LocalAccountKind = 'user' | 'swarm-admin';
-
-/** The reserved login of the swarm-admin account. It is not an email address, so no invite or email reset can reach it. */
-export const SWARM_ADMIN_LOGIN = 'admin';
-
 export interface LocalUser {
   id: string;
-  /** The login: an email address for a user, or {@link SWARM_ADMIN_LOGIN} for the swarm-admin account. */
   email: string;
   displayName: string | null;
   userSub: string;
@@ -61,7 +51,6 @@ export interface LocalUser {
   activatedAt: string | null;
   lastLoginAt: string | null;
   inviteExpiresAt: string | null;
-  accountKind: LocalAccountKind;
 }
 
 /**
@@ -195,13 +184,10 @@ export async function ensureLocalUserSchema(pool: Pool): Promise<void> {
         last_login_at     TIMESTAMPTZ
       )`,
       ...buildOwnerRlsPolicyStatements('oshal_local_users', 'user_sub'),
-      `ALTER TABLE oshal_local_users
-         ADD COLUMN IF NOT EXISTS account_kind TEXT NOT NULL DEFAULT 'user'
-         CHECK (account_kind IN ('user', 'swarm-admin'))`,
     ],
     requirements: [{
       table: 'oshal_local_users',
-      columns: ['id', 'email', 'user_sub', 'password_hash', 'status', 'token_version', 'invite_token_hash', 'account_kind'],
+      columns: ['id', 'email', 'user_sub', 'password_hash', 'status', 'token_version', 'invite_token_hash'],
     }],
   });
 }
@@ -219,7 +205,6 @@ function toLocalUser(r: Record<string, unknown>): LocalUser {
     activatedAt: r.activated_at ? new Date(r.activated_at as string).toISOString() : null,
     lastLoginAt: r.last_login_at ? new Date(r.last_login_at as string).toISOString() : null,
     inviteExpiresAt: r.invite_expires_at ? new Date(r.invite_expires_at as string).toISOString() : null,
-    accountKind: r.account_kind === 'swarm-admin' ? 'swarm-admin' : 'user',
   };
 }
 
@@ -256,7 +241,7 @@ export async function upsertInvite(
        invite_token_hash = EXCLUDED.invite_token_hash,
        invite_expires_at = EXCLUDED.invite_expires_at,
        display_name      = COALESCE(EXCLUDED.display_name, oshal_local_users.display_name)
-     WHERE oshal_local_users.status <> 'disabled' AND oshal_local_users.account_kind = 'user'
+     WHERE oshal_local_users.status <> 'disabled'
      RETURNING *`,
     [crypto.randomUUID(), email, input.displayName ?? null, localSubForEmail(email),
       hashInviteToken(token), expiresAt, input.invitedBySub ?? null],
@@ -286,7 +271,7 @@ export async function createPasswordReset(pool: Pool, email: string): Promise<In
   const expiresAt = new Date(Date.now() + RESET_TTL_MS);
   const { rows } = await runWithSystemIdentity(() => pool.query(
     `UPDATE oshal_local_users SET invite_token_hash = $2, invite_expires_at = $3
-      WHERE email = $1 AND status = 'active' AND account_kind = 'user'
+      WHERE email = $1 AND status = 'active'
       RETURNING *`,
     [normalized, hashInviteToken(token), expiresAt],
   ));
@@ -378,16 +363,15 @@ export async function verifyLogin(pool: Pool, email: string, password: string): 
  */
 export async function getSessionSnapshot(
   pool: Pool, sub: string,
-): Promise<{ status: string; tokenVersion: number; email: string; displayName: string | null; accountKind: LocalAccountKind } | null> {
+): Promise<{ status: string; tokenVersion: number; email: string; displayName: string | null } | null> {
   const { rows } = await runWithSystemIdentity(() => pool.query(
-    `SELECT status, token_version, email, display_name, account_kind FROM oshal_local_users WHERE user_sub = $1 LIMIT 1`, [sub],
+    `SELECT status, token_version, email, display_name FROM oshal_local_users WHERE user_sub = $1 LIMIT 1`, [sub],
   ));
   const r = rows[0];
   if (!r) return null;
   return {
     status: String(r.status), tokenVersion: Number(r.token_version),
     email: String(r.email), displayName: (r.display_name as string | null) ?? null,
-    accountKind: r.account_kind === 'swarm-admin' ? 'swarm-admin' : 'user',
   };
 }
 
@@ -424,31 +408,6 @@ export async function bootstrapFirstAdmin(
       WHERE NOT EXISTS (SELECT 1 FROM oshal_local_users)
      RETURNING *`,
     [crypto.randomUUID(), email, input.displayName ?? null, localSubForEmail(email), hashPassword(input.password)],
-  ));
-  return rows[0] ? toLocalUser(rows[0]) : null;
-}
-
-/**
- * @description Creates the configuration-only swarm-admin account (ADR-174 D1): login {@link SWARM_ADMIN_LOGIN},
- * active at once with the password the install generated. It never replaces an existing account, so running the
- * install or migration step twice is harmless, and it is the only way the reserved login comes to exist: the
- * login is not an email address, so invites and email resets cannot create or reach it.
- *
- * @param pool - Postgres pool or transaction client.
- * @param input - The install-generated password and an optional display name.
- * @returns The created account, or null when the swarm-admin account already exists.
- */
-export async function createSwarmAdmin(
-  pool: Pool | PoolClient, input: { password: string; displayName?: string | null },
-): Promise<LocalUser | null> {
-  assertPasswordPolicy(input.password);
-  const { rows } = await runWithSystemIdentity(() => pool.query(
-    `INSERT INTO oshal_local_users (id, email, display_name, user_sub, status, password_hash, activated_at, account_kind)
-     VALUES ($1, $2, $3, $4, 'active', $5, NOW(), 'swarm-admin')
-     ON CONFLICT (email) DO NOTHING
-     RETURNING *`,
-    [crypto.randomUUID(), SWARM_ADMIN_LOGIN, input.displayName ?? 'Swarm admin', localSubForEmail(SWARM_ADMIN_LOGIN),
-      hashPassword(input.password)],
   ));
   return rows[0] ? toLocalUser(rows[0]) : null;
 }

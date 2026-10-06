@@ -4,16 +4,18 @@
  * SEQ                 | AUTHOR                                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Guard the CRM Entra/local pilot composition: flag-off behavior is the historical wholesale mode, hybrid construction selects Microsoft secondary-shaped OIDC, bare /login remains the combined invited-user page, middleware ordering maps external identity before local fallback, explicit door switches clear sibling cookies, and logout cannot resurrect the other session.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Guard Roger's admin-role decision (2026-10-06: admin is the existing operator role on a person's own account, so ADR-174's separate local admin sign-in is removed). With a session-signing secret configured, as on every real Google or Microsoft deployment, plain OIDC selection returns exactly the provider set, and a validly signed local session cookie authenticates nobody and never reaches the account store. Both fail on the tree that still mounted the admin's local rail beside the provider.
  */
 
 import cookieParser from 'cookie-parser';
 import express, { type RequestHandler } from 'express';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createApplicationAuthMiddlewareSet,
   type ApplicationAuthDependencies,
 } from '@/app/middleware/application-auth';
+import { mintLocalSession } from '@/features/local-auth';
 import type { OidcMiddlewareSet } from '@/shared/middleware/oidc';
 
 const BASE_ENV = {
@@ -330,5 +332,57 @@ describe('createApplicationAuthMiddlewareSet', () => {
     expect(response.location).toBe('/');
     expect(events).toEqual(['external:auth', 'external:logout']);
     expect(response.setCookie).toMatch(/oshal_local=;/);
+  });
+});
+
+// A real Google or Microsoft deployment has a session-signing secret configured. Admin is a role on a
+// person's own provider account (Roger, 2026-10-06), so that secret must not bring a local sign-in
+// beside the provider: the deployment's auth set is the provider's own, and a local cookie is ignored.
+describe('an identity-provider deployment signs people in through the provider alone', () => {
+  const SECRET_KEY = 'SESSION_SECRET';
+  let savedSecret: string | undefined;
+
+  beforeEach(() => {
+    savedSecret = process.env[SECRET_KEY];
+    process.env[SECRET_KEY] = 'placeholder-session-secret-application-auth';
+  });
+
+  afterEach(() => {
+    if (savedSecret === undefined) delete process.env[SECRET_KEY];
+    else process.env[SECRET_KEY] = savedSecret;
+  });
+
+  it('returns exactly the provider set while a session-signing secret is configured', () => {
+    const external = setOf('external', []);
+    const selected = createApplicationAuthMiddlewareSet({} as never, { LOCAL_AUTH: 'false' }, {
+      createLocal: () => { throw new Error('local must not construct'); },
+      createOidc: () => external,
+    });
+    expect(selected).toBe(external);
+  });
+
+  it('never consults the account store for a validly signed local session cookie', async () => {
+    const storeQueries: string[] = [];
+    const store = {
+      async query(sql: string): Promise<{ rows: unknown[] }> {
+        storeQueries.push(sql);
+        return { rows: [{ status: 'active', token_version: 1, email: 'person@example.com', display_name: null }] };
+      },
+    };
+    const external = setOf('external', [], (req, _res, next) => {
+      (req as any).oidc = { isAuthenticated: () => false };
+      next();
+    });
+    const selected = createApplicationAuthMiddlewareSet(store as never, { LOCAL_AUTH: 'false' }, {
+      createLocal: () => { throw new Error('local must not construct'); },
+      createOidc: () => external,
+    });
+    const minted = mintLocalSession({
+      userSub: 'local-0a1b2c3d4e5f6a7b', email: 'person@example.com', displayName: null, tokenVersion: 1,
+    });
+    expect(minted).not.toBeNull();
+    const response = await callApp(selected, '/principal', `oshal_local=${minted!.value}`);
+    expect(JSON.parse(response.body)).toEqual({ sub: null });
+    expect(storeQueries).toEqual([]);
   });
 });

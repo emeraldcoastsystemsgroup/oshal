@@ -218,6 +218,7 @@
  * 202 | maintainer@emeraldcoastsystemsgroup.com   | The ADR-066 personal-graph mounts moved to server-auxiliary-routes.ts (mountPersonalGraphRoutes), unchanged and still operator-only, so server.ts is back under the 800-code-line decomposition threshold (BACKLOG #1788) it had crossed on main.
  * 203 | maintainer@emeraldcoastsystemsgroup.com   | The sign-in routes move unchanged into server-auxiliary-routes.ts mountSignInRoutes, which also mounts the swarm admin's sign-in (/login/admin, /api/admin-auth/login, /logout/admin) right after /login and before the generic /login/:provider route, in every auth mode except MOCK_OIDC (ADR-174 slice 2b-ii). This keeps server.ts under its decomposition threshold.
  * 204 | maintainer@emeraldcoastsystemsgroup.com   | Mount createSwarmAdminScopeGuard (ADR-174 slice 2c) after identity resolution and the RLS identity block, before the first route (tv-pairing): the swarm admin reaches only swarm administration and every personal surface refuses it.
+ * 205 | maintainer@emeraldcoastsystemsgroup.com   | The separate configuration-only admin account is removed (Roger's admin-role decision, 2026-10-06: admin is the existing operator role on a person's own account). The swarm-admin scope gate (entry 204) is no longer mounted and its module is deleted, so every route sees the request exactly as before entry 204. mountSignInRoutes (entry 203) stays in server-auxiliary-routes.ts but no longer mounts /login/admin, /api/admin-auth/login or /logout/admin, and no longer takes ctx.
  */
 
 require('dotenv').config();
@@ -318,7 +319,6 @@ import { createTakeoutRoutes } from './routes/takeout-routes';
 import { createAuditCaptureMiddleware, requireAdminConsoleAccess } from '@/features/governance';
 import { createGuestSessionInjector, isGuestRequest } from '@/shared/middleware/guest-session';
 import { createGuestGuard } from '@/shared/middleware/guest-guard';
-import { createSwarmAdminScopeGuard } from '@/shared/middleware/swarm-admin-scope';
 import { createGuestRoutes } from './routes/guest-routes';
 import { createRagRoutes } from './routes/rag-routes';
 import { createGlobalSearchRoutes } from './routes/global-search-routes';
@@ -729,9 +729,9 @@ function createApp(): express.Application {
   // OIDC middleware (global) — uses mock mode when MOCK_OIDC env var is set
   app.use(authMiddleware);
 
-  // /login, the swarm admin's /login/admin, the pilot's /login/local and /login/microsoft, then the generic
-  // /login/:provider: registration order matters (server-auxiliary-routes.ts mountSignInRoutes).
-  mountSignInRoutes(app, ctx, { loginHandler, localLoginHandler, microsoftLoginHandler });
+  // /login, the pilot's /login/local and /login/microsoft, then the generic /login/:provider:
+  // registration order matters (server-auxiliary-routes.ts mountSignInRoutes).
+  mountSignInRoutes(app, { loginHandler, localLoginHandler, microsoftLoginHandler });
 
   // TV pairing token auth: when there is no interactive OIDC session but a valid `oshal_tv`
   // cookie is present (set by the Fire TV app after device pairing), inject an authenticated
@@ -778,10 +778,6 @@ function createApp(): express.Application {
       );
     });
   }
-
-  // ADR-174: the swarm admin is not a user of the swarm. It reaches only swarm administration; every
-  // personal surface refuses it. Mounted after identity resolution and before the first route below.
-  app.use(createSwarmAdminScopeGuard());
 
   // Pairing endpoints: start/poll are public (the TV isn't signed in yet); approve + the /tv
   // approval page are requiresAuth (the user signs in normally in a real browser).
