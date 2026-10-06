@@ -19,6 +19,7 @@
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-135 P0 — /upload actually extracts text. It did `f.buffer.toString('utf-8')` with no format detection while every upload surface advertises .pdf/.docx, so a PDF was embedded as mojibake: it ingested "successfully", polluted the collection with binary noise, and matched nothing a user searched for. The doc-extract slice already does this job properly (magic bytes over extension over MIME, pdf-parse, DOCX via yauzl, never throws) and had exactly one caller. Uploads now run through it with a corpus-sized character cap; a file that yields no readable text is REPORTED, not silently ingested — all files unreadable is a 422 naming each reason, a partial batch ingests the readable files and returns the rejections. The response and the knowledge-document record carry accepted/rejected/truncated so a surface can tell the user what actually landed.
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | POST /upload re-enters the caller's RLS request identity after multer (preserveRequestIdentity). A body whose last bytes reach multer on a later socket chunk completed the parse with the AsyncLocalStorage identity gone, so the owner-scoped knowledge_memory_documents INSERT ran as anonymous non-operator and RLS refused it (500 "RAG ingestion failed"). Guarded by tests/unit/multipart-request-identity-postgres.spec.ts.
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | /upload and /ingest refuse (403) grants a non-operator may not give: they may share only with tenants they belong to. Naming other users, other groups (public:anyone, which every signed-in user carries, or an email-domain group) or a foreign tenant, in the body or in metadata, put the caller's text into other users' retrieval (route review 2026-10-05).
+ * 17 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 S02: the configuration-only swarm admin writes the shared corpus and keeps no documents of its own. /upload and /ingest answer 403 swarm_admin_not_a_user, before anything is extracted or stored, when the swarm admin's ingest would be owned by the admin itself: an explicit private ingest (private:true or visibility 'private'), an /ingest metadata owner_sub naming the admin, or any ingest while the admin lacks the operator role (a non-operator's ingest is always owned by its caller). The owner comes from the request body, which the global gate (swarm-admin-scope.ts) does not read, so the refusal sits here. The admin's shared-corpus writes and everyone else's ingests are unchanged; no admin page uploads or ingests.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -37,6 +38,7 @@ import { getUserTenantIds } from './connector-tenancy';
 import { classifyKnowledgeScope, type MemoryLayerService } from '@/features/memory';
 import { extractDocText } from '@/features/doc-extract';
 import { preserveRequestIdentity } from '@/shared/middleware/multipart-identity';
+import { isSwarmAdminPrincipal } from '@/shared/middleware/swarm-admin-identity';
 
 const logger = createChildLogger({ module: 'rag-routes' });
 
@@ -110,6 +112,27 @@ function ownerSubForIngest(req: Request): string | null {
     return null;
   }
   return caller.sub ?? null;
+}
+
+/**
+ * @description ADR-174 D1: the configuration-only swarm admin writes the shared corpus and keeps no
+ * documents of its own. Refuses (403) when the swarm admin's ingest would be owned by the admin
+ * itself: an explicit private ingest, a metadata owner_sub naming it, or any ingest while it lacks
+ * the operator role. Everyone else, and the admin's shared-corpus writes, pass untouched.
+ *
+ * @param req - The Express request (OIDC session).
+ * @param res - The response, written only when the ingest is refused.
+ * @param ownerSub - The owner the ingest would stamp, resolved exactly as the route stamps it.
+ * @returns True when the refusal was sent and the route must stop.
+ */
+function refuseSwarmAdminOwnDocument(req: Request, res: Response, ownerSub: string | null | undefined): boolean {
+  if (!ownerSub || !isSwarmAdminPrincipal(req) || ownerSub !== callerFromRequest(req).sub) return false;
+  logger.info({ path: req.path }, 'Swarm admin refused a RAG document owned by itself');
+  res.status(403).json({
+    error: 'swarm_admin_not_a_user',
+    message: 'The swarm admin writes the shared knowledge corpus and keeps no documents of its own. Sign in with your own account to keep a private document.',
+  });
+  return true;
 }
 
 /**
@@ -416,6 +439,7 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
 
       const collection = (req.body?.collection as string) || 'default';
       if (!allowKernelCollectionForAdmin(req, res, collection)) return;
+      if (refuseSwarmAdminOwnDocument(req, res, ownerSubForIngest(req))) return;
       const { texts, accepted, rejected, truncated } = await extractUploadedText(files);
       if (texts.length === 0) {
         logger.warn({ rejected }, 'RAG upload rejected - no file yielded readable text');
@@ -488,6 +512,8 @@ export function createRagRoutes(ragService: RagService, memoryService?: MemoryLa
       res.status(400).json({ error: 'Both "format" and non-empty "content" are required' });
       return;
     }
+    // The owner the ingest below stamps: the resolved owner, else a metadata owner_sub (an operator's choice).
+    if (refuseSwarmAdminOwnDocument(req, res, ownerSubForIngest(req) || metadata.owner_sub)) return;
 
     try {
       const refusal = await refuseForeignRagGrants(req, pool, (req.body ?? {}) as Record<string, unknown>, metadata);

@@ -29,6 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Attach local-swarm-admin-login (ADR-174 slice 2b-i: the swarm admin signs in only with a working authenticator; real PostgreSQL and login routes).
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-sign-in-rail (ADR-174 slice 2b-ii: the admin's local sign-in beside an identity provider never mixes with the provider session; real PostgreSQL for the admin-only login and session).
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-scope-guard (ADR-174 slice 2c: the swarm admin reaches only swarm administration; its reach list is checked against the real mount table).
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | Attach swarm-admin-reach-exact (ADR-174 S02: the swarm admin's reach is exact; the never-list for the worker plane, CLI tokens and enrolment is checked first, the routes that act as the caller inside the narrowed routers are refused in any case, and the admin's own calls into them stay allowed).
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -138,6 +139,7 @@ export const AUTHORIZATION_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/local-swarm-admin-login.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-admin-sign-in-rail.spec.ts' },
     { level: 'unit', path: 'tests/unit/swarm-admin-scope-guard.spec.ts' },
+    { level: 'unit', path: 'tests/unit/swarm-admin-reach-exact.spec.ts' },
     { level: 'browser', path: 'tests/unit/users-administration-browser.spec.ts' },
     { level: 'integration', path: 'tests/unit/local-auth-forgot-password.spec.ts' },
     { level: 'integration', path: 'tests/unit/smtp-mailer-transport.spec.ts' },
