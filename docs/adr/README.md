@@ -91,7 +91,7 @@ _Index last reconciled 2026-09-14 against the files on disk (`tests/unit/adr-sta
 | [048](048-finance-aggregation-swarm.md) | Finance: read-only money-aggregation swarm (Plaid) | Proposed | 2026-06-17 |
 | [049](049-oshal-as-aggregation-platform.md) | OSHAL as an aggregation platform: wrap the frameworks, commoditize below, own the user | Proposed | 2026-06-17 |
 | [050](050-unified-assistant-route-orchestrator.md) | Unified Assistant ("Jarvis") — conversational front door; batches tool work into the build queue, routed by selector (route-orchestrator + worker superseded) | Accepted | 2026-06-17 |
-| [051](051-unreal-engine-mcp-worker.md) | Unreal Engine MCP worker (swarm-driven editor control on a GPU endpoint) | Proposed | 2026-06-18 |
+| [051](051-unreal-engine-mcp-worker.md) | Unreal Engine MCP worker (swarm-driven editor control on a GPU endpoint; amended 2026-10-05: ChiR24/Unreal_mcp on a Windows satellite PC) | Accepted | 2026-06-18 |
 | [052](052-stock-trading-swarm.md) | Stock-trading swarm: signal-justified execution with dual ledgers (Alpaca) | Accepted — implemented and extended far past this ADR (see ADR-053/092/095/096) | 2026-06-18 |
 | [053](053-trading-decision-workflow.md) | Trading-decision workflow: signal → ticket → tool-bound bot → trade | Proposed | 2026-06-18 |
 | [054](054-gravity-model.md) | The Gravity Model: event-driven, time-decayed speculative displacement | Accepted — implemented (gravity live in the oshal-algos ensemble; gravity2 head-to-head + ADR-096 ledger) | 2026-06-18 |

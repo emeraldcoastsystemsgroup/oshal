@@ -333,9 +333,9 @@ Every ticket flows through a complexity-gated pipeline:
 
 ## 33. Unreal Engine MCP Worker (ADR-051)
 
-- **GPU worker over MCP** — a GPU PC running UE 5.5 plus a C++ plugin is driven over MCP (port 55557) via the remote-client
-- **Referenced upstream, NOT vendored (de-vendored 2026-07-23 for licensing)** — the worker clones `chongdashu/unreal-mcp` into `./unreal-mcp/` at bring-up; the MCP is registered as `unrealMCP` in `config-seed/claude-code-mcp.json`. Nothing Unreal is tracked in this repo (verified 2026-08-02: `git ls-files` matches only ADR-051 and its next-steps doc)
-- **Caveat — not run live** — wired by inspection only: the plugin is unbuilt, the 55557 bridge is unverified end-to-end, and no GPU worker endpoint is provisioned. See [unreal-mcp-worker-next-steps.md](../apps/unreal-mcp-worker-next-steps.md)
+- **A Windows satellite PC drives Unreal over MCP** — UE 5.x with the ChiR24/Unreal_mcp *McpAutomationBridge* plugin; the stdio server `unreal-engine-mcp-server` (pinned 0.5.30) runs under the remote-client daemon and reaches the plugin on `127.0.0.1:8090` (ADR-051 Amendment 1, 2026-10-05). Epic's experimental UE 5.8 Unreal MCP plugin is the fallback; `chongdashu/unreal-mcp` is dropped
+- **Not on the control-plane box** — there is no Unreal Editor for Linux ARM64 (the DGX Spark); the Spark-side 3-D option is the store package `scene-studio` (Godot + Blender through their MCP servers)
+- **Caveat — not run live** — no satellite PC is provisioned, and no concierge can call a worker's MCP tools yet (the queue carries `mcp.call-tool`; a caller is the first bring-up's work). See [unreal-mcp-worker-next-steps.md](../apps/unreal-mcp-worker-next-steps.md)
 
 ## 34. Music — "Music" (`/api/spotify`)
 
