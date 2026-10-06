@@ -29,7 +29,7 @@
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | Keep task and actual ticket ownership separate from protected lineage, refuse unresolved existing threads and prioritize authenticated users over legacy service headers.
  * 25 | maintainer@emeraldcoastsystemsgroup.com | Record inline protected conversation lineage and defer stream publication until completion and current owner access are proved.
  * 26 | maintainer@emeraldcoastsystemsgroup.com   | Diagnose protected empty-thread and inline refusals with ERROR, bounded identifiers, duration and scrubbed stacks while preserving response contracts.
- * 27 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 protected node bots accept cockpit and rail chat. Every chat client posts agenticMode:true or omits it, and a protected node admits only direct configured reasoning (direct:true, agenticMode:false, one server-resolved brain), so each turn to a protected node bot was refused with authorization_remote_hosted_reasoning_required. nodeChatTurnShape decides the node request shape server-side with isApplicationExecutionProtected, the predicate queued protected dispatch uses: an interactive turn to a protected bot is non-agentic whatever the body says; machine calls and unprotected bots keep their shape. The node reply the controller persists is now also published on the task stream after protected lineage, both turns and the caller read are proved, so the rail shows it without a reload; the stream route still authorizes every subscriber per event. Guards: tests/unit/protected-node-chat-turn.spec.ts, tests/unit/bot-node-protected-execution.spec.ts.
+ * 27 | maintainer@emeraldcoastsystemsgroup.com   | ADR-149 protected node bots accept cockpit and rail chat. Every chat client posts agenticMode:true or omits it, and a protected node admits only direct configured reasoning (direct:true, agenticMode:false, one server-resolved brain), so each turn to a protected node bot was refused with authorization_remote_hosted_reasoning_required. nodeChatTurnShape decides the node request shape server-side with the inline branch's exact protection expression (isApplicationExecutionProtected OR isProtectedAgent, the ownership claim BotNodeClient's protected prepare decides from): an interactive turn to a protected bot is non-agentic whatever the body says; machine calls and unprotected bots keep their shape. The node reply the controller persists is now also published on the task stream after protected lineage, both turns and the caller read are proved, so the rail shows it without a reload; the stream route still authorizes every subscriber per event. Guards: tests/unit/protected-node-chat-turn.spec.ts, tests/unit/bot-node-protected-execution.spec.ts.
  */
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -49,7 +49,7 @@ import { persistJarvisTurn } from './jarvis-task-store';
 import type { AppContext } from '../composition-root';
 import { callerCanReadTaskResult } from './protected-result-access';
 import { persistProtectedResultTask } from './protected-result-persistence';
-import { hasProtectedTaskResults, readProtectedResultExecutions, type ProtectedResultTask } from '@/shared/protected-results';
+import { hasProtectedTaskResults, isProtectedAgent, readProtectedResultExecutions, type ProtectedResultTask } from '@/shared/protected-results';
 import { readOwnerPrincipalIssuer, OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 import { isAuthenticatedGuest, type OwnedRecord } from './record-ownership';
 import { ProtectedInlineTaskUnavailableError, runProtectedInlineTurn } from './protected-inline-execution';
@@ -179,9 +179,12 @@ function assertSendMessageEntitlement(req: Request, resolvedAgentId: string, tas
  * @description Decide a node-bound chat turn's request shape on the server. Every chat client posts
  * agenticMode:true or omits it, while a protected node admits only direct configured reasoning
  * (direct:true, agenticMode:false, one server-resolved brain), so an interactive turn to a protected
- * bot is made non-agentic whatever the body says. The protection check is the one queued protected
- * dispatch uses, and it runs only for interactive identity callers: a bare service-secret call
- * (swarm dispatch) and an unprotected bot keep exactly the shape they had.
+ * bot is made non-agentic whatever the body says. The protection check is the inline branch's exact
+ * expression (protected-inline-execution.ts): the execution policy OR the controller's own
+ * protected-agent read, which is the ownership claim BotNodeClient's protected prepare decides from,
+ * so the shape always follows what dispatch will actually prepare. It runs only for interactive
+ * identity callers: a bare service-secret call (swarm dispatch) and an unprotected bot keep exactly
+ * the shape they had.
  * @param req - The inbound request; only its identity and service-secret facts are read.
  * @param agentId - The node-bound bot the turn executes on.
  * @param requestedAgenticMode - The client's agenticMode, honoured only for an unprotected target.
@@ -195,7 +198,8 @@ async function nodeChatTurnShape(req: Request, agentId: string, requestedAgentic
   // Same interactive-vs-swarm distinction assertSendMessageEntitlement applies (seq 9): only a bare
   // service call is swarm dispatch; independently authenticated users stay direct.
   const direct = !isBareServiceMessage(req) && Boolean(sessionSub);
-  const protectedTarget = direct && await isApplicationExecutionProtected({ kind: 'bots', operation: agentId });
+  const protectedTarget = direct
+    && (await isApplicationExecutionProtected({ kind: 'bots', operation: agentId }) || await isProtectedAgent(agentId));
   return { agenticMode: protectedTarget ? false : requestedAgenticMode ?? true, direct };
 }
 

@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard the ADR-149 chat shape for protected node bots and the live rail publish. Every chat client posts agenticMode:true or omits it, and a protected node admits only direct, non-agentic reasoning with exactly one server-resolved brain, so every cockpit and rail turn to a protected node bot was refused. These cases drive the real message and stream routers, executeBotOrInline, stampRemoteBrain, BotNodeClient, the swarm registry (the bot registered through the real manifestBotDefinition, so it carries the codex-cli manifest default), StreamManager and the application actor middleware against a loopback stub node that records each body. The rail, cockpit api-client and legacy streaming bodies all reach a protected node with direct:true and agenticMode:false and one brain shape (the hosted wire trio for a plain caller, the stamped CLI provider for the demo operator); an unprotected node keeps agenticMode:true; the persisted reply reaches the owner's real task stream exactly once, after both turns are saved, while another identity cannot subscribe; a node refusal publishes and persists nothing; and the route never publishes an inline turn. Doubles: the execution-policy port, the brain ladder, PM ticket intake, BudgetService and the stub node.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | A5: the route decides protection with the inline branch's exact expression, so a bot that only the controller's protected-agent read (the ownership claim BotNodeClient's protected prepare decides from) protects is still sent direct:true, agenticMode:false; without it such a bot would be prepared as protected and then refused for the agentic shape.
  */
 
 import express, { type NextFunction, type Request, type Response as ExpressResponse } from 'express';
@@ -13,6 +14,7 @@ import { InMemoryTaskStore } from '@/entities/task';
 import { InMemoryTicketStore, InMemoryWorkspaceStore, WorkspaceService } from '@/features/ticketing';
 import { StreamManager } from '@/features/streaming';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
+import { configureProtectedResultAccess } from '@/shared/protected-results';
 import { getCaller } from '@/shared/middleware/authz';
 import { getAuthenticatedPrincipalIssuer } from '@/shared/middleware/principal-issuer';
 import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
@@ -79,6 +81,7 @@ afterEach(async () => {
     server.close(() => resolve());
   })));
   configureApplicationExecutionPolicy(undefined);
+  configureProtectedResultAccess(undefined);
   (await import('../../src/app/extensions/swarm/swarm-bot-registry')).unregisterAppBots(NODE_APP);
   vi.restoreAllMocks();
   vi.clearAllMocks();
@@ -160,7 +163,7 @@ async function bootApp(): Promise<{ base: string; streamManager: StreamManager }
   const ctx = {
     taskStore: tasks, streamManager, ticketService: {}, pool: {},
     workspaceService: new WorkspaceService(new InMemoryWorkspaceStore(), new InMemoryTicketStore()),
-    applicationAuthorization: { resolveActor }, orchestrator: { processMessage }, messageStore: { save: messageSave },
+    applicationAuthorization: { resolveActor }, orchestrator: { processMessage }, messageStore: { save: messageSave, getByTask: async () => [] },
   } as unknown as Parameters<typeof createMessageRoutes>[0];
   const app = express();
   app.use(express.json());
@@ -269,6 +272,26 @@ describe('a chat turn to a protected node bot gets the one shape a protected nod
     expect(res.status).toBe(200);
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toMatchObject({ direct: true, agenticMode: true });
+  });
+
+  it('A5: a bot the controller\'s protected-agent read protects is reshaped even when the execution policy says unprotected, because that read is what protected dispatch prepares from', async () => {
+    protect(false);
+    configureProtectedResultAccess({
+      isProtectedAgent: (agentId) => agentId === NODE_AGENT,
+      hasTaskResults: async () => false,
+      assertResultAccess: async () => undefined,
+      assertTaskResultAccess: async () => undefined,
+      linkResult: async () => undefined,
+    });
+    const bodies = await bootStubNode();
+    await armLadder();
+    const { base } = await bootApp();
+
+    const res = await send(base, '/send-message', RAIL_BODY);
+
+    expect(res.status).toBe(200);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ agentId: NODE_AGENT, direct: true, agenticMode: false });
   });
 });
 
