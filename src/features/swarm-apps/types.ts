@@ -39,6 +39,7 @@
  * 34 | maintainer@emeraldcoastsystemsgroup.com | Type the staged version-one experience declaration without advertising an unimplemented hosting capability.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Discover and host installed experience packages through current authorization, preserving member visibility and supported assets.
  * Home customization | Codex | Add stable metric catalogs and related-item identities for configurable Home.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Type explicit bot owner/name imports in dependency tiers shared with the Rust application contract.
  */
 
 import type { BriefingDeclaration } from '@/shared/briefings';
@@ -821,6 +822,7 @@ export interface SwarmAppGuestSeedDeclaration {
 
 /** One dependency group: the legacy flat block, or one tier (`required` / `optional`). */
 export interface SwarmAppDependencyLists {
+  bots?: import('@/shared/app-dependencies').AppBotDependency[];
   apps?: string[];
   tools?: string[];
   connectors?: string[];
