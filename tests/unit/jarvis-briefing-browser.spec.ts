@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove browser settings persist and source delivery honors voice/bubble/screen channels.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Load the production delivery coordinator and single-flight state with the actual shelf function fixture.
  */
 import { chromium, type Browser } from 'playwright';
 import { readFileSync } from 'node:fs';
@@ -64,9 +65,11 @@ it('the actual shelf and open-result code purge unavailable briefings and old of
     const html = readFileSync(resolve('src/api/jarvis.html'), 'utf8');
     const poll = html.slice(html.indexOf('async function pollShelf()'), html.indexOf('function startShelfPoller()'));
     const open = html.slice(html.indexOf('async function openJob('), html.indexOf('async function dismissJob('));
+    await page.addScriptTag({ path: resolve('src/api/jarvis-task-delivery.js') });
     await page.addScriptTag({ content: `
       const durableTaskResults = { ordinary: {id:'ordinary',status:'done',result:'ordinary retained'} };
-      let pendingResultOfferId='cached-briefing', pendingCatchupOffer=true, lastShelfJobs=[], shelfPrimed=true;
+      let pendingResultOfferId='cached-briefing', pendingCatchupOffer=true, lastShelfJobs=[], shelfPrimed=true, shelfPollActive=false;
+      const taskDelivery=window.JarvisTaskDelivery.create(()=>{});
       const shelfPolling=false, mode='listening'; const statuses=[];
       function renderShelf(){} function setMode(){} function setStatus(value){statuses.push(value);}
       ${poll}\n${open}

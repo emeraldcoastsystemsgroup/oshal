@@ -21,6 +21,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client): register the Chromium proof of the locked cockpit (cockpit-shell-lock-browser: refusal with a ticket link, a locked allowed application, an unreadable plain document, and the unchanged unlocked doors).
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Register principal-scoped navigation, unsent drafts, selected-member context and authoritative auth-state issuer regressions for the seven experience applications.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Cover declaration-only assistant status and explicit unavailable data in the shared adapter and spoken briefing suites.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the actual Jarvis shelf browser guard for metadata-only workflows, bounded receipts, retries and concurrent refreshes.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -92,6 +93,7 @@ export const EXPERIENCE_SCENARIOS: Scenario[] = [{
   id: 'experience-shells', title: 'Experience shells over the live swarm', group: 'tool',
   description: 'Open the experience entry pages (Studio, Jarvis, Orbit, Commons, the Home, Little Monsters and Business homebases, the central assistant, and Simple chat) with the initiating session and read the caller-scoped feeds they join. Local suites prove the adapter joins and the Chromium behaviour over an isolated synthetic swarm: catalog and work rendering, pins, the Jarvis ask flow with thread roll and refusal, room threads, homebase modules and honest setup/denial states. The classroom homebase also lists the Little Monsters tools the caller is admitted to (the ribbon profile) and opens them in place. Adapters distinguish declaration-only assistants from measured presence, honor explicitly unavailable personal sources, and prevent spoken briefings from claiming online counts or empty workloads after failed reads. The full-swarm layouts add work panels over the ticket routes (recorded workflow, Approve, Cancel), the Routines panel over the caller’s schedules, a device-local day focus, visual cards, package facts, household or team membership with the caller’s own place, and the portal’s gallery sections.',
   regressionTests: [
+    { level: 'browser', path: 'tests/jarvis-task-delivery.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-package-contract.spec.ts' },
     { level: 'unit', path: 'tests/unit/experience-package-discovery.spec.ts' },
     { level: 'integration', path: 'tests/unit/experience-package-aliases.spec.ts' },

@@ -70,6 +70,7 @@
  * 33 | maintainer@emeraldcoastsystemsgroup.com   | The model turn's context blocks run catalog, plan guidance, tools, artifacts, open work. With tools first and open work ahead of the plan guidance, every live turn on 2026-10-01 (37,816 characters against the node's 24,000) lost the plan guidance, the open work and 23 of the 40 catalog entries, so Jarvis could not plan a multi-step request. The plan guidance now sits directly after the catalog it refers to, and open work, which is bounded per task and least costly to clip, goes last. No line count change.
  * 34 | maintainer@emeraldcoastsystemsgroup.com   | The catalog is built from the user's words (buildCatalogBlock(ctx, message)), so the apps the ask names lead it with their description and every other app is still listed by key; it was the first 40 routes regardless of the ask.
  * 35 | maintainer@emeraldcoastsystemsgroup.com | Read and return global fleet overview data only for operators while preserving each caller's personal panels.
+ * 36 | maintainer@emeraldcoastsystemsgroup.com | Serve the bounded task delivery client through the authenticated fixed asset allowlist.
  */
 
 import { getJarvisBriefingDelivery } from './jarvis-briefing-delivery';
@@ -377,6 +378,7 @@ const JARVIS_CLIENT_ASSETS = new Map([
   ['jarvis-dashboard.js', 'application/javascript; charset=utf-8'],
   ['jarvis-dashboard.css', 'text/css; charset=utf-8'],
   ['jarvis-package-tools.js', 'application/javascript; charset=utf-8'],
+  ['jarvis-task-delivery.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.js', 'application/javascript; charset=utf-8'],
   ['jarvis-stage.css', 'text/css; charset=utf-8'],
   ['jarvis-ambient-core.js', 'application/javascript; charset=utf-8'],
