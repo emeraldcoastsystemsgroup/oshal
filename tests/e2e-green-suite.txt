@@ -134,3 +134,6 @@ tests/jarvis-rich-response-native-wake.spec.ts
 tests/jarvis-rich-response-responsive-a11y.spec.ts
 tests/jarvis-rich-response-visual-trust.spec.ts
 tests/jarvis-shared-response-renderer.spec.ts
+# 2026-10-07: actual Jarvis page with owned intercepted feeds, all 4 Chromium cases pass
+# at zero retries via tests/fixtures/jarvis-task-delivery.config.ts; no live service dependency.
+tests/jarvis-task-delivery.spec.ts

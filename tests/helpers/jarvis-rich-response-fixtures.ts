@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Serve the framework theme off disk (surface-themes.css, surface-theme.js and the /cockpit/css/themes/*.css files the aggregator @imports): jarvis.html has read its orb colours from those tokens since BUG-12 (#191), and this fixture 404ing them is what left the native-wake spec red 3 of 3 (the unthemed page threw inside its first synchronous canvas tick, so the wake listener never registered). THEME_ASSET_PATHS is exported so the guard can withhold exactly these on purpose.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | fulfillJarvisWithResponseRenderer bundles the REAL response-renderer from source (esbuild, the way vite.config.ts bundles it) instead of reading a prebuilt src/api/dist/response-renderer.js: jarvis.html now requires the bundle's DISPLAY_ONLY_RESPONSE_CAPABILITIES, so a stale or missing dist would silently put the guard on the legacy fallback path.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Follow the compact dashboard layout (0c287223): serve jarvis-dashboard.css/js off disk, which jarvis.html has loaded since that change and which this fixture 404ed, so the specs measured a layout no deployment ships and rendered tasks through the no-dashboard fallback. jarvisPageUrl() puts the page on the configured Playwright origin (tests/helpers/test-origins.ts) instead of an invented host, which also makes it a secure context like a deployed https page. openAssistantOptions()/openTyper() reach Type, Voice, Discussion and the ambient controls through the real Options disclosure they now live in.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Serve the actual bounded task delivery asset in browser fixtures.
  */
 
 // DELIBERATELY NOT re-exported through tests/helpers/index.ts. This module reads the Jarvis
@@ -40,6 +41,7 @@ const AMBIENT_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient.js'), 'u
 const AMBIENT_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-ambient.css'), 'utf8');
 const SPEAKER_CAPTURE_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-speaker-capture.js'), 'utf8');
 const DASHBOARD_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-dashboard.js'), 'utf8');
+const TASK_DELIVERY_JS = readFileSync(path.join(ROOT, 'src/api/jarvis-task-delivery.js'), 'utf8');
 const DASHBOARD_CSS = readFileSync(path.join(ROOT, 'src/api/jarvis-dashboard.css'), 'utf8');
 const THEME_CSS = readFileSync(path.join(ROOT, 'src/shared/ui/css/surface-themes.css'), 'utf8');
 const THEME_JS = readFileSync(path.join(ROOT, 'src/shared/ui/js/surface-theme.js'), 'utf8');
@@ -165,6 +167,7 @@ export async function fulfillJarvis(route: Route): Promise<void> {
   if (pathName.endsWith('/jarvis-ambient.js')) return route.fulfill({ contentType: 'application/javascript', body: AMBIENT_JS });
   if (pathName.endsWith('/jarvis-ambient.css')) return route.fulfill({ contentType: 'text/css', body: AMBIENT_CSS });
   if (pathName.endsWith('/jarvis-dashboard.js')) return route.fulfill({ contentType: 'application/javascript', body: DASHBOARD_JS });
+  if (pathName.endsWith('/jarvis-task-delivery.js')) return route.fulfill({ contentType: 'application/javascript', body: TASK_DELIVERY_JS });
   if (pathName.endsWith('/jarvis-dashboard.css')) return route.fulfill({ contentType: 'text/css', body: DASHBOARD_CSS });
   if (pathName === ARTIFACT_URL) return route.fulfill({ contentType: 'image/svg+xml', body: SVG });
   if (pathName === '/api/jarvis/ambient/settings') return json(route, { settings: {

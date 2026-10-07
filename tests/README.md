@@ -301,3 +301,7 @@ bot needs its owner in `required.apps`; an optional bot needs its owner in eithe
 The contract tests exercise the shared CLI reader and real YAML loader, including malformed
 bindings, undeclared owners, duplicates and tier conflicts. This is declaration validation,
 not evidence of remote bot execution or delegated-result authorization.
+
+### Jarvis durable task delivery
+
+Run `npx playwright test --config tests/fixtures/jarvis-task-delivery.config.ts` for the real Jarvis page with isolated feeds: 4,000 metadata-only workflows cause no automatic delivery, actual answers announce once, receipt requests are limited to three with pending-ID deduplication, failed writes retry on a later poll, and concurrent refreshes share one read. The Experience Test Lab scenario registers this browser guard. `npx vitest run tests/unit/jarvis-dashboard-assets.spec.ts tests/unit/jarvis-catchup-summary.spec.ts` verifies authenticated asset bytes and existing catch-up behavior. These local fixtures do not claim installed acceptance or PostgreSQL persistence.

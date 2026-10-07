@@ -25,6 +25,7 @@
   8 | maintainer@emeraldcoastsystemsgroup.com | Render typed answers with the shared DISPLAY_ONLY_RESPONSE_CAPABILITIES profile (a model-authored oshal:gallery/oshal:download now degrades to escaped text instead of loading a remote image or rendering an arbitrary link; a bundle without the profile falls back to the escaped renderer), hydrate the shared [data-mermaid] diagram output as well as the legacy .mermaid blocks, and load Mermaid from the same-origin lock-pinned build copy under /dist/vendor/mermaid instead of the floating mermaid@11 jsDelivr import (JVV-007).
   9 | maintainer@emeraldcoastsystemsgroup.com | Follow a turn the server reports as still working (2026-09-27): once /ask/result carries a progress note, the thinking bubble shows it and polling continues for as long as the server keeps the job (expiresInMs) instead of giving up after ~5 minutes, so the late answer replaces the note in the same bubble. A turn nobody reported as still working keeps the old ceiling and message.
   10 | maintainer@emeraldcoastsystemsgroup.com | Hide unavailable fleet overview data, clear stale roster/activity visuals, and admit work polling only while the current fleet snapshot is readable.
+  11 | maintainer@emeraldcoastsystemsgroup.com | Keep workflow metadata on the shelf without announcing it as a reply; serialize shelf reads and bound durable receipts with explicit success and later-poll retries.
 -->
 <html lang="en" data-theme="midnight">
 <head>
@@ -556,6 +557,7 @@
   } catch (e) { /* offline / blocked — diagrams stay as readable text */ }
 </script>
 <script src="/api/jarvis/assets/jarvis-dashboard.js"></script>
+<script src="/api/jarvis/assets/jarvis-task-delivery.js"></script>
 <script src="/api/jarvis/briefings/client.js"></script>
 <script src="/api/jarvis/assets/jarvis-stage.js"></script>
 <script src="/api/jarvis/assets/jarvis-ambient-core.js"></script>
@@ -1923,11 +1925,16 @@ function announceCatchup(s, withVoice = true) {
   setStatus(`${s.total} new result${s.total === 1 ? '' : 's'} waiting`);
   renderShelfFromCache();
 }
-let shelfPolling = false, shelfPrimed = false, shelfTimer = null;
+let shelfPolling = false, shelfPrimed = false, shelfTimer = null, shelfPollActive = false;
 let pendingResultOfferId = null;
 let pendingCatchupOffer = false;   // a "yes" right after the catch-up summary means "read them"
 const durableTaskResults = {};   // taskId → full row from /tasks, so finished items survive reloads
+const taskDelivery = window.JarvisTaskDelivery.create((id) => {
+  if (durableTaskResults[id]) durableTaskResults[id].delivered = true;
+});
 async function pollShelf() {
+  if (shelfPollActive) return;
+  shelfPollActive = true;
   let anyRunning = false;
   try {
     // Durable Tasks list — survives reloads/restarts (the in-session /ask/jobs is in-memory only),
@@ -1947,7 +1954,7 @@ async function pollShelf() {
     const fresh = [];   // finished and not yet announced — delivered as ONE batch below
     for (const t of tasks) {
       if (t.status === 'pending' || t.status === 'running' || t.status === 'queued' || t.status === 'summarizing') { anyRunning = true; continue; }
-      if (t.delivered) continue;   // already pushed once — DB-durable, survives reloads (not brittle)
+      if (!taskDelivery.shouldAnnounce(t)) continue; // Metadata stays on the shelf; only actual replies announce.
       // Voice-gated: never talk over the user. Leave it undelivered and announce on the next idle tick.
       if (mode === 'speaking' || mode === 'listening') { anyRunning = true; continue; }
       fresh.push(t);
@@ -1960,7 +1967,7 @@ async function pollShelf() {
     }
     shelfPrimed = true;
     if (mode !== 'speaking' && mode !== 'listening') setMode(anyRunning ? 'thinking' : 'idle');
-  } catch (_) {}
+  } catch (_) {} finally { shelfPollActive = false; }
   // Self-schedule: poll fast (3s) only while work is in flight; when idle, back off to
   // 30s so a new user with no jobs isn't hammering /ask/jobs every 3s forever. Direct
   // pollShelf() calls (after an ask/dismiss) reschedule via this same path.
@@ -1969,8 +1976,7 @@ async function pollShelf() {
 function startShelfPoller() { if (shelfPolling) return; shelfPolling = true; pollShelf(); }
 /* Mark a finished task delivered so it's pushed exactly once (DB-durable — survives reloads). */
 function markDelivered(id) {
-  if (durableTaskResults[id]) durableTaskResults[id].delivered = true;
-  try { fetch('/api/jarvis/tasks/' + encodeURIComponent(id) + '/delivered', { method: 'POST', credentials: 'include' }); } catch (_) {}
+  taskDelivery.enqueue(id);
 }
 
 /* Open a finished item → render its full answer in the conversation + a link into its workspace. */

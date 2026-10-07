@@ -1,6 +1,7 @@
 /**
  * CHANGE LOG
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Exercise the real Jarvis router's compact assets over HTTP, with an explicit fixture auth gate and no business operations.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Verify exact authenticated delivery-helper bytes and refuse unauthenticated access.
  */
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import express from 'express';
@@ -33,7 +34,7 @@ afterAll(async () => {
   if (server) await new Promise<void>(done => server.close(() => done()));
 });
 
-it.each([['jarvis-dashboard.css', 'text/css'], ['jarvis-dashboard.js', 'application/javascript']])(
+it.each([['jarvis-dashboard.css', 'text/css'], ['jarvis-dashboard.js', 'application/javascript'], ['jarvis-task-delivery.js', 'application/javascript']])(
   'serves exact current %s bytes with private cache and MIME headers', async (file, mime) => {
     const response = await fetch(`${origin}/api/jarvis/assets/${file}`, { headers: { 'x-test-session': 'fixture' } });
     expect(response.status).toBe(200);
@@ -49,7 +50,7 @@ it.each([['jarvis-dashboard.css', 'text/css'], ['jarvis-dashboard.js', 'applicat
 );
 
 it('does not make newly allowlisted files bypass the parent authentication gate', async () => {
-  for (const file of ['jarvis-dashboard.css', 'jarvis-dashboard.js']) {
+  for (const file of ['jarvis-dashboard.css', 'jarvis-dashboard.js', 'jarvis-task-delivery.js']) {
     expect((await fetch(`${origin}/api/jarvis/assets/${file}`)).status).toBe(401);
   }
   expect(query).not.toHaveBeenCalled();
