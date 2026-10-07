@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Carved out of jarvis-ambient.js (over the 1000-code-line cap): the settings-panel HTML template, panel/form rendering, transcript viewer, modal focus/inert handling, and state copy now live here as AmbientClient prototype methods (JarvisAmbientUi.clientMethods, mixed in by jarvis-ambient.js). Pure decomposition — every method body is verbatim from the AmbientClient class; behavior is unchanged. Loads after jarvis-ambient-core.js and before jarvis-ambient.js.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | JVV-012 spoken-voice picker in the Jarvis settings panel: provider + voice selects (from GET /api/voice/providers — unconfigured providers render as honest DISABLED options with the reason as tooltip), instant per-user persist via POST /api/voice/prefs (server rejects unconfigured providers), and a Preview button that synthesizes a sample with the explicit selection (base64 audio playback; browser-voice fallback). Independent of the ambient form's save cycle — voice choices persist on change, ambient settings stay untouched.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Expose and persist the review time zone so an existing UTC setting can be corrected from the ambient settings form.
  */
 
 (function attachJarvisAmbientUi(root) {
@@ -46,6 +47,7 @@
               <label class="jarvis-ambient__wide"><span>Wake phrases <small>one per line</small></span><textarea name="wakePhrases" rows="3" maxlength="500" required></textarea></label>
               <label><span>Keep transcript text</span><select name="retentionDays"><option value="1">Until tomorrow</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label>
               <label><span>Daily review time</span><input name="dailyReviewTime" type="time"></label>
+              <label><span>Review time zone</span><input name="timeZone" placeholder="America/Chicago" autocomplete="off" required></label>
             </div>
             <label class="jarvis-ambient__check"><input type="checkbox" name="speakerDiarizationEnabled"><span>Separate speakers with the local voice engine</span></label>
             <label class="jarvis-ambient__check"><input type="checkbox" name="rememberSpeakers"><span>Remember encrypted voice profiles across conversations</span></label>
@@ -265,6 +267,7 @@
       fields.retentionDays.value = String(this.settings.retentionDays);
       fields.dailyReviewEnabled.checked = this.settings.dailyReviewEnabled;
       fields.dailyReviewTime.value = this.settings.dailyReviewTime;
+      fields.timeZone.value = this.settings.timeZone;
       fields.suggestFollowUps.checked = this.settings.suggestFollowUps;
       fields.speakerDiarizationEnabled.checked = this.settings.speakerDiarizationEnabled;
       fields.rememberSpeakers.checked = this.settings.rememberSpeakers;
@@ -304,6 +307,7 @@
         retentionDays: Number(fields.retentionDays.value),
         dailyReviewEnabled: fields.dailyReviewEnabled.checked,
         dailyReviewTime: fields.dailyReviewTime.value,
+        timeZone: fields.timeZone.value,
         suggestFollowUps: fields.suggestFollowUps.checked,
         speakerDiarizationEnabled: fields.speakerDiarizationEnabled.checked,
         rememberSpeakers: fields.speakerDiarizationEnabled.checked && fields.rememberSpeakers.checked,
