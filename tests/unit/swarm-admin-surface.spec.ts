@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-6): the shared-knowledge screen is guarded like the home, listed in the navigation, carries the containers and forms its script fills, inserts values as text only, confirms a document removal and asks for a collection's name before deleting it, and keeps the style order the glass spec requires.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-7): the devices screen is guarded like the home, listed in the navigation, carries the containers and the bind template its script fills, inserts values as text only, confirms unbind and rotate, and keeps the style order the glass spec requires.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-8): the households screen is guarded like the home, listed in the navigation, carries the containers and the card template its script fills, inserts values as text only, confirms a removal, and keeps the style order the glass spec requires.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-9): the jobs screen is guarded like the home, listed in the navigation, carries the overview, activation, schedules and timers containers and the service template its script fills, inserts values as text only, reads the jobs API and posts activations and schedule controls to the kernel's own routes, and keeps the style order the glass spec requires.
  */
 
 import fs from 'node:fs';
@@ -267,6 +268,30 @@ describe('the /swarm-admin surface', () => {
       expect(await screen.text()).toContain('Create a household');
       expect((await app.get('/swarm-admin/households/households.js', USER)).status).toBe(403);
       expect((await app.get('/swarm-admin/households', null)).status).toBe(302);
+    } finally { await app.close(); }
+  });
+
+  it('serves the jobs screen under the same guard, with its overview, activation cards, tables and template, text-only', async () => {
+    const page = pages().find((p) => p.routePath === '/swarm-admin/jobs');
+    expect(page?.extraGuards).toEqual([requiresOperator]);
+    expect(path.basename(page!.pageDir)).toBe('jobs');
+    const html = fs.readFileSync(path.join(page!.pageDir, 'index.html'), 'utf8');
+    for (const id of ['posture', 'activation', 'schedules', 'scheduleCount', 'timers', 'serviceTemplate', 'statusBanner', 'reload']) expect(html).toContain(`id="${id}"`);
+    expect(html.indexOf('/swarm-admin/jobs/jobs.css')).toBeGreaterThan(-1);
+    expect(html.indexOf('/swarm-admin/jobs/jobs.css')).toBeLessThan(html.indexOf('surface-glass.css'));
+    const script = fs.readFileSync(path.join(page!.pageDir, 'jobs.js'), 'utf8');
+    expect(script).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(script).toContain("requestJson('/api/admin/jobs')");
+    expect(script).toContain('/services/${encodeURIComponent(service.id)}/activate');
+    expect(script).toContain('/schedules/${encodeURIComponent(localId)}');
+    expect(SWARM_ADMIN_NAVIGATION.some((item) => item.path === '/swarm-admin/jobs' && item.group === 'swarm-admin')).toBe(true);
+    const app = await serve((a) => registerUiSurfaceRoutes({ app: a, requiresAuth, serveHtml: sendHtmlResponse, pages: pages() }));
+    try {
+      const screen = await app.get('/swarm-admin/jobs', OPERATOR);
+      expect(screen.status).toBe(200);
+      expect(await screen.text()).toContain('Needs activation');
+      expect((await app.get('/swarm-admin/jobs/jobs.js', USER)).status).toBe(403);
+      expect((await app.get('/swarm-admin/jobs', null)).status).toBe(302);
     } finally { await app.close(); }
   });
 
