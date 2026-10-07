@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com | Retain the verified issuer in display identity so saved experience context is keyed by the exact signed-in principal.
  * 16 | maintainer@emeraldcoastsystemsgroup.com | Forward advisory selected-app context to the existing Jarvis ask contract and honor the authoritative principal issuer field.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | Name suite purposes plainly while retaining their manifest-owned membership and live catalog data.
+ * 18 | maintainer@emeraldcoastsystemsgroup.com | Preserve declaration-only bot status and explicit unavailable personal sources without inventing offline or empty states.
  */
 (function attach(root, factory) {
   'use strict';
@@ -203,7 +204,7 @@
       var live = b.agentId ? roster.filter(function (r) { return r && r.agentId === b.agentId; })[0] : null;
       return {
         name: b.name, role: typeof b.role === 'string' ? b.role : '', agentId: typeof b.agentId === 'string' ? b.agentId : '',
-        concierge: Boolean(chat) && b.name === chat, state: live ? (live.active ? 'working' : live.online ? 'online' : 'offline') : 'declared'
+        concierge: Boolean(chat) && b.name === chat, state: live && typeof live.online === 'boolean' ? (live.active ? 'working' : live.online ? 'online' : 'offline') : 'declared'
       };
     });
   }
@@ -454,6 +455,8 @@
     var partial = failed.length < selected.length || failed.some(function (key) { return snap.sourcePartial && snap.sourcePartial[key]; });
     var detail = failed.map(function (key) {
       var status = sources[sourceKey(key)], label = names[key] || 'Work';
+      if (key === 'overview' && snap.overviewDeclared) return 'Assistant declarations are available; live status has not been measured.';
+      if (snap.sourceUnavailable && snap.sourceUnavailable[key]) return label + ' is not connected in this installation.';
       if (key === 'overview' && snap.overviewRosterOmitted) return 'Global assistant status is not provided to this session.';
       if (status === 200 && valid[key] === false) return label + ' returned an unreadable response.';
       return label + (status === 401 || status === 403 ? ' not available to you' : ' unavailable right now') + ' (HTTP ' + (status || 'network') + ').';
@@ -461,7 +464,8 @@
     var label = selected.length === 1 ? names[selected[0]] || 'Work' : 'Work';
     var refused = failed.every(function (key) { return sources[sourceKey(key)] === 401 || sources[sourceKey(key)] === 403; });
     var unavailable = selected.length === 1 && (selected[0] === 'tickets' || selected[0] === 'tasks') ? ' are not available to you.' : ' is not available to you.';
-    var message = selected.length === 1 && selected[0] === 'overview' && snap.overviewRosterOmitted ? 'Assistant status is not provided to this session.'
+    var message = selected.length === 1 && selected[0] === 'overview' && snap.overviewDeclared ? 'Assistant status has not been measured.'
+      : selected.length === 1 && selected[0] === 'overview' && snap.overviewRosterOmitted ? 'Assistant status is not provided to this session.'
       : partial ? (selected.length === 1 && selected[0] === 'overviewCalendar' ? 'Only readable calendar events are shown.' : 'Only loaded work is shown.')
       : label + (refused ? unavailable : ' could not be loaded.');
     return { kind: partial ? 'partial' : 'unavailable', complete: false, message: message, detail: detail };
@@ -487,19 +491,28 @@
   /** @description Read only the existing caller-bound overview contract; an explicitly malformed roster refuses every derived fact.
    * @param {object} response The single overview HTTP receipt. @returns {object} Validated fields and their completeness. */
   function personalOverview(response) {
-    var body = response.body, roster = readableRows(response, 'bots');
+    var body = response.body, sources = record(body) && record(body.sources) ? body.sources : {};
+    var declarationSource = sources.bots === 'declarations';
+    var declarations = declarationSource && Array.isArray(body.bots) && body.bots.every(function (row) {
+      return record(row) && typeof row.name === 'string' && Boolean(row.name.trim()) && row.status === 'declared'
+        && row.online === null && (row.agentId === null || typeof row.agentId === 'string' && Boolean(row.agentId.trim()));
+    });
+    var roster = !declarationSource && readableRows(response, 'bots');
     var hasRoster = record(body) && Object.prototype.hasOwnProperty.call(body, 'bots');
-    var allowed = response.ok && record(body) && (!hasRoster || roster);
+    var allowed = response.ok && record(body) && (!hasRoster || roster || declarations);
     var ov = allowed ? body : {}, comms = ov.comms, activity = ov.activity, calendar = ov.calendar;
     var textOrNull = function (value) { return value === null || typeof value === 'string'; };
-    var commsReadable = record(comms) && (comms.digest === null || (record(comms.digest) && typeof comms.digest.summary === 'string' && typeof comms.digest.updatedAt === 'string' && Boolean(parseDate(comms.digest.updatedAt))))
+    var commsAvailable = sources.communications === undefined || sources.communications === 'available';
+    var calendarAvailable = sources.calendar === undefined || sources.calendar === 'available';
+    var commsReadable = commsAvailable && record(comms) && (comms.digest === null || (record(comms.digest) && typeof comms.digest.summary === 'string' && typeof comms.digest.updatedAt === 'string' && Boolean(parseDate(comms.digest.updatedAt))))
       && Array.isArray(comms.signals) && comms.signals.every(function (row) { return record(row) && textOrNull(row.from) && textOrNull(row.subject) && textOrNull(row.snippet) && typeof row.at === 'string' && Boolean(parseDate(row.at)); });
     var activityReadable = record(activity) && Number.isInteger(activity.openCount) && activity.openCount >= 0 && Array.isArray(activity.tickets)
       && activity.tickets.every(function (row) { return record(row) && typeof row.id === 'string' && Boolean(row.id.trim()) && typeof row.title === 'string' && typeof row.status === 'string'; });
-    var calendarList = record(calendar) && Array.isArray(calendar.events);
+    var calendarList = calendarAvailable && record(calendar) && Array.isArray(calendar.events);
     var events = calendarList ? calendar.events.filter(function (row) { return record(row) && typeof row.title === 'string' && Boolean(row.title.trim()) && typeof row.when === 'string' && Boolean(parseDate(row.when)); }) : [];
     var calendarReadable = calendarList && events.length === calendar.events.length;
-    return { roster: roster, bots: roster ? body.bots : [], comms: commsReadable ? comms : null, commsReadable: Boolean(commsReadable),
+    return { roster: roster, declarations: Boolean(allowed && declarations), bots: allowed && (roster || declarations) ? body.bots : [],
+      unavailable: { overviewComms: Boolean(allowed && !commsAvailable), overviewCalendar: Boolean(allowed && !calendarAvailable) }, comms: commsReadable ? comms : null, commsReadable: Boolean(commsReadable),
       activity: activityReadable ? activity : null, events: events, calendarReadable: Boolean(calendarReadable), calendarPartial: events.length > 0 && !calendarReadable,
       rosterOmitted: Boolean(allowed && !hasRoster && (commsReadable || activityReadable || calendarList)) };
   }
@@ -562,6 +575,7 @@
       snap.comms = personal.comms; snap.calendarEvents = personal.events;
       snap.sources.tasks = tasks.status; snap.sources.tickets = tickets.status; snap.sources.overview = overview.status;
       snap.sourceValidity = { tasks: taskReadable, tickets: ticketReadable, overview: personal.roster, overviewCalendar: personal.calendarReadable, overviewComms: personal.commsReadable };
+      snap.sourceUnavailable = personal.unavailable; snap.overviewDeclared = personal.declarations;
       snap.sourcePartial = { overviewCalendar: personal.calendarPartial }; snap.overviewRosterOmitted = personal.rosterOmitted;
       snap.unavailable = missing(snap.sources, snap.sourceValidity); snap.workLoaded = true; snap.loadedAt = new Date();
       return snap;

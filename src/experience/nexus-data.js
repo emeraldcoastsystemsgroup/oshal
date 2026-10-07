@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Comparison across free weekends (mergeComparison tags each offer with its weekend under a composite id; filterOffers takes a weekend), the state of a typed date range against the calendar read (rangeState: busy, unknown or free), every weekend's state for the month (weekendStates, which freeWeekends now reads), and the city names Travel's offers carry (sliceView originCity/destinationCity).
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Central-assistant data kit for the Calendar and Travel views: pure readers (the month grid and its free Friday-to-Sunday weekends over the caller's busy windows, with past and unread days kept "unknown", never free; Travel offer cards from the package's normalised Duffel offers; the local nonstop / after-3pm / budget filters and sort; short text refinements; the device-local shortlist; the Google connection status; the spoken briefing built from the live snapshot) and one client over the existing routes (GET /api/experience/availability, GET /api/connect/list, and Travel's /config, /profile, /flights and /watches). No figure is invented here: every value comes from a route's answer or the caller's own device.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Require current readable sources before speaking assistant counts or empty-work claims.
  */
 (function attach(root, factory) {
   'use strict';
@@ -282,11 +283,13 @@
    * @returns {string} The sentence to speak.
    */
   function briefingText(snapshot, who) {
-    var open = who.open || [], latest = open[0];
-    var lead = who.greeting + ', ' + who.firstName + '. ' + snapshot.apps.length + ' application' + (snapshot.apps.length === 1 ? ' is' : 's are') + ' ready and '
-      + snapshot.botsOnline + ' of ' + snapshot.bots.length + ' assistant' + (snapshot.bots.length === 1 ? ' is' : 's are') + ' online.';
-    var work = latest ? ' You have ' + open.length + ' open item' + (open.length === 1 ? '' : 's') + '; the most recent is ' + latest.title + ', ' + latest.status.label.toLowerCase() + '.'
-      : snapshot.workLoaded ? ' Nothing is waiting on you right now.' : '';
+    var open = who.open || [], latest = open[0], sources = snapshot.sources || {}, validity = snapshot.sourceValidity || {};
+    var observed = function (key) { return snapshot.workLoaded === true && !snapshot.workLoading && sources[key] === 200 && validity[key] === true; };
+    var assistants = observed('overview') ? ' and ' + snapshot.botsOnline + ' of ' + snapshot.bots.length + ' assistant' + (snapshot.bots.length === 1 ? ' is' : 's are') + ' online.' : '. Assistant status is unavailable.';
+    var lead = who.greeting + ', ' + who.firstName + '. ' + snapshot.apps.length + ' application' + (snapshot.apps.length === 1 ? ' is' : 's are') + ' ready' + assistants;
+    var completeWork = observed('tickets') && observed('tasks');
+    var work = latest ? (completeWork ? ' You have ' : ' Loaded work includes ') + open.length + ' open item' + (open.length === 1 ? '' : 's') + '; the most recent is ' + latest.title + ', ' + latest.status.label.toLowerCase() + '.'
+      : completeWork ? ' Nothing is waiting on you right now.' : ' Work status is incomplete.';
     return lead + work + ' Tell me what you want to do.';
   }
 

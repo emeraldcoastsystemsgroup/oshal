@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Prove malformed successful overview cannot supply derived facts and its unavailable provenance agrees with visible source refusal.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prove admitted personal overview fields survive intentional roster omission while malformed and failed reads retain unknown readiness and valid companion work.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve the auth-state issuer independently of display claims, including explicit unknown provenance and guest namespaces.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Keep declaration-only liveness unknown and honor explicitly unavailable personal sources.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -205,6 +206,34 @@ describe('experience adapter: client over an injected fetch', () => {
     comms: { digest: { summary: 'Caller digest', updatedAt: '2026-10-04T09:00:00.000Z' }, signals: [{ from: 'Personal contact', subject: 'Caller subject', snippet: null, at: '2026-10-04T09:00:00.000Z' }] },
     activity: { tickets: [{ id: 'caller-ticket', title: 'Caller activity', status: 'pending_approval' }], openCount: 1 },
     calendar: { events: [{ title: '<b>Caller calendar</b>', when: '2026-10-05T10:00:00.000Z' }] },
+  });
+
+  it('keeps declared bots and personal activity without claiming measured liveness', async () => {
+    const bots = [{ agentId: 'declared-bot', name: 'Declared assistant', online: null, status: 'declared' }];
+    const body = { ...personalFields(), bots, sources: { bots: 'declarations' } };
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson(body) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.bots).toEqual(bots); expect(snap.openTickets).toBe(1);
+    expect(snap.comms).toEqual(body.comms); expect(snap.calendarEvents).toEqual(body.calendar.events);
+    expect(LIVE.sourceState(snap, ['overview']).complete).toBe(false);
+    const declared = LIVE.declaredAssistants({ manifest: { bots: [{ name: 'Declared assistant', agentId: 'declared-bot' }] } }, bots);
+    expect(declared[0].state).toBe('declared');
+  });
+
+  it('does not turn explicit unavailable personal sources into successful empty reads', async () => {
+    const body = { bots: [], comms: { digest: null, signals: [] }, calendar: { events: [] },
+      activity: { tickets: [], openCount: 0 }, sources: { bots: 'declarations', communications: 'unavailable', calendar: 'unavailable' } };
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson(body) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.comms).toBeNull(); expect(snap.calendarEvents).toEqual([]);
+    for (const source of ['overview', 'overviewComms', 'overviewCalendar']) expect(LIVE.sourceState(snap, [source]).complete).toBe(false);
+  });
+
+  it('does not let a declaration label conceal a malformed bot row', async () => {
+    const body = { ...personalFields(), bots: [{ name: 'Forged heartbeat', agentId: 'x', online: 'yes', status: 'declared' }], sources: { bots: 'declarations' } };
+    const { fetch } = fakeFetch({ ...baseRoutes, 'GET /api/jarvis/overview': okJson(body) });
+    const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
+    expect(snap.bots).toEqual([]); expect(snap.openTickets).toBe(0); expect(snap.comms).toBeNull();
   });
 
   it('retains caller-bound fields when the successful overview intentionally omits the global roster', async () => {
