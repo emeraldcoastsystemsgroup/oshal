@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<!--
+  CHANGE LOG
+  -----------------------------------------------------------------------------
+  SEQ | AUTHOR | DESCRIPTION
+  -----------------------------------------------------------------------------
+  1 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-9): the jobs screen under Swarm Admin, served at
+    | /swarm-admin/jobs to the operator role only. Every scheduled job on the box from
+    | GET /api/admin/jobs: an overview line, the package services that await activation with an
+    | Activate-as-the-application button per card (said up front when the package has no
+    | authorization catalog, since the enforce posture refuses that), the scheduler's records as a
+    | table that marks a service route the runner skips because nothing activated it and offers
+    | Pause or Resume on each manifest schedule through the operator's own schedule control, and
+    | the core's built-in timers with their gates.
+-->
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OSHAL Swarm Admin — Jobs</title>
+  <script src="/shared/ui/js/surface-theme.js"></script>
+  <link rel="stylesheet" href="/fonts/codicon.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-themes.css" />
+  <link rel="stylesheet" href="/swarm-admin/swarm-admin.css" />
+  <link rel="stylesheet" href="/swarm-admin/jobs/jobs.css" />
+  <link rel="stylesheet" href="/shared/ui/css/surface-glass.css" />
+</head>
+<body>
+  <p id="statusBanner" class="sa-status sa-banner" role="status" data-tone="info">Loading the jobs…</p>
+  <header class="sa-header">
+    <nav class="sa-crumbs" aria-label="Swarm Admin">
+      <a href="/swarm-admin">Swarm Admin</a><span aria-hidden="true"> / </span><span>Jobs</span>
+    </nav>
+    <div class="sa-title">
+      <span class="codicon codicon-clock"></span>
+      <h1>Jobs</h1>
+    </div>
+    <p class="sa-lead">
+      Every scheduled job on this box: the records the platform scheduler holds (trading legs, world refresh, digests,
+      workflows and the services that packages declare), and the timers built into the core. A package service runs
+      only once it is activated: until then the scheduler dispatches it and skips it. Activate it here as the
+      application itself, which needs the package's authorization catalog under the enforce posture.
+    </p>
+  </header>
+
+  <main class="sa-main">
+    <section class="sa-section" aria-labelledby="postureHeading">
+      <div class="sj-toolbar">
+        <h2 id="postureHeading">Overview</h2>
+        <button type="button" id="reload">Reload</button>
+      </div>
+      <ul id="posture" class="sj-posture surface-card"></ul>
+    </section>
+
+    <section class="sa-section" aria-labelledby="activationHeading">
+      <h2 id="activationHeading">Needs activation</h2>
+      <div id="activation" class="sj-cards"></div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="schedulesHeading">
+      <h2 id="schedulesHeading">Scheduled jobs</h2>
+      <p id="scheduleCount" class="sj-count"></p>
+      <div class="sj-table-wrap surface-card">
+        <table id="schedules" class="sj-table">
+          <thead><tr><th>App</th><th>Job</th><th>Kind</th><th>Cron</th><th>Timezone</th><th>Status</th><th>Last run</th><th>Next run</th><th>Runs</th><th>Owner</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sa-section" aria-labelledby="timersHeading">
+      <h2 id="timersHeading">Built-in timers</h2>
+      <div class="sj-table-wrap surface-card">
+        <table id="timers" class="sj-table">
+          <thead><tr><th>Timer</th><th>Cadence</th><th>State</th><th>Flag</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <template id="serviceTemplate">
+    <article class="sj-card surface-card">
+      <div class="sj-card-head">
+        <h3 class="sj-app"></h3>
+        <span class="pill sj-state"></span>
+      </div>
+      <p class="sj-meta"></p>
+      <p class="sj-requires"></p>
+      <p class="sj-note" hidden></p>
+      <div class="sl-actions"><button type="button" class="sj-activate">Activate as the application</button></div>
+    </article>
+  </template>
+
+  <script type="module" src="/swarm-admin/jobs/jobs.js"></script>
+</body>
+</html>

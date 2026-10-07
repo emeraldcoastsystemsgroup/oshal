@@ -11,6 +11,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | ADR-157 S1: compose the scheduled-service activation authority, register it with the service-route runner, and expose it to the kernel-served services routes the way the scheduler handle is already exposed.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Take and hand on schema readiness as a re-requestable thunk. A single chained promise kept its own rejection, so a bootstrap that lost the pool at boot refused every activation read for the life of the process.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Carry the registered authorization mode to scheduled-service admission without changing scheduler or grant behavior.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | ADR-174 Amendment B (step B5-9): the handles also carry describeApp (the same posture lookup the activation service refuses catalog-less system activations with) and activeServiceApps (the ACTIVE applications whose manifest declares an enabled service-route schedule), so the Swarm Admin jobs route reads every application's services and catalog standing through this one composition instead of composing a second.
  *
  * @module application-service-activation-wiring
  */
@@ -35,6 +36,10 @@ const logger = createChildLogger({ module: 'application-service-activation-wirin
 export interface ApplicationServiceActivationHandles {
   service: ApplicationServiceActivationService;
   resolveActor(req: Request): Promise<AuthorizationActor>;
+  /** The registered posture of one installed application, or null: the lookup the activation service decides catalog-less refusals with. */
+  describeApp: ApplicationServiceActivationWiringDeps['describeApp'];
+  /** The names of the ACTIVE applications whose manifest declares at least one enabled service-route schedule. */
+  activeServiceApps(): Promise<string[]>;
 }
 
 let handles: ApplicationServiceActivationHandles | undefined;
@@ -85,6 +90,14 @@ async function declaredServices(getApps: () => SwarmAppService, app: string): Pr
       ...(schedule.runsAs ? { runsAs: schedule.runsAs } : {}),
       requires: [...(schedule.requires ?? [])], queue: app,
     }));
+}
+
+/** @description The ACTIVE applications that declare at least one enabled service-route schedule, by name. */
+async function activeServiceApps(getApps: () => SwarmAppService): Promise<string[]> {
+  const manifests = await getApps().getActiveManifests();
+  return manifests
+    .filter(manifest => (manifest.schedules ?? []).some(schedule => schedule.target === 'service-route' && schedule.enabled !== false))
+    .map(manifest => manifest.name);
 }
 
 /** @description Register or remove the per-user schedule instance one user activation runs on. */
@@ -139,7 +152,7 @@ export function createApplicationServiceActivationWiring(
     registerUserInstance: input => userInstance(input, 'register'),
     removeUserInstance: input => userInstance(input, 'remove'),
   });
-  handles = { service, resolveActor: deps.resolveActor };
+  handles = { service, resolveActor: deps.resolveActor, describeApp: deps.describeApp, activeServiceApps: () => activeServiceApps(deps.getApps) };
   setManifestServiceActivationRuntime({
     resolveDispatch: input => service.resolveDispatch(input),
     suspend: (activation, reason) => service.suspend(activation, reason),

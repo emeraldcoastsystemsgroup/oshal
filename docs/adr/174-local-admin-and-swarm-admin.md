@@ -79,7 +79,7 @@ events; #1110 connectors over the ADR-067 marketplace), step 6 (#1112 shared kno
 `DELETE /api/rag/knowledge/:id`), step 7 (#1113 devices over the remote client registry), step 8 (#1114 households
 with `GET /api/admin/households`; the ADR-169 membership fence leaves other households read-only to an operator);
 #1115 links the operator console to Swarm Admin. Open, recorded in BACKLOG.md: which settings tables adopt the
-`portal-default` owner next, and whether operators may manage households they are not admins of.
+`portal-default` owner next, and whether operators may manage households they are not admins of. B5-9 (2026-10-06 ~22:00 CDT, the Jobs screen): `/swarm-admin/jobs` over `GET /api/admin/jobs`, every platform-scheduler record with its real state (a service-route schedule whose application holds no live activation is marked skipped, which the cron inventory found true of all seven on the box), the package services awaiting activation with the Activate action (ADR-157), Pause/Resume on manifest schedules through the operator control route, and the core built-in timers with their gates; browser spec `tests/unit/swarm-jobs-browser.spec.ts`, route spec `tests/unit/swarm-jobs-routes.spec.ts`.
 
 ## Context
 

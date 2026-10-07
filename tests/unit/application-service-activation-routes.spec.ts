@@ -6,6 +6,7 @@
  * 1   | maintainer@emeraldcoastsystemsgroup.com     | ADR-157 S1: prove the kernel services routes over a real loopback HTTP server and the real activation service — a non-administrator asking for a system service gets 403, an administrator gets it, a person activates only for themselves, and a second person can neither deactivate someone else's activation nor make it disappear.
  * 2   | maintainer@emeraldcoastsystemsgroup.com     | Deactivation over the wire: a person who holds no activation reads 200 {deactivated:false} and a person who reaches for the system service reads 403 — the two answers a caller must be able to tell apart — while an unknown or contradictory principal class is a 400 and the system activation survives every one of them.
  * 3   | maintainer@emeraldcoastsystemsgroup.com     | Exercise catalog-less protected activation refusal through real HTTP, activation and authorization policy with memory stores; preserve legacy/user paths and prove catalog-backed system grants remain exact.
+ * 4   | maintainer@emeraldcoastsystemsgroup.com     | ADR-174 Amendment B (step B5-9): the installed handles carry describeApp and activeServiceApps, the two ports the Swarm Admin jobs route reads; the fixture's are the same posture lookup and the one declared app.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -117,6 +118,8 @@ beforeEach(async () => {
   setApplicationServiceActivations({
     service,
     resolveActor: async (req: Request) => structuredClone(actors[String(req.get('x-fixture-user'))]),
+    describeApp: app => authorization.getApp(app),
+    activeServiceApps: async () => [APP],
   });
 });
 

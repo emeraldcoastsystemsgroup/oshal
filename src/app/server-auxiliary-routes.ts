@@ -17,6 +17,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (B4, step B5-2): mount GET /api/admin/navigation, the Swarm Admin navigation as server data, behind requiresAuth + requiresOperator beside the other operator-only mounts.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-4): mount GET /api/admin/swarm-logins, the token-free status of the swarm's vendor logins for the Swarm Admin logins screen, behind requiresAuth + requiresOperator beside the navigation mount.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-8): mount GET /api/admin/households, every household with its members for the Swarm Admin households screen, behind requiresAuth and requiresOperator beside the other admin APIs.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com   | ADR-174 Amendment B (step B5-9): mount GET /api/admin/jobs, every scheduled job on the box with the package services awaiting activation and the built-in timers, for the Swarm Admin jobs screen, behind requiresAuth and requiresOperator beside the households mount; its handles (the scheduler, the activation authority) are read per request from the process-lifetime holders.
  * -----------------------------------------------------------------------------
  */
 
@@ -77,6 +78,7 @@ import { requiresOperator } from '@/shared/middleware/authz';
 import { createSwarmAdminNavigationRoutes } from './routes/swarm-admin-navigation';
 import { createSwarmLoginsRoutes } from './routes/swarm-logins-routes';
 import { createSwarmHouseholdsRoutes } from './routes/swarm-households-routes';
+import { createSwarmJobsRoutes, defaultSwarmJobsDeps } from './routes/swarm-jobs-routes';
 import { createGraphRoutes as createPersonalGraphRoutes } from './routes/personal-graph-routes';
 import { createPersonalGraphIngestRoutes } from './routes/personal-graph-ingest-routes';
 import { InMemoryGraphStore } from '@/features/personal-graph';
@@ -317,6 +319,7 @@ export function mountCoreObservabilityAndVoiceRoutes(
   app.use('/api/admin/navigation', requiresAuth, requiresOperator, createSwarmAdminNavigationRoutes());
   app.use('/api/admin/swarm-logins', requiresAuth, requiresOperator, createSwarmLoginsRoutes());
   app.use('/api/admin/households', requiresAuth, requiresOperator, createSwarmHouseholdsRoutes({ pool: ctx.pool }));
+  app.use('/api/admin/jobs', requiresAuth, requiresOperator, createSwarmJobsRoutes(defaultSwarmJobsDeps()));
   registerSwarmExtensionRoutes(app, requiresAuth, ctx.swarm);
   app.use('/api/tasks', requiresAuth, createTaskRoutes(ctx));
   app.use('/api/stream', requiresAuth, createStreamRoutes(ctx));
