@@ -9,11 +9,14 @@
  *   promotes it (autoStart workflows) and the workflow engine runs the stages.
  *   This is the cron→ticket trigger for authored workflows (e.g. daily-trade-recap),
  *   keeping the cron's job tiny and the workflow in charge of the actual work.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve the unique active verified owner namespace on schedule-born tickets and refuse unresolved owners before creation.
  */
 
 import type { AppContext } from './composition-root';
 import type { ScheduleDispatchResult, ScheduleRecord } from '@/features/scheduling';
 import { createChildLogger } from '@/shared/logger';
+import { PrincipalDirectoryStore } from '@/features/principal-directory';
+import { OWNER_PRINCIPAL_ISSUER_METADATA_KEY } from '@/shared/security/owner-principal-issuer';
 
 const logger = createChildLogger({ module: 'workflow-ticket-schedule' });
 
@@ -43,6 +46,15 @@ export async function dispatchWorkflowTicketSchedule(
   const firedAt = new Date().toISOString();
 
   try {
+    // Legacy schedules persisted only a subject. Never guess a provider or choose
+    // among colliding namespaces, including a previously disabled namespace.
+    const owner = schedule.ownerSub
+      ? await new PrincipalDirectoryStore(ctx.pool).getUniqueActiveBySub(schedule.ownerSub)
+      : null;
+    if (schedule.ownerSub && !owner) {
+      return { success: false, scheduleId: schedule.id,
+        error: 'Workflow schedule requires an unambiguous active verified owner principal' };
+    }
     const ticket = await ctx.ticketService.createTicket({
       title: `${titleRaw} — scheduled ${firedAt.slice(0, 10)}`,
       ticketType,
@@ -57,7 +69,9 @@ export async function dispatchWorkflowTicketSchedule(
       externalId: null,
       externalUrl: null,
       ownerSub: schedule.ownerSub ?? null,
-      metadata: { source: 'schedule', scheduleId: schedule.id, firedAt, workflowTrigger: true, ticketType },
+      metadata: { source: 'schedule', scheduleId: schedule.id, firedAt, workflowTrigger: true, ticketType,
+        ...(owner ? { [OWNER_PRINCIPAL_ISSUER_METADATA_KEY]: owner.issuer } : {}),
+      },
     });
     logger.info({ scheduleId: schedule.id, ticketId: ticket.ticketId, ticketType }, 'Workflow ticket created by schedule');
     return { success: true, scheduleId: schedule.id, taskId: ticket.ticketId };
