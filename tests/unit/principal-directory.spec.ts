@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Verify existing-account adoption, provider collisions and operator continuity against disposable PostgreSQL.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Bound case-registration helpers without changing suite names, test order or database hook scope.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Verify the administrator inventory carries each verified account's email beside its unchanged label.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Prove subject-only schedule recovery through the real RLS pool refuses missing, disabled and colliding verified namespaces.
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -68,6 +69,20 @@ afterAll(async () => { if (runtime) await runtime.end(); if (owner) await owner.
 
 /** Register verified observation and independent provider inventory behavior. */
 function registerObservationCases() {
+  it('recovers a legacy schedule owner only while one observed namespace is active, including disabled collision refusal', async () => {
+    const store = new PrincipalDirectoryStore(runtime);
+    expect(await store.getUniqueActiveBySub('same-sub')).toBeNull();
+    await directory.observe(req(google));
+    expect(await store.getUniqueActiveBySub('same-sub')).toMatchObject({ issuer: google, sub: 'same-sub', status: 'active' });
+    expect(await store.getUniqueActiveBySub('different-sub')).toBeNull();
+    await owner.query("UPDATE oshal_verified_principals SET status='disabled' WHERE issuer=$1", [google]);
+    expect(await store.getUniqueActiveBySub('same-sub')).toBeNull();
+    await directory.observe(req(microsoft));
+    expect(await store.getUniqueActiveBySub('same-sub')).toBeNull();
+    await owner.query("UPDATE oshal_verified_principals SET status='active' WHERE issuer=$1", [google]);
+    expect(await store.getUniqueActiveBySub('same-sub')).toBeNull();
+    expect((await runtime.query('SELECT * FROM oshal_verified_principals')).rows).toEqual([]);
+  });
   it('observes authenticated HTTP callers before handlers and refuses on registry failure', async () => {
     const app = express();
     app.use((request,_response,next) => { if (request.get('x-fixture-auth') === 'yes') Object.assign(request,{ oidc: req(google).oidc }); next(); });

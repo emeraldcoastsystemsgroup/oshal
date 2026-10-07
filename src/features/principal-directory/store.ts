@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Store exact verified principal provenance and preserve disabled state across subsequent observations.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Resolve legacy scheduled subjects only when one observed namespace exists and remains active; disabled collisions cannot silently rebind ownership.
  */
 import type { Pool } from 'pg';
 import { runWithSystemIdentity } from '@/shared/services/database/request-identity';
@@ -72,6 +73,19 @@ export class PrincipalDirectoryStore {
     return runWithSystemIdentity(async () => {
       const result = await this.pool.query<Row>('SELECT * FROM oshal_verified_principals WHERE issuer=$1 AND user_sub=$2', [issuer,sub]);
       return result.rows[0] ? principal(result.rows[0]) : null;
+    });
+  }
+  /** @description Recover a legacy subject only when its observed namespace is unambiguous and active.
+   * Disabled namespaces count as collisions so revocation cannot rebind a subject to another provider.
+   * @param sub Exact saved schedule subject. @returns Unique active verified principal or null.
+   */
+  async getUniqueActiveBySub(sub: string): Promise<VerifiedPrincipal | null> {
+    if (!valid(sub)) return null;
+    return runWithSystemIdentity(async () => {
+      const result = await this.pool.query<Row>(
+        'SELECT * FROM oshal_verified_principals WHERE user_sub=$1 LIMIT 2', [sub]);
+      return result.rows.length === 1 && result.rows[0].status === 'active'
+        ? principal(result.rows[0]) : null;
     });
   }
   /** @description List observed identities for an authorized management inventory. @returns Exact provider-qualified metadata. */
