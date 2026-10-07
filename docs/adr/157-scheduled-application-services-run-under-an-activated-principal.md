@@ -7,7 +7,9 @@ class of three of the five schedules, and the RLS guarantee), and found that a p
 imported permission catalog cannot run a system service at all. All three are recorded under "Amendment"; the
 catalog-less finding was subsequently decided on 2026-09-29: explicit package catalogs and service
 permissions, with missing-catalog refusal at activation. See the admission addendum below; implementation
-and real PostgreSQL acceptance remain distinct.**
+and real PostgreSQL acceptance remain distinct. Amended 2026-10-06 — the operator directed that shared
+system jobs run through one core system-services engine that packages subscribe to, instead of a catalog per
+package; recorded as Amendment D, not built.**
 
 Related: [ADR-149](149-enterprise-application-authorization.md) (application authorization — its §7 already
 states the rule this ADR builds the mechanism for), [ADR-148](148-swarm-root.md) (swarm roles),
@@ -366,6 +368,43 @@ command parity was checked statically; the separate full authorization-route cat
 complete in this local session and is not counted as passing.
 After explicit runtime coordination, run `npx vitest run tests/unit/application-service-activation-postgres.spec.ts --maxWorkers=1 --no-file-parallelism`;
 do not substitute a deployment database.
+
+### D — Shared system jobs run through one core system-services engine (operator direction 2026-10-06, not built)
+
+The cron inventory of 2026-10-06 found every manifest service-route schedule on the box dispatched and
+skipped: `oshal_application_service_activations` was empty, and three of the five packages carrying a
+system schedule (calendar 1.1.4, daily-trade-recap 1.3.3, marketing-engine 0.5.3) still have no catalog,
+so under the admission addendum above their activation is refused 409 and they can never run. Asked
+whether each package should now import a catalog with a `jobs` binding the way venture-plan 1.5.0 did,
+the operator answered (verbatim gist): "create a system services engine and that is what they subscribe
+to. These are core services shared by multiple applications. If I have an application and another
+application that needs auth to work with each other I have to include both; if they work with calendar I
+have to include the system's package and the calendar package with it, on granular, if that's the route."
+
+What this decides:
+
+- **Shared system jobs are a core concern, not a per-package catalog concern.** Meeting briefs, recorded
+  report reconciliation, metrics ingest and the like are system services that several applications rely
+  on. They run through one kernel-owned system-services engine. A package *subscribes* a declared system
+  job to the engine; it does not have to import an ADR-149 catalog of its own to be allowed to run it.
+- **One activation, one authorization, at the engine.** The swarm administrator activates a system
+  service once, at the engine, under the engine's own catalog of system permissions. The service
+  principal and its grants belong to the engine, so the application-composition problem the operator
+  named does not arise: an application that works with calendar is granted the engine's calendar service,
+  not calendar's package catalog plus the system package.
+- **Per-package catalogs stay what ADR-149 made them:** the authorization of a package's own routes, bots
+  and user-facing operations. The 2026-09-29 direction (declared catalogs, explicit service permissions,
+  missing-catalog refusal) is not reversed for those; it is narrowed to them. A package may still bind a
+  job in its own catalog, as venture-plan does, when the job is genuinely that package's own.
+- **The legacy posture is not the answer.** Switching the box to `OSHAL_APPLICATION_AUTHORIZATION_MODE=legacy`
+  was offered and not chosen.
+
+Until the engine exists the admission addendum stands: the three catalog-less schedules stay skipped and
+visibly so (the Swarm Admin Jobs screen, in progress on 2026-10-06, says why). The engine's shape — its
+declaration in the manifest, its own catalog and activation table, how a subscription is surfaced on the
+setup dashboard, and how the four existing `app-route:` handlers move onto it — is a design slice of its
+own and is tracked in [docs/BACKLOG.md](../BACKLOG.md) under "Package service-route schedules are
+dispatched and skipped".
 
 ## Implementation
 
