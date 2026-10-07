@@ -10,6 +10,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Register the dependency-tier scenario: a read-only live step checks one install preview reports required/optional tiers with closed states and never offers an install the installer would refuse; its contract, installer and App Loader browser suites are attached.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Backlog #33: register the exact-SHA package-audit gate. Its live step runs the REAL installer in enforce mode for the first catalog package that carries an audited binding, into a disposable temporary directory (never deployed-apps, nothing loaded), and reports pass only for an exact audited pin; an attestation the configured store cannot serve or that no longer describes the catalog source reports a gap. The temporary directory is removed and its removal verified. The installer's real-Git evidence, stale-source and version suites are attached.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Register real HTTP Host admission regressions for focused root, shell and profile decisions, with forwarded protocol/IP behavior retained.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Record strict bot owner/name dependency validation and real manifest loading in the existing dependency scenario.
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -214,7 +215,7 @@ export const APP_REGISTRY_SCENARIOS: Scenario[] = [{
   steps: [{ id: 'catalog', app: 'app-loader', label: 'Trusted store discovery', run: registryDiscovery }],
 }, {
   id: 'app-dependency-tiers', title: 'Required and optional app dependencies', group: 'tool',
-  description: 'Read one install preview and check it reports required and optional dependency tiers without offering an install the installer would refuse. Local suites prove the contract, the installer (required fail-closed, optional only when chosen, uninstall blocked only by required dependents) and the App Loader checkboxes plus dependency hot-loading against a disposable store.',
+  description: 'Read one install preview and check it reports required and optional dependency tiers without offering an install the installer would refuse. Local suites prove explicit bot owner/name imports and their refusal cases through the real YAML loader, the installer (required fail-closed, optional only when chosen, uninstall blocked only by required dependents) and the App Loader checkboxes plus dependency hot-loading against a disposable store.',
   regressionTests: [
     { level: 'unit', path: 'tests/unit/app-dependencies-contract.spec.ts' },
     { level: 'integration', path: 'tests/unit/app-dependencies-installer.spec.ts' },

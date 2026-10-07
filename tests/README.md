@@ -279,3 +279,13 @@ actually commits to are met by that same measurement. Nothing outside the guard 
 Run `npm run test:experience-ux` for the shared Home, Business and Classroom navigation/draft checks, Studio/Jarvis/Orbit/Commons selected-member context and hosted navigation, and the policy-backed complete composite assignment flow, including native application declarations and refusal of missing transitive component roles. These use isolated loopback fixtures and never grant installed accounts access, send to a live provider, or change member records. Auth-state coverage requires the verified issuer to remain authoritative even when the presentation user omits it. The same cases are registered in the Experience Test Lab scenario.
 
 Source browser proofs are separate from signed-in installed acceptance. Installed checks assign one reviewed application composite role, which includes its required component roles automatically. The seven experience products and native Little Monsters publish complete required bundles; no component checkbox is needed. Existing school/household relationships and independently assigned access remain under their own applications.
+
+## Application bot dependencies
+
+Run `node node_modules/vitest/vitest.mjs run tests/unit/app-dependencies-contract.spec.ts tests/unit/app-dependencies-installer.spec.ts tests/unit/app-dependencies-loader-browser.spec.ts --pool=forks --maxWorkers=1 --no-file-parallelism`.
+The existing `app-dependency-tiers` Test Lab scenario references these suites. Bot imports are
+`{ app: owner-package, name: bot-name }` entries under a dependency tier's `bots` list. A required
+bot needs its owner in `required.apps`; an optional bot needs its owner in either app tier.
+The contract tests exercise the shared CLI reader and real YAML loader, including malformed
+bindings, undeclared owners, duplicates and tier conflicts. This is declaration validation,
+not evidence of remote bot execution or delegated-result authorization.

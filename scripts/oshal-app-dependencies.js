@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | One CLI/runtime contract for manifest dependency tiers: `required` (installed with the app, fail-closed, blocks its own removal) and `optional` (offered at install, never blocks). The legacy flat apps/tools/connectors form reads as all-required.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Preserve explicit app/name bot imports and reject malformed, duplicate or undeclared owner bindings before installation or loading.
  */
 'use strict';
 
@@ -11,7 +12,8 @@
 const APP_NAME = /^[a-z0-9][a-z0-9-]{1,63}$/;
 /** Tool and connector ids: registry names such as `trading_scan` or `google-search-console`. */
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-const KINDS = ['apps', 'tools', 'connectors'];
+const IDS = ['apps', 'tools', 'connectors'];
+const KINDS = [...IDS, 'bots'];
 const TIERS = ['required', 'optional'];
 /** The compatibility floor a tiered manifest declares so an older core refuses it (fail closed). */
 const DEPENDENCY_TIERS_SKILL = 'app-dependencies';
@@ -21,7 +23,51 @@ function isPlainObject(value) {
 }
 
 function emptyLists() {
-  return { apps: [], tools: [], connectors: [] };
+  return { apps: [], tools: [], connectors: [], bots: [] };
+}
+
+/** An import selects a bot from its declared owner; it never supplies execution authority. */
+function readBots(value, at, problems) {
+  if (!Array.isArray(value)) {
+    problems.push(`${at} must be a list (use [] for none)`);
+    return [];
+  }
+  const seen = new Set();
+  const bots = [];
+  for (const [index, entry] of value.entries()) {
+    if (!isPlainObject(entry) || Object.keys(entry).sort().join(',') !== 'app,name') {
+      problems.push(`${at}[${index}] must name only app and name`);
+      continue;
+    }
+    if (typeof entry.app !== 'string' || !APP_NAME.test(entry.app)
+      || typeof entry.name !== 'string' || !ID.test(entry.name)) {
+      problems.push(`${at}[${index}] has an invalid app or name`);
+      continue;
+    }
+    const key = `${entry.app}/${entry.name}`;
+    if (seen.has(key)) problems.push(`${at} repeats "${key}"`);
+    seen.add(key);
+    bots.push({ app: entry.app, name: entry.name });
+  }
+  return bots;
+}
+
+/** The owning application must already be in the corresponding installation closure. */
+function botOwnerProblems(required, optional, problems) {
+  const optionalKeys = new Set(optional.bots.map((bot) => `${bot.app}/${bot.name}`));
+  for (const bot of required.bots) {
+    if (optionalKeys.has(`${bot.app}/${bot.name}`)) {
+      problems.push(`dependencies lists "${bot.app}/${bot.name}" as both required and optional bots`);
+    }
+    if (!required.apps.includes(bot.app)) {
+      problems.push(`required bot ${bot.name} needs ${bot.app} in dependencies.required.apps`);
+    }
+  }
+  for (const bot of optional.bots) {
+    if (![...required.apps, ...optional.apps].includes(bot.app)) {
+      problems.push(`optional bot ${bot.name} needs its owning app ${bot.app} declared`);
+    }
+  }
 }
 
 /** Validate one list; returns the entries and pushes every problem found. */
@@ -43,7 +89,7 @@ function readList(value, at, kind, problems) {
   return value.filter((entry) => typeof entry === 'string');
 }
 
-/** Read one `{apps, tools, connectors}` group (a tier, or the legacy flat block). */
+/** Read one dependency group (a tier, or the legacy flat block). */
 function readGroup(value, at, problems) {
   const lists = emptyLists();
   const declared = new Set();
@@ -58,7 +104,9 @@ function readGroup(value, at, problems) {
   for (const kind of KINDS) {
     if (value[kind] === undefined) continue;
     declared.add(kind);
-    lists[kind] = readList(value[kind], `${at}.${kind}`, kind, problems);
+    lists[kind] = kind === 'bots'
+      ? readBots(value[kind], `${at}.${kind}`, problems)
+      : readList(value[kind], `${at}.${kind}`, kind, problems);
   }
   return { lists, declared };
 }
@@ -76,7 +124,7 @@ function tieredFloorProblem(manifest) {
 
 /** Cross-tier rules: nothing listed twice, and an app never depends on itself. */
 function crossTierProblems(manifest, required, optional, problems) {
-  for (const kind of KINDS) {
+  for (const kind of IDS) {
     for (const entry of required[kind]) {
       if (optional[kind].includes(entry)) problems.push(`dependencies lists "${entry}" as both required and optional ${kind}`);
     }
@@ -116,6 +164,7 @@ function inspectAppDependencies(manifest) {
     result.connectorAllowList = [...required.lists.connectors, ...optional.lists.connectors];
   }
   crossTierProblems(manifest, result.required, result.optional, problems);
+  botOwnerProblems(result.required, result.optional, problems);
   const floor = result.tiered ? tieredFloorProblem(manifest) : null;
   if (floor) problems.push(floor);
   return result;

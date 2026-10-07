@@ -4,11 +4,18 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Typed runtime view of the shared CLI/runtime dependency-tier contract (scripts/oshal-app-dependencies.js): required vs optional apps, tools and connectors, the legacy flat form read as all-required, and the connector allow-list derived from both tiers.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Expose explicit bot owner/name imports without inferring installation or permission grants.
  */
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
-/** The three things an app can depend on. */
+/** A selector for a bot owned by another explicitly declared application. */
+export interface AppBotDependency {
+  app: string;
+  name: string;
+}
+
+/** The resources an app can depend on. */
 export interface AppDependencyLists {
   /** Store packages (installable by name). */
   apps: string[];
@@ -16,6 +23,8 @@ export interface AppDependencyLists {
   tools: string[];
   /** Connector provider ids. */
   connectors: string[];
+  /** Bot selectors whose owning application is declared in the appropriate tier. */
+  bots: AppBotDependency[];
 }
 
 /** A manifest's dependencies, normalized into the two tiers. */

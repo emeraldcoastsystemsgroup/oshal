@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Dependency tiers: the shared CLI/runtime contract (required vs optional, the legacy flat form as all-required, every refusal), the real loader failing closed on a malformed block, group members as required apps, optional tools never failing a load, and the real SwarmAppService blocking an uninstall only on REQUIRED dependents while reporting optional ones and deriving the connector allow-list from both tiers.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the surfaced group fixture valid under P8's enforce-by-default concierge contract so this suite continues to isolate required-versus-optional membership validation.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Prove explicit bot imports survive CLI and real YAML loading, with strict owner, tier and binding validation.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -34,7 +35,7 @@ describe('the dependency-tier contract', () => {
   it('reads the legacy flat form as all required, keeping its connector allow-list semantics', () => {
     const deps = readAppDependencies({ name: 'kids', dependencies: { apps: ['presentations-surface'], tools: ['trading_scan'], connectors: [] } });
     expect(deps).toMatchObject({ tiered: false, required: { apps: ['presentations-surface'], tools: ['trading_scan'], connectors: [] } });
-    expect(deps.optional).toEqual({ apps: [], tools: [], connectors: [] });
+    expect(deps.optional).toEqual({ apps: [], tools: [], connectors: [], bots: [] });
     expect(connectorAllowList({ dependencies: { apps: [], connectors: [] } })).toEqual([]);
     expect(connectorAllowList({ dependencies: { apps: [] } })).toBeUndefined();
     expect(connectorAllowList({})).toBeUndefined();
@@ -55,6 +56,35 @@ describe('the dependency-tier contract', () => {
   it('is the same contract the CLI loads (one module, two callers)', () => {
     const manifest = tiered('a', { optional: { apps: ['beta'] } });
     expect(contract.readAppDependencies(manifest)).toEqual(readAppDependencies(manifest));
+  });
+
+  it('preserves explicit bot imports without turning an optional owner into a requirement', () => {
+    const manifest = tiered('consumer', {
+      required: { apps: ['owner'], bots: [{ app: 'owner', name: 'worker' }] },
+      optional: { apps: ['helper'], bots: [{ app: 'helper', name: 'assistant' }, { app: 'owner', name: 'reviewer' }] },
+    });
+    const deps = readAppDependencies(manifest);
+    expect(deps.required.bots).toEqual([{ app: 'owner', name: 'worker' }]);
+    expect(deps.optional.bots).toEqual([{ app: 'helper', name: 'assistant' }, { app: 'owner', name: 'reviewer' }]);
+    expect(deps.required.apps).toEqual(['owner']);
+    expect(contract.readAppDependencies(manifest)).toEqual(deps);
+    expect(connectorAllowList(manifest)).toBeUndefined();
+  });
+
+  it.each([
+    ['non-list', { bots: {} }, {}, /bots must be a list/],
+    ['string alias', { apps: ['owner'], bots: ['worker'] }, {}, /must name only app and name/],
+    ['missing name', { apps: ['owner'], bots: [{ app: 'owner' }] }, {}, /must name only app and name/],
+    ['unknown authority', { apps: ['owner'], bots: [{ app: 'owner', name: 'worker', role: 'admin' }] }, {}, /must name only app and name/],
+    ['invalid owner', { bots: [{ app: '../owner', name: 'worker' }] }, {}, /invalid app or name/],
+    ['invalid name', { apps: ['owner'], bots: [{ app: 'owner', name: 'worker slash' }] }, {}, /invalid app or name/],
+    ['duplicate binding', { apps: ['owner'], bots: [{ app: 'owner', name: 'worker' }, { name: 'worker', app: 'owner' }] }, {}, /repeats/],
+    ['undeclared owner', { bots: [{ app: 'owner', name: 'worker' }] }, {}, /needs owner in dependencies.required.apps/],
+    ['optional owner of required bot', { bots: [{ app: 'owner', name: 'worker' }] }, { apps: ['owner'] }, /needs owner in dependencies.required.apps/],
+    ['undeclared optional owner', {}, { bots: [{ app: 'owner', name: 'worker' }] }, /needs its owning app owner declared/],
+    ['both tiers', { apps: ['owner'], bots: [{ app: 'owner', name: 'worker' }] }, { bots: [{ app: 'owner', name: 'worker' }] }, /both required and optional bots/],
+  ])('refuses a bot import with %s', (_label, required, optional, message) => {
+    expect(() => readAppDependencies(tiered('consumer', { required, optional }))).toThrow(message);
   });
 
   it.each([
@@ -93,6 +123,11 @@ describe('the loader and the runtime consumers', () => {
   it('loads the tiered form when the floor is declared', () => {
     const file = writeManifest('name: a\ndisplayName: A\nuses: [app-dependencies]\ndependencies:\n  required:\n    apps: [beta]\n  optional:\n    apps: [gamma]\n');
     expect(requiredAppDependencies(readManifest(file))).toEqual(['beta']);
+  });
+
+  it('loads an explicit bot import through the real YAML loader', () => {
+    const file = writeManifest('name: consumer\ndisplayName: Consumer\nuses: [app-dependencies]\ndependencies:\n  required:\n    apps: [owner]\n    bots:\n      - app: owner\n        name: worker\n');
+    expect(readAppDependencies(readManifest(file)).required.bots).toEqual([{ app: 'owner', name: 'worker' }]);
   });
 
   it('takes a group\'s members from its REQUIRED apps; an optional app is not a member', () => {
