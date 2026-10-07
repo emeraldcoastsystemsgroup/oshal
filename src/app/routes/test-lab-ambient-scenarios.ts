@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Attached the Manage Voices → Ambient Recall bridge regressions: the four-point wiring pin (unit) and the Chromium proof that every voice row opens its profile page (browser).
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Attached the "possibly related" relevance-floor regression, which runs the real embedding model in a child process — the retrieval leg's fused score is a reciprocal rank and carried no distance, so an off-topic line was published beside real paraphrases.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added the ATTRIBUTED half. Every step here seeded through POST /segments, which refuses speaker ids by design, so the scenario could only ever prove recall by "anyone" — asks, per-person profiles and consent were unprovable without a microphone. Three new steps drive the service-secret fixture (/test-fixture/attributed-line), then assert the fixture's ask on GET /person/asks and its profile on GET /person/profile/:profileId, each keyed on the run token so a step finds only its own line.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Register ambient client and isolated browser regressions for voice persistence availability and consent.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -190,6 +191,8 @@ export const AMBIENT_SCENARIOS: Scenario[] = [
     group: 'tool',
     description: 'Seeds one clearly-labelled Test Lab transcript line through the real ambient ingest route, then proves the deterministic person-model reads: an exact count for that line, the asks / people / trends / projection reads, the themed surface, and Jarvis chat answering the open-asks shape without a model turn. That first line is unattributed (no speaker), so it is never enriched or turned into an ask; the service-secret fixture then seeds an ATTRIBUTED line for a stable per-owner fixture voice and the last two steps prove its open ask and its per-person profile (consent, topics, presence).',
     regressionTests: [
+      { level: 'unit', path: 'tests/unit/jarvis-ambient-client.spec.ts' },
+      { level: 'browser', path: 'tests/jarvis-audio-lifecycle.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-intent.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-surface.spec.ts' },
       { level: 'unit', path: 'tests/unit/person-model-recall-guard.spec.ts' },
