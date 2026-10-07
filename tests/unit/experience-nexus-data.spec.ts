@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Phase-8 corrections: every weekend's state for a month, the state of a typed range, the comparison merge under composite ids with refusals by weekend, the weekend filter, and the city names a slice carries.
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The central assistant's data kit (src/experience/nexus-data.js) in node: the month grid keeps past and unread days out of "free" and finds only complete free Friday-to-Sunday weekends (a busy Saturday removes its weekend, a refusal yields none); Travel offers become card views (malformed ones dropped, local airport times read as written) and the nonstop / after-3pm / USD budget filters and both sorts behave; short refinements are recognised and longer questions are left for Jarvis; the Google status, the device shortlist and the spoken briefing read only what they are given; the client sends each read and write to its route with the exact query or body.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Require readable sources for spoken assistant counts and empty-work claims.
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
@@ -111,8 +112,17 @@ describe('refinements, status, shortlist and briefing', () => {
     expect(list.filter((e: { id: string }) => e.id === 'a')).toHaveLength(1);
   });
 
+  it('speaks unknown status instead of inventing online assistants or an empty workload', () => {
+    const snap = { apps: [], bots: [], botsOnline: 0, workLoaded: true,
+      sources: { overview: 200, tickets: 200, tasks: 503 }, sourceValidity: { overview: false, tickets: true, tasks: false } };
+    const text = D.briefingText(snap, { greeting: 'Hello', firstName: 'Fixture', open: [] });
+    expect(text).toContain('Assistant status is unavailable.');
+    expect(text).toContain('Work status is incomplete.');
+    expect(text).not.toContain('0 of 0'); expect(text).not.toContain('Nothing is waiting');
+  });
+
   it('speaks a briefing built only from the snapshot it is given', () => {
-    const snap = { apps: [1, 2, 3], bots: [{}, {}], botsOnline: 1, workLoaded: true };
+    const snap = { apps: [1, 2, 3], bots: [{}, {}], botsOnline: 1, workLoaded: true, sources: { overview: 200, tickets: 200, tasks: 200 }, sourceValidity: { overview: true, tickets: true, tasks: true } };
     const open = [{ title: 'Synthetic review', status: { label: 'Working' } }, { title: 'Other', status: { label: 'Queued' } }];
     expect(D.briefingText(snap, { greeting: 'Good evening', firstName: 'Synthetic', open })).toBe('Good evening, Synthetic. 3 applications are ready and 1 of 2 assistants are online. You have 2 open items; the most recent is Synthetic review, working. Tell me what you want to do.');
     expect(D.briefingText(snap, { greeting: 'Good morning', firstName: 'S', open: [] })).toContain('Nothing is waiting on you right now.');

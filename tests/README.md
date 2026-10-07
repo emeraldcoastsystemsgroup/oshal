@@ -276,6 +276,8 @@ actually commits to are met by that same measurement. Nothing outside the guard 
 
 ### Seven experience UX
 
+The registered `experience-live-data.spec.ts` and `experience-nexus-data.spec.ts` suites also verify declaration-only bot status, explicit unavailable communications/calendar sources, and spoken briefings that preserve unknown assistant counts and incomplete work. A declaration is never treated as a heartbeat or as proof of an empty workload.
+
 Run `npm run test:experience-ux` for the shared Home, Business and Classroom navigation/draft checks, Studio/Jarvis/Orbit/Commons selected-member context and hosted navigation, and the policy-backed complete composite assignment flow, including native application declarations and refusal of missing transitive component roles. These use isolated loopback fixtures and never grant installed accounts access, send to a live provider, or change member records. Auth-state coverage requires the verified issuer to remain authoritative even when the presentation user omits it. The same cases are registered in the Experience Test Lab scenario.
 
 Source browser proofs are separate from signed-in installed acceptance. Installed checks assign one reviewed application composite role, which includes its required component roles automatically. The seven experience products and native Little Monsters publish complete required bundles; no component checkbox is needed. Existing school/household relationships and independently assigned access remain under their own applications.
