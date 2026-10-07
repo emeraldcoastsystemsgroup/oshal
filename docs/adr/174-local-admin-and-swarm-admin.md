@@ -1,7 +1,7 @@
 # ADR-174: A local admin that only configures the swarm; "My Account" and "Swarm Admin" are separate places
 
 Date: 2026-10-05
-Status: **Accepted 2026-10-05; D1 superseded by Amendment A (2026-10-06, operator decision); Amendment B (2026-10-06) is the design for the portal-default convention and the Swarm Admin screens.** D2 (separate Swarm Admin
+Status: **Accepted 2026-10-05; D1 superseded by Amendment A (2026-10-06, operator decision); Amendment B (2026-10-06) is the design for the portal-default convention and the Swarm Admin screens, built the same day (B1–B5 steps 1–8: core PRs #1099, #1100, #1102, #1106, #1107, #1110, #1112, #1113, #1114, #1115; live 2026-10-06 18:58 CDT).** D2 (separate Swarm Admin
 screens) and D3 (mine, then the portal default) stand. Slice 1 is built (PR #1065). Slices 2a-2c (the separate local
 account, its authenticator-only login and its scope gate, PRs #1081-#1086, #1091, #1093) were built and then removed
 under Amendment A.
@@ -70,6 +70,16 @@ must follow, so the screens can be built one area at a time without re-deciding 
   reusing ADR-173's fleet-default panels. (4) Logins and keys. (5) Connectors and budgets. (6) Shared knowledge.
   (7) Devices. (8) Households and access review. Each is its own PR with its own guard and CHANGE LOG entries, and no
   existing user screen changes until its Swarm Admin counterpart exists.
+
+**Amendment B status (2026-10-06 18:58 CDT): built and live.** B1 (#1099: `src/shared/portal-default`, the
+owner-or-operator RLS helper, the resolver); B2 and B4 (#1100: `/swarm-admin`, `GET /api/admin/navigation`,
+`requiresOperator` as every leaf's guard); B5 step 3 (#1102 AI defaults over ADR-173's panels), step 4 (#1106 swarm
+logins, `GET /api/admin/swarm-logins`), step 5 (#1107 budgets with `POST /api/budgets/remove` and the budget audit
+events; #1110 connectors over the ADR-067 marketplace), step 6 (#1112 shared knowledge: id-stamped chunks and
+`DELETE /api/rag/knowledge/:id`), step 7 (#1113 devices over the remote client registry), step 8 (#1114 households
+with `GET /api/admin/households`; the ADR-169 membership fence leaves other households read-only to an operator);
+#1115 links the operator console to Swarm Admin. Open, recorded in BACKLOG.md: which settings tables adopt the
+`portal-default` owner next, and whether operators may manage households they are not admins of.
 
 ## Context
 
