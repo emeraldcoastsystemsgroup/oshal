@@ -1680,9 +1680,12 @@ source checks do not count as installed acceptance. Record release and installed
   has a family view that Home does not host); printing (Scan to Print, person-scoped today); Smart Home control
   (exists); a daily briefing (Routines exist); birthdays, allowances, chores, emergency contacts, pets and family
   photos (nothing exists for any of them).
-- **Remaining:** (1) the operator decides the default-view model: a per-member default (a household member profile
-  or a reviewed role template per audience) versus today's grant-only visibility, and whether "child" is a household
-  attribute or stays the education role; (2) `home-experience` (store-owned): the Household child template drops
+- **Operator, 2026-10-06 19:55 CDT:** not urgent and not blocking anything; it only has to stay in the backlog. The
+  child default will most likely be a new **composite role for children** (ADR-164 E3 templates on `/access`) rather
+  than per-person granular grants, "eventually"; the Family tab itself is approved as scoped here.
+- **Remaining:** (1) the operator decides the default-view model: most likely a composite role for children (above);
+  the alternative is per-person granular grants; and whether "child" is a household attribute or stays the education
+  role; (2) `home-experience` (store-owned): the Household child template drops
   Finance (Finance must become optional or gain its own catalog, since a template must cover every required member)
   and adds email, the guest template drops Finance and Smart Home control, and "child" stops being inferred from the
   Little Monsters role; the calendar package gets a Home card and its `scope: person` is checked on the live catalog;
