@@ -6,12 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove a queued protected dispatch reaches the real worker gate in the supported hosted shape, refuses honestly without an owner connection, and never admits an agentic queued body.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Prove `bot-default` keeps the dispatcher's canonical per-bot provider stamp through protected queue shaping and reconciliation instead of falling back to the owner's hosted/CLI lane.
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Cover strict/off-mode bot-default queue shaping and SEC-05 degradation for nonoperators: catalog API ids are treated as their autonomous worker runtime and fall to hosted before a real node dispatch, null versus thrown resolver outcomes remain distinct for the operator, and the demo-operator carve is unchanged.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Verify real worker completion preserves only public controller refusal diagnostics and withholds untyped codes and arbitrary error text.
  */
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BotNodeClient, type RuntimeParamsResolver } from '@/features/agent-management';
 import { ApplicationAuthorizationService, MemoryAuthorizationStore } from '@/features/application-authorization';
-import { ApplicationRemoteExecutionService, MemoryRemoteExecutionStore } from '@/features/application-remote-execution';
+import { ApplicationRemoteExecutionService, MemoryRemoteExecutionStore, RemoteExecutionError } from '@/features/application-remote-execution';
 import type { AuthorizationActor, AuthorizationCatalog } from '@/shared/application-authorization';
 import { configureApplicationExecutionPolicy } from '@/shared/application-authorization-execution';
 import { configureQueuedApplicationPrincipals } from '@/shared/queued-application-principal';
@@ -183,6 +184,30 @@ afterEach(async () => {
 });
 
 describe('queued protected dispatch in the supported shape', () => {
+  it('retains a typed controller result denial after real worker completion without changing its error disposition', async () => {
+    const original = authority.assertResultAccess.bind(authority);
+    vi.spyOn(authority, 'assertResultAccess').mockImplementation(async (...args) => {
+      generation = randomUUID();
+      return original(...args);
+    });
+    const error = await dispatch().catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe('Error');
+    expect((error as Error).message).toBe('authorization_remote_execution_failed: remote_execution_generation_changed');
+    expect(fixture.state.phases.at(-1)).toBe('complete');
+    expect(fixture.state.calls).toHaveLength(1);
+  });
+
+  it.each([
+    Object.assign(new Error('private bearer credential fixture'), { code: 'remote_execution_generation_changed' }),
+    new RemoteExecutionError('private-unreviewed-fixture-code'),
+    'private non-error fixture text',
+  ])('withholds arbitrary controller error text and unreviewed refusal codes after real worker completion (%#)', async failure => {
+    vi.spyOn(authority, 'assertResultAccess').mockRejectedValue(failure);
+    await expect(dispatch()).rejects.toThrow(/^authorization_remote_execution_failed$/);
+    expect(fixture.state.phases.at(-1)).toBe('complete');
+  });
+
   it('is accepted end to end by the real worker gate with the owner hosted connection', async () => {
     const result = await dispatch();
     expect(result).toMatchObject({ success: true, response: 'Fixture protected answer', provider: 'fixture-hosted' });

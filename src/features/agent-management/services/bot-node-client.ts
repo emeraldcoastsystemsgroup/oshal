@@ -37,6 +37,7 @@
  * 32 | maintainer@emeraldcoastsystemsgroup.com | Carry verified replay producer subject and issuer for caller-scoped spending and cost attribution.
  * 33 | maintainer@emeraldcoastsystemsgroup.com | Protected bot-persona carrier. BotNodeRequest gains the reserved, controller-set `botPersona`: a caller-supplied value is refused (bot_persona_carrier_reserved) beside the existing applicationExecutionId reservation, and sendAuthorized adds the persona the owning application registered for the prepared binding's app and agentId (resolveBotPersonaByApp) to the protected body BEFORE buildDelegatedDispatch, so it is inside body_sha256 and the durable bind. Unprotected dispatches never carry it.
  * 34 | maintainer@emeraldcoastsystemsgroup.com | createConciergeEndpointResolver: the endpoint resolver for the concierge node, which runs inline app bots on the caller's CLI login. It answers the configured base URL only while a URL is set AND the target is an inline app bot (inlineAppBotOwner, loaded with the same require-then-warm pattern as the registry loader, so the ESM/vitest transform reports no endpoint until warmed instead of throwing); every other bot, and every bot when the URL is blank, resolves to null, so the feature is off by default. createRegistryEndpointResolver is unchanged.
+ * 35 | maintainer@emeraldcoastsystemsgroup.com | Retain closed typed controller result-refusal codes in protected dispatch diagnostics while withholding remote text and preserving escalation behavior.
  */
 import { runWithApplicationExecution } from '@/shared/application-authorization-execution';
 import { getApplicationAuthorizationActor } from '@/shared/application-authorization-context';
@@ -82,6 +83,18 @@ import { RefusalError } from '@/shared/refusal-events';
 
 const logger = createChildLogger({ module: 'bot-node-client' });
 const CONTROLLER_INLINE_CONTAINERS = new Set(['oshal-api', 'oshal-local-api']);
+
+/** Keep reviewed local result denials diagnosable without admitting remote error text or changing terminal disposition. */
+function protectedDispatchFailure(error: unknown): Error {
+  const publicCodes = ['remote_execution_generation_changed', 'remote_execution_policy_changed',
+    'remote_execution_original_grant_revoked', 'remote_execution_grant_scope_expanded',
+    'remote_execution_result_unavailable', 'remote_execution_result_owner_mismatch',
+    'remote_execution_result_binding_mismatch'];
+  const code = error instanceof Error && error.name === 'RemoteExecutionError'
+    ? (error as Error & { code?: unknown }).code : undefined;
+  const detail = typeof code === 'string' && publicCodes.includes(code) ? `: ${code}` : '';
+  return new Error(`authorization_remote_execution_failed${detail}`);
+}
 
 /** Minimal response shape from {@link postJsonNoUndiciCeiling}. */
 export interface RawHttpResponse {
@@ -525,7 +538,7 @@ export class BotNodeClient {
       // durably attributed) are already safe, typed policy outcomes. Preserve that contract for
       // the manifest terminal sink; only ambiguous remote/authority failures are genericized.
       if (error instanceof RefusalError) throw error;
-      if (prepared) throw new Error('authorization_remote_execution_failed');
+      if (prepared) throw protectedDispatchFailure(error);
       if (error instanceof Error && error.name === 'TimeoutError') {
         throw new Error(`Bot node execution timed out after ${this.timeoutMs}ms for agent ${agentId}`);
       }
