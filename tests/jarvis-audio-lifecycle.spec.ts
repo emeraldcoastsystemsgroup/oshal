@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added browser-runtime regressions for consent revocation, TTS capture gating, bounded upload fallback, settings rollback, and modal focus containment.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Loader update for the jarvis-ambient decomposition: inject the four load-ordered classic scripts (core/ui/recognition/coordinator) instead of the former single file. Assertions unchanged.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Verify explicit persistence unavailability disables remembered-speaker consent on boot and after capability changes, including saved local state.
  */
 
 import path from 'node:path';
@@ -78,6 +79,42 @@ async function installFakeRecorder(page: Page, deferredStream: boolean): Promise
 }
 
 test.describe('Jarvis audio privacy lifecycle', () => {
+  for (const field of ['persistenceAvailable', 'voiceProfilesAvailable']) {
+    test(`disables remembered speakers when ${field} is false`, async ({ page }) => {
+      await blankPage(page);
+      await page.evaluate((capability) => {
+        window.fetch = async (input) => new Response(JSON.stringify(String(input).endsWith('/speaker-context')
+          ? { context: { [capability]: false, reason: 'voice_profile_persistence_unavailable' } }
+          : { settings: { ambientEnabled: false, speakerDiarizationEnabled: true, rememberSpeakers: true, speakerTenantId: 'private-fixture' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }, field);
+      await addAmbientScripts(page);
+      const result = await page.evaluate(async () => {
+        const ready = new Promise<void>((resolve) => document.addEventListener('jarvis:ambient-ready', () => resolve(), { once: true }));
+        const client = window.JarvisAmbient.mount({ mountTarget: '#mount' });
+        await ready;
+        const state = () => ({ available: client.speakerPersistenceAvailable,
+          remembered: client.settings.rememberSpeakers, tenant: client.settings.speakerTenantId,
+          disabled: client.ui.form.elements.rememberSpeakers.disabled,
+          saved: JSON.parse(localStorage.getItem('oshal.jarvis.ambient.settings.v1') || '{}') });
+        const initial = state();
+        document.dispatchEvent(new CustomEvent('jarvis:speakers-refreshed', { detail: { context: { persistenceAvailable: true, voiceProfilesAvailable: true } } }));
+        const enabled = !client.ui.form.elements.rememberSpeakers.disabled;
+        client.settings.rememberSpeakers = true;
+        client.settings.speakerTenantId = 'private-fixture';
+        document.dispatchEvent(new CustomEvent('jarvis:speakers-refreshed', { detail: { context: { persistenceAvailable: false } } }));
+        const refreshed = state();
+        client.destroy();
+        return { initial, enabled, refreshed };
+      });
+      for (const state of [result.initial, result.refreshed]) {
+        expect(state).toMatchObject({ available: false, remembered: false, tenant: null, disabled: true });
+        expect(state.saved).toMatchObject({ rememberSpeakers: false, speakerTenantId: null });
+      }
+      expect(result.enabled).toBe(true);
+    });
+  }
+
   test('stops a late microphone grant after consent is revoked', async ({ page }) => {
     await blankPage(page);
     await installFakeRecorder(page, true);

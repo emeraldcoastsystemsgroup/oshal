@@ -1,5 +1,15 @@
 # Test organization and registration
 
+## Ambient speaker capability and consent
+
+`npx playwright test --config tests/fixtures/jarvis-audio.config.ts` runs the real ambient scripts
+in an owned Chromium browser with intercepted fixture HTTP and microphone/recorder doubles.
+It starts no application server and uses no deployment database, model or real microphone.
+It checks consent revocation, capture cleanup, and explicit unavailable persistence on startup
+and context refresh, including the disabled Remember speakers control and cleared local state.
+The Ambient Recall Test Lab card registers this browser suite and the existing pure client tests
+(`npx vitest run tests/unit/jarvis-ambient-client.spec.ts`).
+
 ## LoRA gallery producer boundary
 
 `npx vitest run tests/unit/lora-cell-thumbnails.spec.ts` executes the shipping Python validator

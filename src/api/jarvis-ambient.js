@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Promoted the under-orb control with explicit Always listening ON/OFF state and wake-word/transcript copy.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Coalesced streaming recognizer hypotheses in the pending queue: engines that mark every growing hypothesis final (Edge) were persisting each prefix as its own segment (~40 rows for one sentence, observed live 2026-07-11); in-flight flush batches stay frozen so a supersede can never drop an already-sent segment's fuller text.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Decomposed the over-cap file (~1044 code lines > the 1000 hard cap) into load-ordered classic-script siblings: constants + pure helpers moved to jarvis-ambient-core.js, panel/transcript UI methods to jarvis-ambient-ui.js, recognition/wake/diarization methods to jarvis-ambient-recognition.js. This file is now the coordinator: AmbientClient shell, settings sync, segment queue/flush, and the unchanged public JarvisAmbient API. Pure decomposition — all bodies verbatim; behavior is unchanged.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Honor explicit unavailable voice persistence at initialization and context refresh so remembered-speaker consent cannot outlive the server capability.
  */
 
 (function attachJarvisAmbient(root) {
@@ -152,7 +153,7 @@
       if (contextResult.status === 'fulfilled') {
         const payload = contextResult.value;
         const context = payload && typeof payload === 'object' ? (payload.context || payload) : {};
-        if (context.reason === 'public_tenant') {
+        if (context.reason === 'public_tenant' || context.persistenceAvailable === false || context.voiceProfilesAvailable === false) {
           this.speakerPersistenceAvailable = false;
           this.settings = { ...this.settings, rememberSpeakers: false, speakerTenantId: null };
         } else {
@@ -367,10 +368,11 @@
     handleSpeakerContext(event) {
       const context = event?.detail?.context;
       if (!context || typeof context !== 'object') return;
-      const publicSession = context.reason === 'public_tenant';
-      this.speakerPersistenceAvailable = publicSession ? false
-        : (context.voiceProfilesAvailable ? true : this.speakerPersistenceAvailable);
-      if (publicSession && this.settings.rememberSpeakers) {
+      const unavailable = context.reason === 'public_tenant'
+        || context.persistenceAvailable === false || context.voiceProfilesAvailable === false;
+      this.speakerPersistenceAvailable = unavailable ? false
+        : (context.voiceProfilesAvailable === true || context.persistenceAvailable === true ? true : this.speakerPersistenceAvailable);
+      if (unavailable && (this.settings.rememberSpeakers || this.settings.speakerTenantId)) {
         const previous = { ...this.settings };
         this.settings = { ...this.settings, rememberSpeakers: false, speakerTenantId: null };
         this.writeLocalSettings();
