@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Add explicit administrator runtime diagnostic levels without muting audit records.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Trace public settings methods with durations and counts while excluding configuration values.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -17,16 +18,22 @@ const LEVELS = ['error', 'warn', 'info', 'debug', 'trace'];
  * @returns {object} A validated finite override map.
  */
 export function parseLoggingOverrides(text) {
-  const entries = text.split('\n').map(line => line.trim()).filter(Boolean);
-  if (entries.length > 32) throw new Error('Use at most 32 module overrides.');
-  const result = Object.create(null);
-  for (const line of entries) {
-    const match = /^([a-zA-Z0-9_][a-zA-Z0-9_:.-]{0,95})\s*=\s*(error|warn|info|debug|trace)$/.exec(line);
-    if (!match) throw new Error('Each override must use module=level.');
-    if (Object.hasOwn(result, match[1])) throw new Error(`Duplicate module: ${match[1]}`);
-    result[match[1]] = match[2];
+  const started = performance.now();
+  logger.debug('parseLoggingOverrides.entry', { characters: typeof text === 'string' ? text.length : 0 });
+  try {
+    const entries = text.split('\n').map(line => line.trim()).filter(Boolean);
+    if (entries.length > 32) throw new Error('Use at most 32 module overrides.');
+    const result = Object.create(null);
+    for (const line of entries) {
+      const match = /^([a-zA-Z0-9_][a-zA-Z0-9_:.-]{0,95})\s*=\s*(error|warn|info|debug|trace)$/.exec(line);
+      if (!match) throw new Error('Each override must use module=level.');
+      if (Object.hasOwn(result, match[1])) throw new Error(`Duplicate module: ${match[1]}`);
+      result[match[1]] = match[2];
+    }
+    return result;
+  } finally {
+    logger.debug('parseLoggingOverrides.exit', { durationMs: performance.now() - started });
   }
-  return result;
 }
 
 /** @description Edit persisted runtime levels through the current administrator session.
@@ -34,12 +41,19 @@ export function parseLoggingOverrides(text) {
  * @returns {LoggingSettings} A panel whose success state follows server acknowledgement.
  */
 export class LoggingSettings {
-  constructor(container) { this.container = container; this.destroyed = false; this.config = null; }
+  constructor(container) {
+    const started = performance.now();
+    logger.debug('LoggingSettings.constructor.entry');
+    this.container = container; this.destroyed = false; this.config = null;
+    logger.debug('LoggingSettings.constructor.exit', { durationMs: performance.now() - started });
+  }
 
   /** @description Load effective settings; access refusal stays visible.
    * @returns {Promise<void>} Completion of the admitted configuration read.
    */
   async render() {
+    const started = performance.now();
+    logger.debug('LoggingSettings.render.entry');
     try {
       const config = await loggingRequest('/api/admin/logging');
       if (this.destroyed) return;
@@ -52,13 +66,17 @@ export class LoggingSettings {
       if (this.destroyed) return;
       logger.error('logging-settings-read-failed', { err: new Error('Logging settings read failed'), status: error.status || 'transport' });
       this.container.textContent = error.message;
+    } finally {
+      logger.debug('LoggingSettings.render.exit', { durationMs: performance.now() - started });
     }
   }
 
   shell(config) {
+    const started = performance.now();
+    logger.debug('LoggingSettings.shell.entry');
     const options = LEVELS.map(level => `<option value="${level}"${config.level === level ? ' selected' : ''}>${level}</option>`).join('');
     const overrides = Object.entries(config.module_levels || {}).map(([module, level]) => `${module}=${level}`).join('\n');
-    return `<details class="logging-settings"><summary>Logging settings</summary>
+    const html = `<details class="logging-settings"><summary>Logging settings</summary>
       <div class="logging-settings-body"><label>Default diagnostic level
         <select id="loggingDefaultLevel" class="logs-select">${options}</select></label>
       <label>Module overrides <span>one module=level per line</span>
@@ -67,24 +85,37 @@ export class LoggingSettings {
       <p id="loggingEffective"></p>
       <button id="loggingApply" class="logs-select" type="button">Apply levels</button>
       <span id="loggingSettingsStatus" role="status" aria-live="polite"></span></div></details>`;
+    logger.debug('LoggingSettings.shell.exit', { durationMs: performance.now() - started });
+    return html;
   }
 
   validateConfig(config) {
-    if (!config || !LEVELS.includes(config.level) || !config.module_levels ||
-        typeof config.module_levels !== 'object' || Array.isArray(config.module_levels)) {
-      throw new Error('The logging settings response is invalid.');
+    const started = performance.now();
+    logger.debug('LoggingSettings.validateConfig.entry');
+    try {
+      if (!config || !LEVELS.includes(config.level) || !config.module_levels ||
+          typeof config.module_levels !== 'object' || Array.isArray(config.module_levels)) {
+        throw new Error('The logging settings response is invalid.');
+      }
+      const text = Object.entries(config.module_levels).map(([module, level]) => `${module}=${level}`).join('\n');
+      parseLoggingOverrides(text);
+    } finally {
+      logger.debug('LoggingSettings.validateConfig.exit', { durationMs: performance.now() - started });
     }
-    const text = Object.entries(config.module_levels).map(([module, level]) => `${module}=${level}`).join('\n');
-    parseLoggingOverrides(text);
   }
 
   renderEffective() {
+    const started = performance.now();
+    logger.debug('LoggingSettings.renderEffective.entry');
     const overrides = Object.entries(this.config.module_levels).map(([module, level]) => `${module}=${level}`);
     this.container.querySelector('#loggingEffective').textContent =
       `Effective default: ${this.config.level}${overrides.length ? ` · ${overrides.join(', ')}` : ' · no module overrides'}`;
+    logger.debug('LoggingSettings.renderEffective.exit', { durationMs: performance.now() - started, overrideCount: overrides.length });
   }
 
   async apply() {
+    const started = performance.now();
+    logger.debug('LoggingSettings.apply.entry');
     const button = this.container.querySelector('#loggingApply');
     const status = this.container.querySelector('#loggingSettingsStatus');
     button.disabled = true;
@@ -107,11 +138,17 @@ export class LoggingSettings {
       status.textContent = error.message;
     } finally {
       if (!this.destroyed) button.disabled = false;
+      logger.debug('LoggingSettings.apply.exit', { durationMs: performance.now() - started });
     }
   }
 
   /** @description Prevent a pending read or update from rendering into a departed view.
    * @returns {void} No subsequent panel mutation.
    */
-  destroy() { this.destroyed = true; }
+  destroy() {
+    const started = performance.now();
+    logger.debug('LoggingSettings.destroy.entry');
+    this.destroyed = true;
+    logger.debug('LoggingSettings.destroy.exit', { durationMs: performance.now() - started });
+  }
 }
