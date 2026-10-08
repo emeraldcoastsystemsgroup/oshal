@@ -1,6 +1,7 @@
-/* Logs View — searchable structured log viewer
- * Glass-themed, consistent with operations.css design language.
- * 1 | maintainer@emeraldcoastsystemsgroup.com
+/* CHANGE LOG
+ * SEQ | AUTHOR | DESCRIPTION
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial searchable structured log viewer styles.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Theme native administrator controls and preserve readable diagnostics on light surfaces.
  */
 
 .logs-view {
@@ -320,3 +321,19 @@
     padding: 8px 12px 12px 12px;
   }
 }
+
+/* Runtime controls share the viewer's inherited light/dark theme. */
+#loggingSettings { padding: 8px 24px; color: var(--text-primary, #e2e8f0); }
+.logging-settings summary { cursor: pointer; font-size: 13px; }
+.logging-settings-body { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 12px 0; }
+.logging-settings-body label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.logging-settings-body label span, .logging-settings-body p { color: var(--text-secondary, #94a3b8); }
+.logging-settings-body textarea { width: min(380px, 75vw); font-family: monospace; }
+.logging-settings-body p { flex-basis: 100%; margin: 0; font-size: 12px; }
+.logging-settings-body button:disabled { opacity: .5; cursor: wait; }
+#loggingSettingsStatus { font-size: 12px; }
+.logs-detail-ticket { border: 0; background: transparent; padding: 0; font: inherit; }
+.logs-status, .logs-time, .logs-detail-key { color: var(--text-secondary, #94a3b8); }
+.logs-msg, .logs-detail-val { color: var(--text-primary, #e2e8f0); }
+.logs-empty { color: var(--text-secondary, #94a3b8); }
+@media (max-width: 640px) { #loggingSettings { padding: 8px 12px; } }
