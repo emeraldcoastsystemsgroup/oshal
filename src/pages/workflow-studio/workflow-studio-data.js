@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): server data/API operations mixin — load/create/duplicate/fork/save/validate/compile/export/publish plus the canvas→WorkflowPublishSpec translator
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Publish now takes its slug from the shared workflowTicketTypeSlug helper instead of an inline regex chain, so the Runs panel can scope to the same ticketType the queue is published under without the two derivations drifting apart.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Send the selected acknowledged draft version so a stale browser tab cannot overwrite a newer save.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -203,6 +204,7 @@ export const workflowStudioDataMethods = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: definition.id,
+          expectedVersion: definition.version,
           name: definition.name,
           description: definition.description,
           nodes: definition.nodes,
