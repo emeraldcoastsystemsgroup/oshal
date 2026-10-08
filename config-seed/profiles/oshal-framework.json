@@ -614,6 +614,12 @@
         "section": "bottom"
       },
       {
+        "id": "logs",
+        "icon": "codicon codicon-output",
+        "label": "Logs",
+        "section": "bottom"
+      },
+      {
         "id": "settings",
         "icon": "codicon codicon-gear",
         "label": "Settings",

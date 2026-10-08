@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Named guard for the default cockpit rail's hand-maintained bands. config-seed/profiles/oshal-framework.json has no linkage to install state, manifest suites, or anything else that could notice a tile drifting between groups — a one-word edit silently restrands a surface and nothing goes red. This crosses the boundary the operator actually sees: the real UIProfileService reads the real file from disk and the real createUiProfileRoutes router serves it over HTTP, and the assertions run on the served body. Circuit Lab must stay in Engineering; Animatronics and Pumpkin must stay together in the Animatronics band, Pumpkin directly under Animatronics.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Keep the existing Logs view reachable through the authoritative default profile instead of globally pinning it into focused applications.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -84,6 +85,12 @@ afterAll(async () => {
 });
 
 describe('default cockpit rail bands', () => {
+  it('declares one existing Logs view beside Settings in the default bottom tray', () => {
+    const entries = served.filter(item => item.id === 'logs');
+    expect(entries).toEqual([{ id: 'logs', icon: 'codicon codicon-output', label: 'Logs', section: 'bottom' }]);
+    expect(served.findIndex(item => item.id === 'logs')).toBe(served.findIndex(item => item.id === 'settings') - 1);
+  });
+
   it('serves the deployed profile from disk with tiles that carry bands', () => {
     expect(served.length).toBeGreaterThan(0);
     expect(bands(served).filter(entry => entry.group).length).toBeGreaterThan(0);
