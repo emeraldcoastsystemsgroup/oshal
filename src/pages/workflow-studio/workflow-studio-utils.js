@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): canvas constants + pure helpers (field-group markup, inspector value parsing, JSON fetch, HTML escaping, clamp/clone/id) shared by the studio modules
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hoisted workflowTicketTypeSlug out of workflow-studio-data.js so the publish path and the Runs panel derive the ticketType join key from ONE function — a second copy that drifted would silently break the definition→runs join (workflow_runs.ticket_type is the only key, definitions are file-backed).
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Bind native publication/run to acknowledged caller drafts and display actual ticket transitions without changing legacy behavior.
  */
 
 /** @description Node card width in world (unscaled canvas) pixels; used to center newly added nodes. */
@@ -209,6 +210,9 @@ export function deepClone(value) {
  * @returns {string} A publish-safe slug (lowercase/digits/dashes, <=64 chars, never empty).
  */
 export function workflowTicketTypeSlug(definition) {
+  if (definition?.publication?.runtimeRegistered && typeof definition.publication.ticketType === 'string') {
+    return definition.publication.ticketType;
+  }
   const raw = definition?.slug || definition?.name || 'workflow';
   return (
     String(raw)

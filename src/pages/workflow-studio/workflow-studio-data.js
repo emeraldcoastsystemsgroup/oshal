@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): server data/API operations mixin — load/create/duplicate/fork/save/validate/compile/export/publish plus the canvas→WorkflowPublishSpec translator
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Publish now takes its slug from the shared workflowTicketTypeSlug helper instead of an inline regex chain, so the Runs panel can scope to the same ticketType the queue is published under without the two derivations drifting apart.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Send the selected acknowledged draft version so a stale browser tab cannot overwrite a newer save.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind native publication/run to acknowledged caller drafts and display actual ticket transitions without changing legacy behavior.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -32,6 +33,7 @@ export const workflowStudioDataMethods = {
       ]);
 
       this.state.catalog = catalogPayload.catalog;
+      this.state.nativeStudio = definitionsPayload.source === 'caller-drafts';
       this.state.definitions = Array.isArray(definitionsPayload.definitions) ? definitionsPayload.definitions : [];
       this.state.agents = Array.isArray(agentsPayload.agents) ? agentsPayload.agents : [];
       this.renderTemplates(Array.isArray(templatesPayload.templates) ? templatesPayload.templates : []);
@@ -74,6 +76,7 @@ export const workflowStudioDataMethods = {
 
   async reloadDefinitions() {
     const payload = await requestJson('/api/workflow-studio/definitions');
+    this.state.nativeStudio = payload.source === 'caller-drafts';
     this.state.definitions = Array.isArray(payload.definitions) ? payload.definitions : [];
     this.renderDefinitions();
     this.renderMetrics();
@@ -298,6 +301,8 @@ export const workflowStudioDataMethods = {
       return;
     }
 
+    if (this.state.nativeStudio) return this.publishNativeDefinition(definition);
+
     let spec;
     try {
       spec = this.buildPublishSpecFromDefinition(definition);
@@ -326,6 +331,57 @@ export const workflowStudioDataMethods = {
     } catch (error) {
       logger.error('Failed to publish workflow definition', { error: serializeUiError(error) });
       this.setStatus(`Publish failed: ${readErrorMessage(error)}`, 'error');
+    }
+  },
+
+  /** Publish only the acknowledged server draft version; the server compiles its exact edges. */
+  async publishNativeDefinition(definition) {
+    if (document.getElementById('autoStartToggle')?.checked === true) {
+      this.setStatus('Native publication requires explicit ticket input and Run; turn auto-start off.', 'error');
+      return;
+    }
+    try {
+      const payload = await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/publish`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: definition.version }),
+      });
+      if (!payload.publication?.runtimeRegistered || !payload.definition) throw new Error('Publication was not acknowledged.');
+      this.state.selectedDefinition = payload.definition;
+      await this.reloadDefinitions();
+      this.render();
+      this.setStatus(`Published saved version ${definition.version}. Open Runs to supply input and start an owned ticket.`, 'success');
+    } catch (error) {
+      logger.error('Native workflow publication refused', { error: serializeUiError(error) });
+      this.setStatus(`Publish failed: ${readErrorMessage(error)}`, 'error');
+    }
+  },
+
+  /** Create a normal owned ticket once, then submit its exact published version/input. */
+  async startNativeWorkflow(input) {
+    const definition = this.requireDefinition();
+    if (!this.state.nativeStudio || !definition?.publication?.runtimeRegistered) throw new Error('Publish the saved native version first.');
+    if (this.state.pendingNativeRun?.attempted) throw new Error('A prior run request needs ticket inspection before another submission.');
+    const publication = definition.publication;
+    const pending = { definitionId: definition.id, version: definition.version, input, attempted: true, ticketId: null };
+    this.state.pendingNativeRun = pending;
+    try {
+      const created = await requestJson('/tickets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: publication.ticketType }),
+      });
+      pending.ticketId = created.ticket?.id;
+      if (!pending.ticketId) throw new Error('Ticket creation was not acknowledged; inspect your tickets before retrying.');
+      const payload = await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...input, ticketId: pending.ticketId, expectedVersion: pending.version }),
+      });
+      if (payload.status !== 'queued' || !payload.envelope?.id) throw new Error('Run dispatch was not acknowledged.');
+      this.state.pendingNativeRun = null;
+      this.setStatus(`Ticket ${pending.ticketId} queued for its declared worker. Completion appears in Runs.`, 'success');
+      return payload;
+    } catch (error) {
+      this.setStatus(`Run was not acknowledged${pending.ticketId ? ` for ticket ${pending.ticketId}` : ''}: ${readErrorMessage(error)}. Inspect tickets before retrying.`, 'error');
+      throw error;
     }
   },
 

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — the Runs panel for Workflow Studio: a rail-toggled left flyout listing past graph runs (GET /api/workflow-studio/runs) and a click-through run inspector showing each step's status, timing, agent, and redacted input/output (GET /api/workflow-studio/runs/:runId). Own module (sibling of workflow-studio-chat.js) so the 1700-line core stays untouched; auto-refreshes while a run is still executing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The list was fetching every run the caller owns, so opening one workflow showed unrelated history: scope it to the open definition's published ticketType (via the shared workflowTicketTypeSlug) with a This-workflow/All-my-runs toggle, and turn the inspector's inert "Ticket <id>" text into a deep link to that ticket's cost trace so a run is one click from its spend.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | runsPanel.init runs only when no ADR-164 D6 audience view is active: under ?audience=company|family the card reads the run list itself and the panel is never wired; otherwise it starts exactly as before.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind native publication/run to acknowledged caller drafts and display actual ticket transitions without changing legacy behavior.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -63,6 +64,7 @@ class WorkflowStudioRuns {
     try {
       const definition = window.workflowStudioApp?.state?.selectedDefinition;
       if (!definition || !(definition.slug || definition.name)) return null;
+      if (window.workflowStudioApp?.state?.nativeStudio && !definition.publication?.runtimeRegistered) return null;
       return workflowTicketTypeSlug(definition);
     } catch (error) {
       logger.error('Could not read the open definition for run scoping', { error: serializeUiError(error) });
@@ -87,9 +89,52 @@ class WorkflowStudioRuns {
     this.scopeBarEl.hidden = false;
     this.scopeBarEl.innerHTML =
       chip('workflow', 'This workflow', `Runs recorded against ${ticketType}`) +
-      chip('all', 'All my runs', 'Every workflow run you own');
+      chip('all', 'All my runs', 'Every workflow run you own') + this.nativeRunControls();
+    this.bindNativeRun();
     this.scopeBarEl.querySelectorAll('[data-run-scope]').forEach((button) => {
       button.addEventListener('click', () => this.setScope(button.getAttribute('data-run-scope')));
+    });
+  }
+
+  /** Explicit original-user input and executor selection for the published saved version. */
+  nativeRunControls() {
+    const app = window.workflowStudioApp;
+    const definition = app?.state?.selectedDefinition;
+    if (!app?.state?.nativeStudio || !definition?.publication?.runtimeRegistered) return '';
+    return `<form id="nativeWorkflowRun">
+      <p>Run published saved version ${escapeHtml(definition.version)} through its declared bots.</p>
+      <label>Input <textarea name="prompt" required maxlength="131072"></textarea></label>
+      <label>Enrolled executor <select name="executor" required><option value="">Choose executor</option>
+        <option value="native-broker-v1">Native broker</option><option value="codex-cli">Codex CLI</option>
+        <option value="claude-code">Claude Code</option></select></label>
+      <label>Wall milliseconds <input name="wall_ms" type="number" min="100" max="120000" value="60000" required></label>
+      <label>Output tokens <input name="output_tokens" type="number" min="1" max="8192" value="2048" required></label>
+      <label>Artifact bytes <input name="artifact_bytes" type="number" min="1" max="4194304" value="262144" required></label>
+      <button type="submit">Create owned ticket and run</button><p class="native-run-status" role="status"></p>
+    </form>`;
+  }
+
+  /** Submit once; a lost acknowledgement retains the known ticket for inspection. */
+  bindNativeRun() {
+    const form = this.scopeBarEl?.querySelector('#nativeWorkflowRun');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const data = new FormData(form);
+      const input = { executor: String(data.get('executor')), prompt: String(data.get('prompt')).trim(), limits: {} };
+      for (const key of ['wall_ms', 'output_tokens', 'artifact_bytes']) input.limits[key] = Number(data.get(key));
+      const button = form.querySelector('button');
+      const status = form.querySelector('.native-run-status');
+      button.disabled = true;
+      try {
+        const payload = await window.workflowStudioApp.startNativeWorkflow(input);
+        status.textContent = `Ticket ${payload.ticketId} queued; it has not completed yet.`;
+        await this.loadList();
+        button.disabled = false;
+      } catch (error) {
+        status.textContent = `Run refused or unacknowledged: ${error?.message || String(error)}`;
+      }
     });
   }
 
@@ -184,8 +229,8 @@ class WorkflowStudioRuns {
       const runs = Array.isArray(payload.runs) ? payload.runs : [];
       if (runs.length === 0) {
         this.listEl.innerHTML = ticketType
-          ? `<p class="selection-state">No runs recorded for <strong>${escapeHtml(ticketType)}</strong> yet. Publish this workflow and send it a ticket — every graph run lands here.</p>`
-          : '<p class="selection-state">No runs yet. Publish a workflow and send it a ticket — every graph run lands here.</p>';
+          ? `<p class="selection-state">No runs recorded for <strong>${escapeHtml(ticketType)}</strong> yet. Publish this workflow and send it a ticket — supported runs appear here.</p>`
+          : '<p class="selection-state">No runs yet. Publish a workflow and send it a ticket — supported runs appear here.</p>';
         return;
       }
       this.listEl.innerHTML = runs.map((run) => this.renderRunCard(run)).join('');
@@ -213,7 +258,7 @@ class WorkflowStudioRuns {
         <div class="definition-meta">
           <span class="chip run-status ${STATUS_TONES[run.status] || 'run-tone-muted'}">${escapeHtml(run.status)}</span>
           ${run.ticketType ? `<span class="chip">${escapeHtml(run.ticketType)}</span>` : ''}
-          <span class="chip">${Number(run.stepCount) || 0} steps</span>
+          <span class="chip">${Number(run.transitionCount ?? run.stepCount) || 0} ${run.historyKind === 'ticket-transitions' ? 'transitions' : 'steps'}</span>
           ${resumed}
         </div>
       </article>
@@ -264,7 +309,7 @@ class WorkflowStudioRuns {
           ${renderTicketTrace(run.ticketId)}
         </div>
         <div class="run-steps">
-          ${steps.length === 0 ? '<p class="selection-state">No steps recorded yet.</p>' : steps.map((step) => this.renderStep(step)).join('')}
+          ${run.historyKind === 'ticket-transitions' ? this.renderNativeHistory(run.history) : (steps.length === 0 ? '<p class="selection-state">No steps recorded yet.</p>' : steps.map((step) => this.renderStep(step)).join(''))}
         </div>
       `;
       openSteps.forEach((id) => {
@@ -275,6 +320,14 @@ class WorkflowStudioRuns {
       logger.error('Run detail load failed', { error: serializeUiError(error), runId });
       if (!background) this.detailEl.innerHTML = `<p class="selection-state">Couldn't load this run: ${escapeHtml(error?.message || error)}</p>`;
     }
+  }
+
+  /** Actual recorded ticket transitions, without invented graph timing or output. */
+  renderNativeHistory(history) {
+    const entries = Array.isArray(history) ? history : [];
+    return `<ol>${entries.map((entry) => `<li>${escapeHtml(entry.from)} → ${escapeHtml(entry.to)}
+      ${entry.position?.name ? `(${escapeHtml(entry.position.name)})` : ''}
+      <time>${escapeHtml(formatWhen(entry.at))}</time></li>`).join('')}</ol>`;
   }
 
   /**
