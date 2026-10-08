@@ -5,11 +5,14 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Consolidated Operations view — replaces 6 iframe engineering screens with one native glass-themed panel. Principle of one: single ops surface for pipeline, agents, work items, cost, and health.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Agent cards show lastActivity/successRate/tokens; Cost tab adds per-model breakdown; Work tab adds run duration; Overview adds routing failures KPI.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Show native caller ledger usage, measured zero cost, and unprobed health without replacing legacy operator telemetry.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Choose caller or legacy reads from the admitted metrics contract before requesting operator-only telemetry.
  */
 
 import { ApiClient } from '../api-client.js';
 import { createUiLogger } from '../../../shared/ui-debug.js';
 import { formatCost } from '../utils/formatters.js';
+import { agentHealth, formatNativeCost, isNativeOperations, mergeNativeBots, projectNativeLedger } from '../utils/operations-native.js';
 
 const logger = createUiLogger('cockpit-operations-view');
 
@@ -85,17 +88,18 @@ export class OperationsView {
   }
 
   async _loadAndRender() {
-    const [metrics, agents, registry, workItems, runs, qmActivity, queueHealth] = await Promise.allSettled([
-      this.api.getSafe('/api/v1/metrics/summary', {}),
-      this.api.getSafe('/api/v1/metrics/agents', { agents: [] }),
+    const metrics = await this.api.getSafe('/api/v1/metrics/summary', {}).catch(() => ({}));
+    const native = isNativeOperations(metrics);
+    const [agents, registry, workItems, runs, qmActivity, queueHealth] = await Promise.allSettled([
+      native ? Promise.resolve({ agents: [] }) : this.api.getSafe('/api/v1/metrics/agents', { agents: [] }),
       this.api.getSafe('/api/swarm/bots/registry', { bots: [] }),
       this.api.getSafe('/api/swarm/work-items', { items: [] }),
       this.api.getSafe('/api/swarm/runs', { runs: [] }),
-      this.api.getSafe('/api/qm/activity', {}),
-      this.api.getSafe('/api/v1/metrics/queue-health?scope=all', { success: false, data: null }),
+      native ? Promise.resolve({}) : this.api.getSafe('/api/qm/activity', {}),
+      native ? Promise.resolve({ success: false, data: null }) : this.api.getSafe('/api/v1/metrics/queue-health?scope=all', { success: false, data: null }),
     ]);
     this.data = {
-      metrics: this._settled(metrics, {}),
+      metrics,
       agents: this._settled(agents, { agents: [] }),
       registry: this._settled(registry, { bots: [] }),
       workItems: this._settled(workItems, { items: [] }),
@@ -103,16 +107,21 @@ export class OperationsView {
       qmActivity: this._settled(qmActivity, {}),
       queueHealth: this._settled(queueHealth, { success: false, data: null }),
     };
+    if (this._isNative()) {
+      this.data.nativeLedger = projectNativeLedger(await this.api.getSafe('/api/costs', null));
+    }
     this._renderBody();
   }
 
   _settled(r, fallback) { return r.status === 'fulfilled' && r.value ? r.value : fallback; }
   _m() { return this.data.metrics?.data || this.data.metrics || {}; }
   _q() { return this.data.queueHealth?.data || this.data.queueHealth || null; }
+  _isNative() { return isNativeOperations(this.data.metrics); }
 
   // Build merged agent list: registry has harness/api/model, agents API has cost/tokens/activity
   _mergedAgents() {
     const regBots = this.data.registry?.bots || [];
+    if (this._isNative()) return mergeNativeBots(regBots, this.data.nativeLedger);
     const agentMetrics = this.data.agents?.agents || [];
     const metricsById = new Map(agentMetrics.map((a) => [a.agentId, a]));
     const metricsByName = new Map(agentMetrics.map((a) => [a.name, a]));
@@ -147,6 +156,7 @@ export class OperationsView {
   // ── OVERVIEW TAB ─────────────────────────────────────────────────
 
   _renderOverview() {
+    if (this._isNative()) return this._renderNativeOverview();
     const m = this._m();
     const health = m.swarmHealth || {};
     const agents = m.agents || {};
@@ -181,12 +191,47 @@ export class OperationsView {
         ? [{ label: 'Routing Fails', value: routingFailures, icon: 'ph-x-circle', accent: '#ef4444' }]
         : []),
     ];
+    return this._renderKpis(kpis);
+  }
+
+  _renderKpis(kpis) {
     return `<div class="ops-kpi-strip">${kpis.map((k) => `
       <div class="ops-kpi">
         <div class="ops-kpi-icon" style="color:${k.accent}"><i class="ph ${k.icon}"></i></div>
-        <div class="ops-kpi-value">${k.value}</div>
+        <div class="ops-kpi-value">${this._escape(k.value)}</div>
         <div class="ops-kpi-label">${k.label}</div>
       </div>`).join('')}
+    </div>`;
+  }
+
+  _renderNativeOverview() {
+    const m = this._m();
+    const usage = this.data.nativeLedger?.summary;
+    const kpis = [
+      { label: 'Registered', value: m.agents?.registered ?? 'Unavailable', icon: 'ph-robot', accent: '#60a5fa' },
+      { label: 'Health', value: 'Unknown', icon: 'ph-gauge', accent: '#6b7280' },
+      { label: 'Your Tickets', value: m.total ?? 'Unavailable', icon: 'ph-ticket', accent: '#60a5fa' },
+      { label: 'Your Inference Calls', value: usage?.calls ?? m.inferenceCalls ?? 'Unavailable', icon: 'ph-lightning', accent: '#fbbf24' },
+      { label: 'Your Recorded Cost', value: formatNativeCost(usage?.micros), icon: 'ph-currency-dollar', accent: '#a78bfa' },
+    ];
+    const statuses = Object.entries(m.byStatus || {});
+    return `${this._renderKpis(kpis)}
+      <div class="ops-grid-2">
+        <div class="ops-card"><div class="ops-card-title">Your Tickets by Status</div>
+          ${statuses.length ? `<div class="ops-work-statuses">${statuses.map(([status, count]) => `<span class="ops-work-status"><b>${this._escape(count)}</b>${this._escape(status.replace(/_/g, ' '))}</span>`).join('')}</div>` : '<div class="ops-empty">No tickets recorded</div>'}
+        </div>
+        ${this._renderNativeHealth()}
+      </div>
+      ${this._renderRecentWork()}`;
+  }
+
+  _renderNativeHealth() {
+    const bots = this.data.registry?.bots || [];
+    const unknown = bots.filter((bot) => agentHealth(bot) === 'unknown').length;
+    return `<div class="ops-card ops-health-card">
+      <div class="ops-card-title">Agent Health</div>
+      <div class="ops-empty">Health not probed · ${unknown} unknown</div>
+      <div class="ops-health-legend"><span>${bots.length} declared agents</span></div>
     </div>`;
   }
 
@@ -322,17 +367,20 @@ export class OperationsView {
     });
 
     return `<div class="ops-card">
-      <div class="ops-card-title">Agent Fleet (${bots.length})</div>
+      <div class="ops-card-title">${this._isNative() ? 'Declared Agents · Your Recorded Usage' : 'Agent Fleet'} (${bots.length})</div>
       <div class="ops-agent-grid">${sorted.map((b) => this._renderAgentCard(b)).join('')}</div>
     </div>`;
   }
 
   _renderAgentCard(bot) {
-    const status = bot.dbStatus === 'inactive' ? 'disabled' : (bot.online ? 'online' : 'offline');
-    const colors = { online: '#34d399', offline: '#ef4444', disabled: '#6b7280' };
-    const harness = bot.harnessType || 'cline';
-    const api = bot.apiType || 'openai-codex';
+    const native = this._isNative();
+    const status = native ? agentHealth(bot) : (bot.dbStatus === 'inactive' ? 'disabled' : (bot.online ? 'online' : 'offline'));
+    const colors = { online: '#34d399', offline: '#ef4444', disabled: '#6b7280', unknown: '#6b7280' };
+    const harness = bot.harnessType || (native ? 'Not recorded' : 'cline');
+    const api = bot.apiType || (native ? 'Not recorded' : 'openai-codex');
     const model = bot.latestModel || '—';
+    const cost = native ? (bot.nativeUsage ? formatNativeCost(bot.nativeUsage.micros) : (this.data.nativeLedger ? 'No recorded usage' : 'Unavailable')) : formatCost(bot.totalCost || 0);
+    const requests = native && !this.data.nativeLedger ? 'Unavailable' : (bot.totalRequests || 0);
     const tokens = (bot.totalInputTokens || 0) + (bot.totalOutputTokens || 0);
     const successPct = bot.successRate > 0 ? Math.round(bot.successRate * 100) : null;
     const successColor = successPct === null ? '#6b7280' : (successPct >= 90 ? '#34d399' : successPct >= 70 ? '#fbbf24' : '#ef4444');
@@ -340,17 +388,17 @@ export class OperationsView {
     return `<div class="ops-agent-card ${status}">
       <div class="ops-agent-header">
         <span class="ops-agent-dot" style="background:${colors[status]}"></span>
-        <span class="ops-agent-name">${bot.name}</span>
+        <span class="ops-agent-name">${this._escape(bot.name)}</span>
         <span class="ops-agent-status">${status}</span>
       </div>
       <div class="ops-agent-meta">
-        <span title="Harness"><i class="ph ph-gear"></i> ${harness}</span>
-        <span title="API provider"><i class="ph ph-cloud"></i> ${api}</span>
-        <span title="Last model used"><i class="ph ph-cpu"></i> ${model}</span>
+        <span title="Harness"><i class="ph ph-gear"></i> ${this._escape(harness)}</span>
+        <span title="API provider"><i class="ph ph-cloud"></i> ${this._escape(api)}</span>
+        <span title="Last model used"><i class="ph ph-cpu"></i> ${this._escape(model)}</span>
       </div>
       <div class="ops-agent-meta">
-        <span title="Total requests"><i class="ph ph-lightning"></i> ${bot.totalRequests || 0} req</span>
-        <span title="Total cost"><i class="ph ph-currency-dollar"></i> ${formatCost(bot.totalCost || 0)}</span>
+        <span title="${native ? 'Your recorded calls' : 'Total requests'}"><i class="ph ph-lightning"></i> ${requests} req</span>
+        <span title="${native ? 'Your recorded cost' : 'Total cost'}"><i class="ph ph-currency-dollar"></i> ${cost}</span>
         ${tokens > 0 ? `<span title="Total tokens"><i class="ph ph-text-aa"></i> ${_fmtTokens(tokens)}</span>` : ''}
       </div>
       <div class="ops-agent-meta">
@@ -411,6 +459,7 @@ export class OperationsView {
   // ── COST TAB ─────────────────────────────────────────────────────
 
   _renderCost() {
+    if (this._isNative()) return this._renderNativeCost();
     const agentList = this.data.agents?.agents || [];
     const m = this._m();
     const costSeries = m.costSeries || [];
@@ -421,6 +470,55 @@ export class OperationsView {
       ${this._renderCostByAgent(agentList)}
       ${this._renderCostTimeline(costSeries)}
     `;
+  }
+
+  _renderNativeCost() {
+    const ledger = this.data.nativeLedger;
+    if (!ledger) return '<div class="ops-card"><div class="ops-card-title">Your Usage Ledger</div><div class="ops-empty">Your usage ledger is unavailable</div></div>';
+    const usage = ledger.summary;
+    const kpis = [
+      { label: 'Your Recorded Cost', value: formatNativeCost(usage.micros), icon: 'ph-currency-dollar', accent: '#a78bfa' },
+      { label: 'Metered Cost', value: formatNativeCost(ledger.kinds?.metered), icon: 'ph-gauge', accent: '#60a5fa' },
+      { label: 'Reported Cost', value: formatNativeCost(ledger.kinds?.reported), icon: 'ph-receipt', accent: '#6b7280' },
+      { label: 'Your Tokens', value: _fmtTokens(usage.tokens), icon: 'ph-text-aa', accent: '#fbbf24' },
+      { label: 'Your Inference Calls', value: usage.calls, icon: 'ph-lightning', accent: '#38bdf8' },
+      { label: 'Estimated Token Counts', value: usage.estimatedCalls, icon: 'ph-info', accent: '#6b7280' },
+    ];
+    return `<div class="ops-card"><div class="ops-card-title">Your Usage Ledger</div>
+        <div class="ops-empty ops-empty--compact">Recorded for your account. Metered cost is kernel measured; reported cost is recorded separately.</div>
+      </div>${this._renderKpis(kpis)}
+      ${this._renderNativeUsageRows('Your Usage by Model', ledger.byModel, false)}
+      ${this._renderNativeUsageRows('Your Usage by Agent', ledger.byBot, true)}
+      ${this._renderNativeEvents(ledger.recent)}`;
+  }
+
+  _renderNativeUsageRows(title, rows, bots) {
+    if (!rows.length) return `<div class="ops-card"><div class="ops-card-title">${title}</div><div class="ops-empty">No usage recorded</div></div>`;
+    const max = Math.max(...rows.map((row) => row.micros), 1);
+    return `<div class="ops-card"><div class="ops-card-title">${title}</div>
+      <div class="ops-cost-bars">${rows.map((row) => {
+        const name = bots ? this._agentName(row.id) : row.id;
+        const provider = row.providers.join(', ') || 'Provider not recorded';
+        const pct = Math.max(0, Math.round(row.micros / max * 100));
+        return `<div class="ops-cost-row">
+          <div class="ops-cost-name-col"><span class="ops-cost-name">${this._escape(name)}</span>
+            <span class="ops-cost-sub">${this._escape(provider)} · ${row.calls} calls · ${_fmtTokens(row.tokens)} tokens</span>
+          </div>
+          <div class="ops-cost-bar-wrap"><div class="ops-cost-bar" style="width:${pct}%"></div></div>
+          <span class="ops-cost-amount">${formatNativeCost(row.micros)}</span>
+        </div>`;
+      }).join('')}</div></div>`;
+  }
+
+  _renderNativeEvents(events) {
+    if (!events.length) return '';
+    return `<div class="ops-card"><div class="ops-card-title">Your Recent Ledger Entries</div>
+      <table class="ops-table"><thead><tr><th>Recorded (UTC)</th><th>Kind</th><th>Model</th><th>Cost</th></tr></thead>
+      <tbody>${events.map((event) => `<tr>
+        <td>${new Date(event.at).toISOString().replace('T', ' ').replace('Z', ' UTC')}</td>
+        <td>${this._escape(event.kind || 'Unspecified')}</td><td>${this._escape(event.model || 'Not recorded')}</td>
+        <td>${formatNativeCost(event.micros)}</td>
+      </tr>`).join('')}</tbody></table></div>`;
   }
 
   _renderCostSummary(m, agentTotal) {
@@ -580,7 +678,7 @@ export class OperationsView {
 
   _agentName(id) {
     if (!id) return '—';
-    const bot = (this.data.registry?.bots || []).find((b) => b.agentId === id || b.name === id);
+    const bot = (this.data.registry?.bots || []).find((b) => b.agentId === id || b.declaredAgentId === id || b.name === id);
     return bot?.name || id.slice(0, 16);
   }
 

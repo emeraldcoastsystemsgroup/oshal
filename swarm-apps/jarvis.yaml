@@ -32,7 +32,7 @@ description: >-
   Your single assistant over everything OSHAL connects to. Ask in plain language — Jarvis routes
   it to the right specialist (email, jobs, smart home, cloud, social, presentations) and answers
   as one voice, or points you to the app that needs your screen first (finance or identity).
-version: 1.0.1
+version: 1.0.2
 status: active
 
 # ADR-118: preserve current interactive assistant behavior; operators can explicitly apply
@@ -40,6 +40,45 @@ status: active
 access:
   supported: [deny, viewer, editor, admin]
   defaultTier: editor
+
+# Explicit current named readers consume only these Print-owned imports. The
+# installed assistant remains the owner below; no fleet or persisted agent gains
+# a corpus and no role is assigned by this declaration.
+uses:
+  - rag
+  - application-authorization
+  - app-dependencies
+authorization:
+  version: 1
+  catalog: swarm-apps/jarvis-authorization.yaml
+dependencies:
+  optional:
+    apps: [print-ingest]
+ragBindings:
+- alias: my-knowledge
+  owner: print-ingest
+  collection: my-knowledge
+  scope: own
+  resource: rag.private
+  bot:
+    app: jarvis
+    name: oshal-assistant
+- alias: swarm-knowledge
+  owner: print-ingest
+  collection: swarm-knowledge
+  scope: tenant
+  resource: rag.shared
+  bot:
+    app: jarvis
+    name: oshal-assistant
+- alias: assistant-knowledge
+  owner: print-ingest
+  collection: assistant-knowledge
+  scope: tenant
+  resource: rag.bot
+  bot:
+    app: jarvis
+    name: oshal-assistant
 
 # Calm, focused assistant skin.
 theme: midnight

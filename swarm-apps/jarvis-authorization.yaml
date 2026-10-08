@@ -1,0 +1,50 @@
+# CHANGE LOG
+# 1 | maintainer@emeraldcoastsystemsgroup.com | Admit ordinary Editor chat independently of optional Print; exact imported text still requires current owner read grants.
+version: 1
+resources:
+  app:
+    scopes:
+    - own
+  rag.private:
+    scopes:
+    - own
+  rag.shared:
+    scopes:
+    - tenant
+  rag.bot:
+    scopes:
+    - tenant
+permissions:
+  app.open:
+    resource: app
+    effect: read
+    minimumTier: viewer
+  rag.private.read:
+    resource: rag.private
+    effect: read
+    minimumTier: viewer
+  rag.shared.read:
+    resource: rag.shared
+    effect: read
+    minimumTier: viewer
+  rag.bot.read:
+    resource: rag.bot
+    effect: read
+    minimumTier: viewer
+roles:
+  chat-user:
+    tier: editor
+    grants:
+    - permission: app.open
+      scope: own
+    - permission: rag.private.read
+      scope: own
+    - permission: rag.shared.read
+      scope: tenant
+    - permission: rag.bot.read
+      scope: tenant
+bindings:
+  bots:
+  - id: oshal-assistant
+    allOf:
+    - app.open
