@@ -1,157 +1,116 @@
 /**
  * CHANGE LOG
  * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                      | DESCRIPTION
+ * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation — searchable log viewer with ticket-trace, level, module, and time-range filters
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial searchable structured log viewer.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Connect native traces and administrator levels; show refused reads and actual buffer retention.
  */
 
-import { ApiClient } from '../api-client.js';
 import { createUiLogger } from '../../../shared/ui-debug.js';
+import { escapeLoggingHtml, loggingLevel, loggingQuery, loggingRequest, loggingStatus } from './logging-reader.js';
+import { LoggingSettings } from './logging-settings.js';
 
 const logger = createUiLogger('cockpit-logs-view');
 
-/**
- * @description Searchable log viewer for the cockpit.
- * Reads structured pino JSON logs from the backend, filterable by
- * ticket ID (with trace support for child tickets), level, module, and free text.
+/** @description Search admitted structured logs without concealing access or backend failures.
+ * @param {HTMLElement|string} container The current cockpit view host.
+ * @returns {LogsView} A disposable view with bounded queries and explicit runtime controls.
  */
 export class LogsView {
   constructor(container) {
     this.container = typeof container === 'string' ? document.getElementById(container) : container;
-    this.api = new ApiClient();
     this.entries = [];
     this.modules = [];
     this.meta = { total: 0, hasMore: false };
-    this.filters = { ticketId: '', level: '', module: '', search: '', range: '1h' };
+    this.source = '';
+    this.filters = { ticketId: '', traceId: '', level: '', module: '', search: '', range: '1h' };
     this.refreshTimer = null;
     this.autoRefresh = false;
     this.debounceTimer = null;
+    this.requestVersion = 0;
+    this.destroyed = false;
+    this.settings = null;
   }
 
+  /** @description Start the viewer and current administrator settings read.
+   * @returns {Promise<void>} Completion of independent initial reads.
+   */
   async render() {
     if (!this.container) return;
     this.container.innerHTML = this._shell();
     this._bindEvents();
-    await this._loadModules();
-    await this._loadLogs();
+    this.settings = new LoggingSettings(this.container.querySelector('#loggingSettings'));
+    await Promise.all([this._loadModules(), this._loadLogs(), this.settings.render()]);
   }
 
+  /** @description Stop polling and prevent late responses from replacing another view.
+   * @returns {void} No further render activity.
+   */
   destroy() {
+    this.destroyed = true;
+    this.requestVersion++;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.settings?.destroy();
     if (this.container) this.container.innerHTML = '';
   }
 
-  // ── Shell ───────────────────────────────────────────────────────
-
   _shell() {
-    return `<div class="logs-view">
-      <div class="logs-header">
-        <div class="logs-title"><i class="codicon codicon-output"></i> Logs</div>
-        <div class="logs-filters">
-          <div class="logs-filter-group">
-            <input type="text" id="logsSearch" class="logs-input logs-search" placeholder="Search..." title="Free text search" />
-          </div>
-          <div class="logs-filter-group">
-            <input type="text" id="logsTicketId" class="logs-input logs-ticket" placeholder="Ticket ID" title="Filter by ticket (includes children)" />
-          </div>
-          <div class="logs-filter-group">
-            <select id="logsLevel" class="logs-select" title="Log level">
-              <option value="">All levels</option>
-              <option value="error">Error</option>
-              <option value="warn">Warn</option>
-              <option value="info">Info</option>
-              <option value="debug">Debug</option>
-            </select>
-          </div>
-          <div class="logs-filter-group">
-            <select id="logsModule" class="logs-select" title="Module">
-              <option value="">All modules</option>
-            </select>
-          </div>
-          <div class="logs-filter-group logs-range-group">
-            <button class="logs-range-btn active" data-range="15m">15m</button>
-            <button class="logs-range-btn" data-range="1h">1h</button>
-            <button class="logs-range-btn" data-range="6h">6h</button>
-            <button class="logs-range-btn" data-range="24h">24h</button>
-            <button class="logs-range-btn" data-range="all">All</button>
-          </div>
-        </div>
-        <div class="logs-actions">
-          <button class="logs-action-btn" id="logsAutoRefresh" title="Auto-refresh (10s)">
-            <i class="codicon codicon-sync"></i>
-          </button>
-          <button class="logs-action-btn" id="logsRefresh" title="Refresh">
-            <i class="codicon codicon-refresh"></i>
-          </button>
-        </div>
-      </div>
-      <div class="logs-status" id="logsStatus"></div>
-      <div class="logs-body" id="logsBody">
-        <div class="logs-loading"><i class="codicon codicon-loading codicon-modifier-spin"></i></div>
-      </div>
+    return `<div class="logs-view"><div class="logs-header">
+      <div class="logs-title"><i class="codicon codicon-output"></i> Logs</div>
+      ${this._filterShell()}
+      <div class="logs-actions">
+        <button class="logs-action-btn" id="logsAutoRefresh" title="Auto-refresh (10s)" aria-label="Auto-refresh logs"><i class="codicon codicon-sync"></i></button>
+        <button class="logs-action-btn" id="logsRefresh" title="Refresh" aria-label="Refresh logs"><i class="codicon codicon-refresh"></i></button>
+      </div></div>
+      <div id="loggingSettings"></div>
+      <div class="logs-status" id="logsStatus" role="status" aria-live="polite"></div>
+      <div class="logs-body" id="logsBody"><div class="logs-loading">Loading logs…</div></div></div>`;
+  }
+
+  _filterShell() {
+    const levels = ['error', 'warn', 'info', 'debug', 'trace'];
+    const ranges = ['15m', '1h', '6h', '24h', 'all'];
+    return `<div class="logs-filters">
+      <input type="search" id="logsSearch" class="logs-input logs-search" placeholder="Search…" aria-label="Search logs" maxlength="256" />
+      <input type="text" id="logsTicketId" class="logs-input logs-ticket" placeholder="Ticket ID" aria-label="Ticket ID" maxlength="96" />
+      <input type="text" id="logsTraceId" class="logs-input logs-ticket" placeholder="Trace ID" aria-label="Trace ID" maxlength="96" />
+      <select id="logsLevel" class="logs-select" aria-label="Filter log level"><option value="">All levels</option>${levels.map(level => `<option value="${level}">${level}</option>`).join('')}</select>
+      <select id="logsModule" class="logs-select" aria-label="Filter module"><option value="">All modules</option></select>
+      <div class="logs-range-group">${ranges.map(range => `<button class="logs-range-btn${range === '1h' ? ' active' : ''}" data-range="${range}">${range === 'all' ? 'All retained' : range}</button>`).join('')}</div>
     </div>`;
   }
 
-  // ── Events ──────────────────────────────────────────────────────
-
   _bindEvents() {
     const c = this.container;
-
-    // Text search (debounced)
-    c.querySelector('#logsSearch')?.addEventListener('input', (e) => {
-      this.filters.search = e.target.value;
-      this._debouncedLoad();
-    });
-
-    // Ticket ID (debounced)
-    c.querySelector('#logsTicketId')?.addEventListener('input', (e) => {
-      this.filters.ticketId = e.target.value.trim();
-      this._debouncedLoad();
-    });
-
-    // Level select
-    c.querySelector('#logsLevel')?.addEventListener('change', (e) => {
-      this.filters.level = e.target.value;
-      this._loadLogs();
-    });
-
-    // Module select
-    c.querySelector('#logsModule')?.addEventListener('change', (e) => {
-      this.filters.module = e.target.value;
-      this._loadLogs();
-    });
-
-    // Time range buttons
-    c.querySelectorAll('.logs-range-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        c.querySelectorAll('.logs-range-btn').forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.filters.range = btn.dataset.range;
+    for (const [id, key] of [['logsSearch', 'search'], ['logsTicketId', 'ticketId'], ['logsTraceId', 'traceId']]) {
+      c.querySelector(`#${id}`).addEventListener('input', event => {
+        this.filters[key] = event.target.value.trim();
+        this._debouncedLoad();
+      });
+    }
+    for (const [id, key] of [['logsLevel', 'level'], ['logsModule', 'module']]) {
+      c.querySelector(`#${id}`).addEventListener('change', event => {
+        this.filters[key] = event.target.value;
         this._loadLogs();
       });
-    });
+    }
+    c.querySelectorAll('.logs-range-btn').forEach(button => button.addEventListener('click', () => {
+      c.querySelectorAll('.logs-range-btn').forEach(item => item.classList.remove('active'));
+      button.classList.add('active');
+      this.filters.range = button.dataset.range;
+      this._loadLogs();
+    }));
+    c.querySelector('#logsRefresh').addEventListener('click', () => this._loadLogs());
+    c.querySelector('#logsAutoRefresh').addEventListener('click', () => this._toggleRefresh());
+  }
 
-    // Refresh
-    c.querySelector('#logsRefresh')?.addEventListener('click', () => this._loadLogs());
-
-    // Auto-refresh toggle
-    c.querySelector('#logsAutoRefresh')?.addEventListener('click', () => {
-      this.autoRefresh = !this.autoRefresh;
-      c.querySelector('#logsAutoRefresh')?.classList.toggle('active', this.autoRefresh);
-      if (this.autoRefresh) {
-        this.refreshTimer = setInterval(() => this._loadLogs(), 10000);
-      } else if (this.refreshTimer) {
-        clearInterval(this.refreshTimer);
-        this.refreshTimer = null;
-      }
-    });
-
-    // Set default range
-    this.filters.range = '1h';
-    c.querySelector('.logs-range-btn[data-range="1h"]')?.classList.add('active');
-    c.querySelector('.logs-range-btn[data-range="15m"]')?.classList.remove('active');
+  _toggleRefresh() {
+    this.autoRefresh = !this.autoRefresh;
+    this.container.querySelector('#logsAutoRefresh').classList.toggle('active', this.autoRefresh);
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = this.autoRefresh ? setInterval(() => this._loadLogs(), 10000) : null;
   }
 
   _debouncedLoad() {
@@ -159,146 +118,97 @@ export class LogsView {
     this.debounceTimer = setTimeout(() => this._loadLogs(), 300);
   }
 
-  // ── Data loading ────────────────────────────────────────────────
-
   async _loadModules() {
     try {
-      const result = await this.api.getSafe('/api/v1/logs/modules', { modules: [] });
-      this.modules = result.modules || [];
+      const result = await loggingRequest('/api/v1/logs/modules');
+      if (this.destroyed) return;
+      if (!Array.isArray(result.modules)) throw new Error('The logging module response is invalid.');
+      this.modules = result.modules;
       const select = this.container.querySelector('#logsModule');
-      if (select) {
-        const current = select.value;
-        select.innerHTML = '<option value="">All modules</option>' +
-          this.modules.map(m => `<option value="${m}"${m === current ? ' selected' : ''}>${m}</option>`).join('');
-      }
-    } catch (err) {
-      logger.warn('Failed to load log modules', err);
+      select.innerHTML = '<option value="">All modules</option>' + this.modules.map(module =>
+        `<option value="${escapeLoggingHtml(module)}">${escapeLoggingHtml(module)}</option>`).join('');
+      select.value = this.filters.module;
+    } catch (error) {
+      logger.error('logging-modules-read-failed', { err: new Error('Logging modules read failed'), status: error.status || 'transport' });
     }
   }
 
   async _loadLogs() {
-    const params = new URLSearchParams();
-    if (this.filters.ticketId) params.set('ticketId', this.filters.ticketId);
-    if (this.filters.level) params.set('level', this.filters.level);
-    if (this.filters.module) params.set('module', this.filters.module);
-    if (this.filters.search) params.set('search', this.filters.search);
-
-    const since = this._rangeToSince(this.filters.range);
-    if (since) params.set('since', since);
-
-    params.set('limit', '500');
-
+    const version = ++this.requestVersion;
+    const params = loggingQuery(this.filters, this._rangeToSince(this.filters.range));
     try {
-      const result = await this.api.getSafe(`/api/v1/logs/query?${params}`, { data: [], meta: {} });
-      this.entries = result.data || [];
-      this.meta = result.meta || { total: 0, hasMore: false };
+      const result = await loggingRequest(`/api/v1/logs/query?${params}`);
+      if (this.destroyed || version !== this.requestVersion) return;
+      if (!Array.isArray(result.data) || !result.meta) throw new Error('The log response is invalid.');
+      this.entries = result.data;
+      this.meta = result.meta;
+      this.source = result.source || '';
       this._renderBody();
       this._renderStatus();
-    } catch (err) {
-      logger.warn('Failed to load logs', err);
-      this._renderError();
+    } catch (error) {
+      logger.error('logging-query-failed', { err: new Error('Logging query failed'), status: error.status || 'transport' });
+      if (!this.destroyed && version === this.requestVersion) this._renderError(error.message);
     }
   }
 
   _rangeToSince(range) {
     if (range === 'all') return null;
-    const ms = { '15m': 15 * 60000, '1h': 3600000, '6h': 6 * 3600000, '24h': 24 * 3600000 };
+    const ms = { '15m': 900000, '1h': 3600000, '6h': 21600000, '24h': 86400000 };
     return new Date(Date.now() - (ms[range] || 3600000)).toISOString();
   }
 
-  // ── Rendering ───────────────────────────────────────────────────
-
   _renderStatus() {
-    const el = this.container.querySelector('#logsStatus');
-    if (!el) return;
-    const parts = [`${this.meta.total} entries`];
-    if (this.meta.hasMore) parts.push('(truncated)');
-    if (this.filters.ticketId) parts.push(`ticket: ${this.filters.ticketId.slice(0, 12)}...`);
-    el.textContent = parts.join(' \u00b7 ');
+    this.container.querySelector('#logsStatus').textContent = loggingStatus(this.meta, this.source);
   }
 
   _renderBody() {
     const body = this.container.querySelector('#logsBody');
-    if (!body) return;
-
-    if (this.entries.length === 0) {
-      body.innerHTML = '<div class="logs-empty">No log entries match the current filters</div>';
+    if (!this.entries.length) {
+      body.innerHTML = '<div class="logs-empty">No retained entries match the current filters.</div>';
       return;
     }
-
-    body.innerHTML = `<div class="logs-table">${this.entries.map((e, i) => this._renderRow(e, i)).join('')}</div>`;
-
-    // Bind row expansion
-    body.querySelectorAll('.logs-row').forEach((row) => {
-      row.addEventListener('click', () => {
-        row.classList.toggle('expanded');
-      });
-    });
-
-    // Bind ticket ID clicks in detail
-    body.querySelectorAll('.logs-detail-ticket').forEach((link) => {
-      link.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        const tid = link.dataset.ticketId;
-        const input = this.container.querySelector('#logsTicketId');
-        if (input && tid) {
-          input.value = tid;
-          this.filters.ticketId = tid;
-          this._loadLogs();
-        }
-      });
-    });
+    body.innerHTML = `<div class="logs-table">${this.entries.map((entry, index) => this._renderRow(entry, index)).join('')}</div>`;
+    body.querySelectorAll('.logs-row').forEach(row => row.addEventListener('click', () => row.classList.toggle('expanded')));
+    body.querySelectorAll('[data-log-filter]').forEach(link => link.addEventListener('click', event => {
+      event.stopPropagation();
+      const key = link.dataset.logFilter;
+      const id = key === 'traceId' ? 'logsTraceId' : 'logsTicketId';
+      this.filters[key] = link.dataset.logValue;
+      this.container.querySelector(`#${id}`).value = this.filters[key];
+      this._loadLogs();
+    }));
   }
 
   _renderRow(entry, index) {
-    const time = this._formatTime(entry.time);
-    const lvl = (entry.levelLabel || 'info').toLowerCase();
-    const mod = entry.module || '';
-    const msg = this._escapeHtml(entry.msg || '').slice(0, 200);
-    const detail = this._renderDetail(entry);
-
-    return `<div class="logs-row" data-index="${index}">
-      <div class="logs-row-summary">
-        <span class="logs-time">${time}</span>
-        <span class="logs-level logs-level-${lvl}">${lvl}</span>
-        <span class="logs-module">${this._escapeHtml(mod)}</span>
-        <span class="logs-msg">${msg}</span>
-      </div>
-      <div class="logs-row-detail">${detail}</div>
-    </div>`;
+    const level = loggingLevel(entry.levelLabel);
+    return `<div class="logs-row" data-index="${index}"><div class="logs-row-summary">
+      <span class="logs-time">${escapeLoggingHtml(this._formatTime(entry.time))}</span>
+      <span class="logs-level logs-level-${level}">${level}</span>
+      <span class="logs-module">${escapeLoggingHtml(entry.module)}</span>
+      <span class="logs-msg">${escapeLoggingHtml(String(entry.msg || '').slice(0, 200))}</span>
+      </div><div class="logs-row-detail">${this._renderDetail(entry)}</div></div>`;
   }
 
   _renderDetail(entry) {
     const skip = new Set(['level', 'levelLabel', 'time', 'msg', 'name', 'pid', 'hostname', 'v', 'service', 'env']);
-    const fields = Object.entries(entry)
-      .filter(([k]) => !skip.has(k) && entry[k] !== undefined && entry[k] !== null && entry[k] !== '')
-      .map(([k, v]) => {
-        const val = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
-        const isTicket = k === 'ticketId';
-        const valHtml = isTicket
-          ? `<span class="logs-detail-ticket" data-ticket-id="${this._escapeHtml(String(v))}">${this._escapeHtml(val)}</span>`
-          : this._escapeHtml(val);
-        return `<div class="logs-detail-field"><span class="logs-detail-key">${this._escapeHtml(k)}</span><span class="logs-detail-val">${valHtml}</span></div>`;
-      });
-    return fields.length > 0 ? fields.join('') : '<div class="logs-detail-field"><span class="logs-detail-key">No additional fields</span></div>';
+    const fields = Object.entries(entry).filter(([key, value]) => !skip.has(key) && value != null && value !== '').map(([key, value]) => {
+      const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+      const linked = key === 'ticketId' || key === 'traceId';
+      const rendered = linked ? `<button class="logs-detail-ticket" type="button" data-log-filter="${key}" data-log-value="${escapeLoggingHtml(value)}">${escapeLoggingHtml(text)}</button>` : escapeLoggingHtml(text);
+      return `<div class="logs-detail-field"><span class="logs-detail-key">${escapeLoggingHtml(key)}</span><span class="logs-detail-val">${rendered}</span></div>`;
+    });
+    return fields.join('') || '<div class="logs-detail-field">No additional fields</div>';
   }
 
-  _renderError() {
-    const body = this.container.querySelector('#logsBody');
-    if (body) body.innerHTML = '<div class="logs-empty">Failed to load logs</div>';
+  _renderError(message) {
+    this.container.querySelector('#logsStatus').textContent = 'Log read failed.';
+    this.container.querySelector('#logsBody').innerHTML = `<div class="logs-empty" role="alert">${escapeLoggingHtml(message)}</div>`;
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────
-
-  _formatTime(iso) {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
-    } catch { return iso; }
-  }
-
-  _escapeHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  _formatTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('en-GB', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3,
+    });
   }
 }
