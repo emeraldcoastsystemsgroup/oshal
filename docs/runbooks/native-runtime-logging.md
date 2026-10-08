@@ -1,6 +1,6 @@
 # Native runtime logging
 
-Open `/cockpit/?app=logs` on a native kernel deployment. Log reads and logging settings require the current kernel administrator role or the configured root identity. A normal user sees an access refusal; the screen does not turn a refused request into empty history.
+Open `/cockpit/today` and select **Logs** in the Cockpit navigation on a native kernel deployment. Log reads and logging settings require the current kernel administrator role or the configured root identity. A normal user sees an access refusal; the screen does not turn a refused request into empty history.
 
 The screen filters by severity, module, trace ID, ticket ID, text and time. Expand a row to inspect its safe correlation fields. Selecting a trace or ticket in a row applies that filter. "All retained" means the records currently in the bounded recent buffer, not a complete permanent history. The status shows evictions and oversized records omitted; the buffer resets when the daemon restarts. The durable cost ledger remains separate and authoritative.
 
