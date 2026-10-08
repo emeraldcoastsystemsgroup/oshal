@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Initial searchable structured log viewer.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Connect native traces and administrator levels; show refused reads and actual buffer retention.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Add safe view lifecycle durations and read counts without logging filters or record content.
  */
 
 import { createUiLogger } from '../../../shared/ui-debug.js';
@@ -19,6 +20,8 @@ const logger = createUiLogger('cockpit-logs-view');
  */
 export class LogsView {
   constructor(container) {
+    const started = performance.now();
+    logger.debug('LogsView.constructor.entry');
     this.container = typeof container === 'string' ? document.getElementById(container) : container;
     this.entries = [];
     this.modules = [];
@@ -31,29 +34,39 @@ export class LogsView {
     this.requestVersion = 0;
     this.destroyed = false;
     this.settings = null;
+    logger.debug('LogsView.constructor.exit', { durationMs: performance.now() - started });
   }
 
   /** @description Start the viewer and current administrator settings read.
    * @returns {Promise<void>} Completion of independent initial reads.
    */
   async render() {
-    if (!this.container) return;
-    this.container.innerHTML = this._shell();
-    this._bindEvents();
-    this.settings = new LoggingSettings(this.container.querySelector('#loggingSettings'));
-    await Promise.all([this._loadModules(), this._loadLogs(), this.settings.render()]);
+    const started = performance.now();
+    logger.debug('LogsView.render.entry');
+    try {
+      if (!this.container) return;
+      this.container.innerHTML = this._shell();
+      this._bindEvents();
+      this.settings = new LoggingSettings(this.container.querySelector('#loggingSettings'));
+      await Promise.all([this._loadModules(), this._loadLogs(), this.settings.render()]);
+    } finally {
+      logger.debug('LogsView.render.exit', { durationMs: performance.now() - started });
+    }
   }
 
   /** @description Stop polling and prevent late responses from replacing another view.
    * @returns {void} No further render activity.
    */
   destroy() {
+    const started = performance.now();
+    logger.debug('LogsView.destroy.entry');
     this.destroyed = true;
     this.requestVersion++;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.settings?.destroy();
     if (this.container) this.container.innerHTML = '';
+    logger.debug('LogsView.destroy.exit', { durationMs: performance.now() - started });
   }
 
   _shell() {
@@ -119,6 +132,8 @@ export class LogsView {
   }
 
   async _loadModules() {
+    const started = performance.now();
+    logger.debug('LogsView.loadModules.entry');
     try {
       const result = await loggingRequest('/api/v1/logs/modules');
       if (this.destroyed) return;
@@ -130,10 +145,14 @@ export class LogsView {
       select.value = this.filters.module;
     } catch (error) {
       logger.error('logging-modules-read-failed', { err: new Error('Logging modules read failed'), status: error.status || 'transport' });
+    } finally {
+      logger.debug('LogsView.loadModules.exit', { durationMs: performance.now() - started, moduleCount: this.modules.length });
     }
   }
 
   async _loadLogs() {
+    const started = performance.now();
+    logger.debug('LogsView.loadLogs.entry', { searchCharacters: this.filters.search.length });
     const version = ++this.requestVersion;
     const params = loggingQuery(this.filters, this._rangeToSince(this.filters.range));
     try {
@@ -148,6 +167,8 @@ export class LogsView {
     } catch (error) {
       logger.error('logging-query-failed', { err: new Error('Logging query failed'), status: error.status || 'transport' });
       if (!this.destroyed && version === this.requestVersion) this._renderError(error.message);
+    } finally {
+      logger.debug('LogsView.loadLogs.exit', { durationMs: performance.now() - started, recordCount: this.entries.length });
     }
   }
 
