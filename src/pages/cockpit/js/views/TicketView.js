@@ -29,6 +29,7 @@
  * 23 | maintainer@emeraldcoastsystemsgroup.com   | Default the status filter to "active" (hide closed) so the general cockpit no longer opens onto a wall of complete/cancelled tickets; "active" now excludes BOTH complete and cancelled; sync the dropdown to the default and add a Cancelled filter option so closed work stays reachable on demand
  * 24 | maintainer@emeraldcoastsystemsgroup.com   | The durable escalation lookup added in entry 12 assigned its result unconditionally, so an empty swarm_escalations result overwrote the escalation detail the activity payload now carries from the recorded status transition. Route both through selectEscalationDetail: the durable record still wins when it names a reason, an empty lookup no longer erases one.
  * 25 | maintainer@emeraldcoastsystemsgroup.com   | Pass the payload's escalatedAt into selectEscalationDetail so the durable record is dated against the escalation actually on screen, instead of being trusted because it is the newest record the ticket ever accumulated.
+ * 26 | maintainer@emeraldcoastsystemsgroup.com   | Distinguish native failures and blocked work from escalations, display genuine recorded failure notes, and respect an explicitly unavailable live stream.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -44,6 +45,7 @@ import {
   normalizeWorkflowState,
   selectEscalationDetail,
   stateLabel,
+  ticketActivityTimeline,
   ticketMatchesSearch,
 } from './ticket-view-helpers.js';
 import { renderTicketDetail, renderTicketTab } from './ticket-view-detail-renderer.js';
@@ -93,6 +95,8 @@ export class TicketView {
             <option value="approval_required">Approval Required</option>
             <option value="customer_action">Customer Action</option>
             <option value="escalated">Escalated</option>
+            <option value="failed">Failed</option>
+            <option value="blocked">Blocked</option>
             <option value="complete">Complete</option>
             <option value="cancelled">Cancelled</option>
           </select>
@@ -255,9 +259,8 @@ export class TicketView {
     // queue). Loaded apps come from the active swarm-app set; each app's queueId is
     // its name. This keeps the board scoped to the taskbar's loaded tools.
     try {
-      const appsResp = await this.api.getSafe('/api/swarm/apps?status=active', { apps: [] });
-      const loadedApps = (appsResp?.apps || []).filter((a) => a && a.queueId);
-      this.projects = loadedApps.map((a) => ({ id: a.queueId, name: a.displayName || a.name }));
+      const queuesResp = await this.api.get('/api/ticket-queues');
+      this.projects = (queuesResp?.queues || []).map(queue => ({ id: queue.queueId, name: queue.name }));
       const projSelect = this.container?.querySelector('#tvProjectFilter');
       if (projSelect) {
         projSelect.innerHTML = '<option value="all">All Queues</option>' +
@@ -275,7 +278,7 @@ export class TicketView {
       const projectId = this.projectFilter !== 'all' ? this.projectFilter : null;
       const manifestTicketType = await this._resolveActiveTicketType();
       const ticketType = manifestTicketType
-        || (this.typeFilter !== 'all' ? this.typeFilter : null);
+        || projectId || (this.typeFilter !== 'all' ? this.typeFilter : null);
       // Remember the active app/process so the detail view can show only the
       // sub-screens that apply to it (e.g. RCA & Remediation only for incidents).
       this._activeTicketType = ticketType || '';
@@ -544,7 +547,7 @@ export class TicketView {
 
   _rowHTML(ticket, hasChildren = false, expanded = false) {
     const state = this._normalizeWorkflowState(ticket.state);
-    const cls = getStatusClass(state);
+    const cls = state === 'failed' || state === 'blocked' ? 'customer-action' : getStatusClass(state);
     const selected = ticket.id === this.selectedId ? ' selected' : '';
     const date = ticket.updatedAt || ticket.createdAt || '';
     const dateStr = date ? timeAgo(date) : '--';
@@ -690,12 +693,13 @@ export class TicketView {
         const durableEscalation = await this._loadTicketEscalation(normalizedTicket);
         normalizedTicket.escalation = selectEscalationDetail(normalizedTicket.escalation, durableEscalation, ticket.escalatedAt);
       }
-      const timeline = payload.timeline || [];
+      const timeline = ticketActivityTimeline(payload);
       const costData = payload.cost || {};
       await this._renderDetail(normalizedTicket, timeline, costData);
 
       // Connect SSE for real-time updates on this ticket
-      this._connectActivitySSE(ticketId);
+      if (payload.live === false) this._disconnectActivitySSE();
+      else this._connectActivitySSE(ticketId);
     } catch (error) {
       this._logWarning('load-ticket-detail-failed', error, { ticketId });
       const t = this._findTicket(ticketId);
@@ -743,6 +747,33 @@ export class TicketView {
 
   async _renderDetail(ticket, timeline, costData, options = {}) {
     await renderTicketDetail(this, ticket, timeline, costData, options);
+    this._renderNativeFailure(ticket, timeline);
+  }
+
+  /** @description Explain the actual native terminal or blocked state without proposing a replay.
+   * @param {object} ticket Admitted ticket. @param {object[]} timeline Actual transition notes. */
+  _renderNativeFailure(ticket, timeline) {
+    const state = this._normalizeWorkflowState(ticket.state);
+    if (state !== 'failed' && state !== 'blocked') return;
+    const pane = this.container.querySelector('#tvDetailPane');
+    const pill = pane?.querySelector('.status-pill');
+    if (pill) { pill.textContent = this._stateLabel(state); pill.classList.add('customer-action'); }
+    const select = pane?.querySelector('#tvStateSelect');
+    if (select) select.disabled = true;
+    const notes = timeline.filter(entry => entry?.plainText === true && entry.toStatus === state);
+    const latest = notes.sort((a, b) => Number(b.revision) - Number(a.revision))[0];
+    const panel = document.createElement('div');
+    panel.dataset.nativeTicketFailure = state; panel.setAttribute('role', 'status');
+    const title = document.createElement('strong'); title.textContent = `${this._stateLabel(state)} — recorded reason`;
+    const reason = document.createElement('p');
+    reason.textContent = latest?.nativeNote || 'No reason was recorded for this state.';
+    panel.append(title, reason);
+    if (latest?.nativeNote?.includes('no_live_work:')) {
+      const note = document.createElement('p');
+      note.textContent = 'No live worker held the running phase when it was reconciled. Opening this ticket does not retry it.';
+      panel.append(note);
+    }
+    pane?.querySelector('.td-header')?.append(panel);
   }
 
   async _renderTab(tab, ticket, timeline, costData) {
