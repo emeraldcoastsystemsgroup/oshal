@@ -34,6 +34,7 @@
  * 28 | maintainer@emeraldcoastsystemsgroup.com | Require named app.open entry bindings and verify authorized experience hosting through the existing loader, policy and Test Lab.
  * 29 | maintainer@emeraldcoastsystemsgroup.com  | ADR-175 amendment 1: an `auth: node` route must mount beneath /api/<manifest name>/<segment>; anything broader would let device credentials authenticate on core or another app's routes, so the manifest is refused.
  * 30 | maintainer@emeraldcoastsystemsgroup.com  | ADR-081 privileged lane (general fix): readManifest refuses a manifest that declares the privileged worker among its bots unless the app owns a privileged lane (superadmin privilegedManifestRefusal), and accepts a lane owner's reserved name only from the kernel's swarm-apps directory, before any loader path writes anything: a manifest's bots are upserted by id, name included, so another app declaring the developer bot's id would rename its row and a workflow could then reach it under the alias.
+ * 31 | maintainer@emeraldcoastsystemsgroup.com  | listManifestFiles skips an authorization catalog that a sibling manifest declares (declaredCatalogFiles from the shared contract). swarm-apps/jarvis-authorization.yaml is jarvis.yaml's catalog, but autoLoadAll loaded it as a manifest, failed it every boot (missing name, displayName), and autoLoadAllWithRetry then re-ran the whole pass twice more, 15 s apart, because a pass with a failure is retried. A manifest-shaped file is never claimed, so no manifest can hide another.
  */
 
 import { validateBriefingDeclarations } from '@/shared/briefings';
@@ -59,7 +60,7 @@ import {
   type SwarmAppRouteAuthMode,
 } from '@/shared/route-auth';
 import { validateArtifactActionsDeclaration } from '@/shared/artifact-exchange';
-import { loadApplicationAuthorization } from '@/shared/application-authorization';
+import { declaredCatalogFiles, loadApplicationAuthorization } from '@/shared/application-authorization';
 import { validatePackageTools } from '@/shared/package-tools';
 import { loadPackageTestCatalog } from '@/shared/package-testing';
 import { readAppDependencies } from '@/shared/app-dependencies';
@@ -1012,10 +1013,12 @@ export function listManifestFiles(): string[] {
   const out: string[] = [];
   for (const dir of dirs) {
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+    // A catalog a sibling manifest declares is part of that manifest, not an application to load.
+    const catalogs = declaredCatalogFiles(dir);
     for (const f of fs.readdirSync(dir)) {
       const full = path.join(dir, f);
       if (f.endsWith('.yaml') || f.endsWith('.yml')) {
-        out.push(full);
+        if (!catalogs.has(f)) out.push(full);
         continue;
       }
       // ADR-085 package layout: an installed app is a FOLDER with its manifest at

@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The planted-fixture fail-then-pass proof for the secret-scan gate, run against the REAL scanner. tests/unit/ci-local-secret-scan.spec.ts puts a stand-in `docker` first on PATH, so zricethezav/gitleaks has never actually run in a guard and nothing proved the gate goes RED on a credential-shaped value or GREEN once it is gone - the one clause the CI secret-scanner entry still owed. This runs the production `gate_secrets` body sliced out of scripts/ci-local.sh over four commits of a disposable repository that carries this repo's real .gitleaks.toml, with the real image: clean PASS, planted FAIL, the allowlisted AWS documentation dummy still PASS (so the FAIL is caused by the planted value and not by the shape), and PASS again after removal. The planted value is synthetic, assembled at runtime so this file never holds the token contiguously, and lives only in a temp directory that is deleted - no credential, real or fixture, enters this repository's history.
  * 2 | maintainer@emeraldcoastsystemsgroup.com | Source scripts/ci/ci-export.sh beside the purge and scan helpers. Since 2026-09-24 `gate_secrets` exports through `export_tree` (the watchdog-bounded export), which this probe never defined, so every stage stopped at `export_tree: command not found` before the scanner ran: 5 of 6 cases red, the scanner never reached. The probe now loads the same three helpers scripts/ci-local.sh loads before `gate_secrets` runs. OSHAL_SECRET_SCAN_PROOF_LOG (opt-in, unset by default) writes each stage's exit and gate output to a file, so docs/security/secret-scan-planted-fixture-proof.md quotes the run it cites instead of a hand-made copy.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com | Source scripts/ci/ci-host-path.sh too. `gitleaks_container_scan` now spells its mount source through `host_path` (cygpath only where Git Bash has it), so without the helper the mount would be `:/scan:ro` and every stage would fail before the scanner judged anything. tests/unit/real-boundary-doctrine.spec.ts derives the helper set from the gate text and requires this.
  */
 
 /**
@@ -31,6 +32,7 @@ const CI_SOURCE = readFileSync(join(ROOT, 'scripts', 'ci-local.sh'), 'utf8');
 const PURGE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-purge.sh').replaceAll('\\', '/');
 const EXPORT_HELPER = join(ROOT, 'scripts', 'ci', 'ci-export.sh').replaceAll('\\', '/');
 const SCAN_HELPER = join(ROOT, 'scripts', 'ci', 'ci-secret-scan.sh').replaceAll('\\', '/');
+const HOST_PATH_HELPER = join(ROOT, 'scripts', 'ci', 'ci-host-path.sh').replaceAll('\\', '/');
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-secret-scan-planted-'));
 
 /**
@@ -141,14 +143,15 @@ function runGate(sha: string, label: string): StageRun {
     'REPO_DIR="$1"; SOURCE_SHA="$2"; STATE_DIR="$3"',
     'log() { printf \'LOG:%s\\n\' "$*"; }',
     'if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi',
-    // The helpers ci-local.sh sources before any gate runs: purge_tree, export_tree, run_secret_scan.
-    '. "$4"', '. "$5"', '. "$6"',
+    // The helpers ci-local.sh sources before any gate runs: purge_tree, export_tree, run_secret_scan,
+    // and host_path (the scanner's mount source).
+    '. "$4"', '. "$5"', '. "$6"', '. "$7"',
     gateSource(),
     'gate_secrets',
   ].join('\n') + '\n');
   const result = spawnSync(
     BASH,
-    [toBash(probe), toBash(REPO), sha, toBash(stateDir), PURGE_HELPER, EXPORT_HELPER, SCAN_HELPER],
+    [toBash(probe), toBash(REPO), sha, toBash(stateDir), PURGE_HELPER, EXPORT_HELPER, SCAN_HELPER, HOST_PATH_HELPER],
     { encoding: 'utf8', timeout: 600_000 },
   );
   return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };

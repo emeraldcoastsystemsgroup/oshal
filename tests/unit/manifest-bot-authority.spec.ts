@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Prove fresh manifest load, durable runtime selection and real fixture dispatch with private PostgreSQL.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The kernel-manifest walk skips an authorization catalog a sibling manifest declares (declaredCatalogFiles): swarm-apps/jarvis-authorization.yaml is jarvis.yaml's catalog, and readManifest threw on it as a manifest missing name and displayName.
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -15,6 +16,7 @@ import type { Pool } from 'pg';
 import yaml from 'js-yaml';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SwarmAppService, SwarmAppRepository, readManifest, type SwarmAppManifest } from '@/features/swarm-apps';
+import { declaredCatalogFiles } from '@/shared/application-authorization';
 import { AgentConfigService, BotNodeClient, createAgentConfigRuntimeParamsResolver } from '@/features/agent-management';
 import { dispatchManifestWorkerTicket } from '@/features/swarm-orchestration/services/dispatch-manifest-worker';
 import { seedManifestBotRuntime, upsertManifestBots, type ManifestBotRuntimeDefaultsResolver } from '@/features/swarm-apps/services/manifest-bot-runtime';
@@ -207,7 +209,8 @@ describe('Manifest bot authoritative runtime', () => {
 
   it('initializes every current kernel manifest bot from repository-relative personas in the disposable database', async () => {
     const ids = new Set<string>();
-    for (const file of readdirSync(resolve('swarm-apps')).filter(name => name.endsWith('.yaml'))) {
+    const catalogs = declaredCatalogFiles(resolve('swarm-apps'));
+    for (const file of readdirSync(resolve('swarm-apps')).filter(name => name.endsWith('.yaml') && !catalogs.has(name))) {
       const path = resolve('swarm-apps', file), loaded = readManifest(path);
       await upsertManifestBots(pool, loaded, path, defaults);
       for (const bot of loaded.bots ?? []) ids.add(bot.agentId);

@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | The partial-scan half of the secret-scan gate, proven against the REAL scanner. tests/unit/ci-local-secret-scan.spec.ts replays recorded stderr from a stand-in `docker`, and tests/unit/ci-local-secret-scan-planted-fixture.spec.ts runs the real image but only over readable trees, so nothing had ever made zricethezav/gitleaks:latest actually skip a path and exit 0 - the defect the gate exists to catch (2026-09-10: 5 of 5077 exported files unread, secret-scan PASSED). This denies read on one file of a real `git archive` export, runs the production scan line over it, and requires the gate to answer FAIL unread=1 while the scanner's own rc is 0, then restores the file and requires PASS - so the red is the unreadable path and nothing else. It is also the standing check that the FLOATING `:latest` tag still writes a wording GITLEAKS_UNREAD_PATTERN matches: a reworded skip line counts zero unread, passes, and turns this guard red.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | The scan line sources scripts/ci/ci-host-path.sh beside the verdict helper: `gitleaks_container_scan` now spells its mount source through `host_path`, and without it the real image would be handed `:/scan:ro`. The export half is unchanged (docs/BACKLOG.md, "tests/unit/ci-local-secret-scan-unreadable-path.spec.ts looks for a git archive line gate_secrets no longer has").
  */
 
 /**
@@ -37,6 +38,7 @@ const ROOT = resolve(__dirname, '../..');
 const CI_SOURCE = readFileSync(join(ROOT, 'scripts', 'ci-local.sh'), 'utf8');
 const PURGE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-purge.sh').replaceAll('\\', '/');
 const SCAN_HELPER = join(ROOT, 'scripts', 'ci', 'ci-secret-scan.sh').replaceAll('\\', '/');
+const HOST_PATH_HELPER = join(ROOT, 'scripts', 'ci', 'ci-host-path.sh').replaceAll('\\', '/');
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-secret-scan-unread-'));
 const REPO = join(SCRATCH, 'repo');
 const EXPORT_DIR = join(SCRATCH, 'ci-scan-src');
@@ -170,12 +172,12 @@ function scanExport(label: string): ScanRun {
     'exp="$1"; rc=0',
     'log() { printf \'LOG:%s\\n\' "$*"; }',
     'if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi',
-    '. "$2"',
+    '. "$2"', '. "$3"',
     ciFunction('gitleaks_container_scan'),
     gateLine('run_secret_scan "$exp"'),
     'exit $rc', '',
   ].join('\n'));
-  const result = spawnSync(BASH, [toBash(script), toBash(EXPORT_DIR), SCAN_HELPER], {
+  const result = spawnSync(BASH, [toBash(script), toBash(EXPORT_DIR), SCAN_HELPER, HOST_PATH_HELPER], {
     encoding: 'utf8', timeout: 600_000,
   });
   return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };

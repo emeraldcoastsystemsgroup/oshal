@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial — swarm-app manifest + persona validation gate: every swarm-apps/*.yaml passes the real readManifest, each bot's persona path resolves + parses + has a perspective, and routable worker personas carry a router selector (ADR-083). Fails on a boot-breaking config so it can't ship.
  *
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | ADR-085 D2: validate swarm-apps-build/ too — the explicit-load variant dirs were invisible to CI, so readManifest's fail-closed checks would first have fired at POST /api/swarm/apps/load, in production. (swarm-apps-little-monsters/ was DELETED: a pre-carve leftover whose personas the carve had already removed — it could not load.)
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | Skip an authorization catalog that a sibling manifest declares (declaredCatalogFiles, the rule listManifestFiles uses at boot): swarm-apps/jarvis-authorization.yaml failed this gate as a manifest missing name and displayName. It is still validated - as jarvis.yaml's catalog, by readManifest.
  * WHY: 39 manifests + ~97 personas load at boot; a malformed one throws in the loader and can break
  * autoload — a risk ADR-085 amplifies (an installed app PACKAGE brings its own manifest + personas).
  * The loader (readManifest) already enforces the contract at runtime; this runs it at gate time so a
@@ -20,6 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { readManifest } from '@/features/swarm-apps';
+import { declaredCatalogFiles } from '@/shared/application-authorization';
 
 interface Issue { level: 'error' | 'warn'; where: string; message: string; }
 
@@ -35,9 +37,10 @@ function manifestFiles(): string[] {
   for (const dir of MANIFEST_DIRS) {
     const abs = path.resolve(process.cwd(), dir);
     if (!fs.existsSync(abs)) continue;
+    const catalogs = declaredCatalogFiles(abs); // validated as their manifest's catalog, not as apps
     for (const entry of fs.readdirSync(abs)) {
       const full = path.join(abs, entry);
-      if (entry.endsWith('.yaml') || entry.endsWith('.yml')) { out.push(full); continue; }
+      if (entry.endsWith('.yaml') || entry.endsWith('.yml')) { if (!catalogs.has(entry)) out.push(full); continue; }
       const pkg = path.join(full, 'oshal-app.yaml');
       try { if (fs.statSync(full).isDirectory() && fs.existsSync(pkg)) out.push(pkg); } catch { /* skip */ }
     }

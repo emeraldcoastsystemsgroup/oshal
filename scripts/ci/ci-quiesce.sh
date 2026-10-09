@@ -5,6 +5,7 @@
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | New. Worker quiesce for the nightly gate (operator decision 2026-09-21, BACKLOG "The nightly gate runs against a saturated box"): stop the workers the operator NAMED (OSHAL_CI_QUIESCE_WORKERS) for the run and always restore them. Nothing is stopped unless it is named, carries the `oshal.tier=worker` label (so the infrastructure tier, the api and the monitoring overlay can never qualify), is not a routing-critical agent in scripts/routability-critical-bots.txt (Jarvis's brain, the fallback owner, trading, finance and communications - the trading bot among them, and the bots whose absence makes the stack watchdog bounce the api), and is running. The state file is written BEFORE the first stop, so a run killed mid-way still names everything it may have stopped; every run that takes the lock restores a leftover first, on_exit restores on failure and interruption, and `--resume` restores by hand. A stopped worker fires SwarmContainerDown (intake: auto - one incident with unattended RCA analysis each, and with SELF_HEAL_AUTO_APPLY a restart of the container mid-run), so the run silences exactly that alert for exactly those containers and refuses to stop anything it cannot silence. Restore is `docker start` of exactly what was stopped, batched with oshal-up.sh's knobs: oshal-up.sh itself force-recreates the api and starts every compose service, which is neither "keep the api up" nor "resume what it paused".
 # 2 | maintainer@emeraldcoastsystemsgroup.com | --plan splits its list with `read -r -a`, exactly as the run's selection does. It used an unquoted expansion, so `--plan '*'` globbed against the working directory and reported any file named like an eligible container as WOULD STOP, while the run refused `*` as a name. A plan must never disagree with the run it previews.
+# 3 | maintainer@emeraldcoastsystemsgroup.com | The standalone entry derives its default state directory through scripts/ci/ci-host-path.sh (ci_state_dir), the helper ci-local.sh uses. It called `cygpath` unguarded, which Linux does not have, so on the Spark `--resume` looked for the state file under `/oshal` instead of where the run wrote it. OSHAL_CI_STATE_DIR still wins.
 #
 # Sourced by scripts/ci-local.sh after `log` is defined. Also runnable on its own:
 #   bash scripts/ci/ci-quiesce.sh --plan [name ...]   which configured (or given) names WOULD be stopped,
@@ -327,7 +328,9 @@ ci_quiesce_main() {
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   set -uo pipefail
   REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  STATE_DIR="${OSHAL_CI_STATE_DIR:-$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/oshal}"
+  # The same state directory ci-local.sh uses, so --resume finds the state file a run left there.
+  . "$REPO_DIR/scripts/ci/ci-host-path.sh"
+  STATE_DIR="${OSHAL_CI_STATE_DIR:-$(ci_state_dir)}"
   log() { printf '[%s] %s\n' "$(date +%FT%T)" "$*"; }
   if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi
   ci_quiesce_main "$@"

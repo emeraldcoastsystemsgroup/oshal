@@ -13,6 +13,7 @@
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Lower the sanity floor 16→15 per the spec's own instruction: the Wave-3 kalshi carve (d8a4ea3c) moved swarm-apps/kalshi.yaml to the store package (16 total incl. variant dirs → 15) and its gate list didn't include this spec, leaving the gate red at HEAD. 15 still catches a wholesale manifest-dir loss.
  * 9 | maintainer@emeraldcoastsystemsgroup.com   | Lower the sanity floor 15→14 per the spec's own instruction: the Wave-3 world carve moves swarm-apps/world.yaml to the store package (15 total incl. variant dirs → 14). Still catches a wholesale manifest-dir loss.
  * 10 | maintainer@emeraldcoastsystemsgroup.com   | Lower the sanity floor 14→13 per the spec's own instruction: the Wave-3 trading carve (the last Wave-G carve) moves swarm-apps/trading.yaml to the store package (14 total incl. variant dirs → 13). Still catches a wholesale manifest-dir loss.
+ * 11 | maintainer@emeraldcoastsystemsgroup.com   | The in-repo walk skips an authorization catalog a sibling manifest declares (declaredCatalogFiles): swarm-apps/jarvis-authorization.yaml is jarvis.yaml's catalog, not a manifest without a suite.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -22,6 +23,7 @@ import { join } from 'path';
 import { load as yamlLoad } from 'js-yaml';
 import { readManifest, SWARM_APP_SUITES, isSwarmAppSuite, compileWorkflowSpec } from '../../src/features/swarm-apps';
 import { mapSkillToManifest } from '../../src/features/skill-import';
+import { declaredCatalogFiles } from '../../src/shared/application-authorization';
 
 /**
  * @description Write a manifest and read it through the real readManifest.
@@ -75,7 +77,8 @@ describe('every in-repo manifest is shelved', () => {
     let total = 0;
     for (const d of MANIFEST_DIRS) {
       const dir = join(root, d);
-      for (const f of readdirSync(dir).filter((n) => n.endsWith('.yaml'))) {
+      const catalogs = declaredCatalogFiles(dir);
+      for (const f of readdirSync(dir).filter((n) => n.endsWith('.yaml') && !catalogs.has(n))) {
         total += 1;
         const m = yamlLoad(readFileSync(join(dir, f), 'utf8')) as { suite?: unknown };
         expect(isSwarmAppSuite(m.suite), `${d}/${f} suite=${String(m.suite)}`).toBe(true);

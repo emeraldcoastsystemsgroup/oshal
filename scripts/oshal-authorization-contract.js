@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Permit explicit asset filenames while refusing dot-segment traversal and keeping parameter grammar unchanged.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | A bots binding may name its agentId as a canonical lowercase UUID, which can begin with a digit (Intelligent Sales' concierge is 15000000-…-0001). Before this the package could not bind its own bot, and an unbound bot is refused for everyone once a catalog exists. Every other binding kind keeps the identifier rule.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Import native application role templates through the same bounded template validator used by experience packages.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Read a kernel manifest's catalog the way both runtimes name it. swarm-apps/jarvis.yaml declares `catalog: swarm-apps/jarvis-authorization.yaml`, spelled from the platform root because the native kernel reads these declarations with the root as their package directory (oshal-kernel crates/oshald/src/platform_apps.rs), and the running native kernel reads this very tree (OSHAL_PLATFORM_DIR), so the manifest must keep that spelling. This loader joined that spelling to swarm-apps/ itself, so jarvis.yaml failed to load with ENOENT 'swarm-apps/swarm-apps' (the evidence nightly's audit proof, the manifests gate, and every legacy boot). For a manifest in a directory named swarm-apps, a `swarm-apps/` prefix now names a file inside that same directory: the spelling changes, the package boundary does not, and manifest-bot-runtime.ts already reads kernel-manifest personas root-relative. Also exports declaredCatalogFiles, so manifest scans stop treating a catalog that a sibling manifest declares (swarm-apps/jarvis-authorization.yaml) as an application manifest of its own.
  */
 /* ADR-149 shared CLI/runtime contract. Pure catalog validation; loading is package-confined. */
 'use strict';
@@ -131,6 +132,43 @@ function parseAuthorizationCatalog(source) {
   if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > MAX_BYTES) fail('catalog exceeds size limit');
   return validateAuthorizationCatalog(yaml.load(source, { schema: yaml.JSON_SCHEMA }));
 }
+/*
+ * Kernel-resident platform declarations live in the platform's swarm-apps/ directory and name their
+ * files from the platform ROOT - the convention the native kernel reads them with, and the one
+ * manifest-bot-runtime.ts applies to their personas. So `swarm-apps/<file>`, from a manifest in a
+ * directory named swarm-apps, is <file> inside that directory. Only the spelling is translated:
+ * every segment is still validated and the result is still confined to that directory.
+ */
+const KERNEL_MANIFEST_DIR = 'swarm-apps';
+function packageRelativeCatalog(packageDir, file) {
+  const prefix = `${KERNEL_MANIFEST_DIR}/`;
+  return path.basename(packageDir) === KERNEL_MANIFEST_DIR && file.startsWith(prefix) ? file.slice(prefix.length) : file;
+}
+/**
+ * @description The authorization catalogs that the flat manifests of one directory declare, as file
+ * names directly in it. Such a file belongs to the manifest naming it, whose load parses and validates
+ * it, so a manifest scan must not load it as an application of its own. A file shaped like a manifest
+ * (a top-level `name`) is never claimed, so no manifest can hide another from a scan.
+ * @param {string} dir - A directory of flat *.yaml manifests (swarm-apps/, deployed-apps/, ...).
+ * @returns {Set<string>} The claimed file names; empty when the directory cannot be read.
+ */
+function declaredCatalogFiles(dir) {
+  const docs = new Map();
+  let names = [];
+  try { names = fs.readdirSync(dir).filter(name => /\.ya?ml$/.test(name)); } catch { return new Set(); }
+  for (const name of names) {
+    try { docs.set(name, yaml.load(fs.readFileSync(path.join(dir, name), 'utf8'))); } catch { docs.set(name, null); }
+  }
+  const claimed = new Set();
+  for (const doc of docs.values()) {
+    const catalog = doc && typeof doc === 'object' && doc.authorization ? doc.authorization.catalog : undefined;
+    if (typeof catalog !== 'string') continue;
+    const file = packageRelativeCatalog(path.resolve(dir), catalog);
+    const target = docs.get(file);
+    if (target && typeof target === 'object' && !Object.prototype.hasOwnProperty.call(target, 'name')) claimed.add(file);
+  }
+  return claimed;
+}
 function loadApplicationAuthorization(packageDir, manifest) {
   if (manifest.authorization === undefined) return null;
   if (!Array.isArray(manifest.uses) || !manifest.uses.includes('application-authorization')) fail('catalog requires uses: [application-authorization] so older cores refuse activation');
@@ -142,10 +180,10 @@ function loadApplicationAuthorization(packageDir, manifest) {
   if (typeof file !== 'string' || file.length > 256 || !/^[A-Za-z0-9_./-]+\.ya?ml$/.test(file)
     || file.startsWith('/') || file.split('/').some(segment => !segment || segment === '.' || segment === '..')) fail('catalog path escapes package');
   const root = fs.realpathSync(packageDir); let target = root;
-  for (const segment of file.split('/')) { target = path.join(target, segment); if (fs.lstatSync(target).isSymbolicLink()) fail('catalog symlinks are forbidden'); }
+  for (const segment of packageRelativeCatalog(root, file).split('/')) { target = path.join(target, segment); if (fs.lstatSync(target).isSymbolicLink()) fail('catalog symlinks are forbidden'); }
   const resolved = fs.realpathSync(target); const relative = path.relative(root, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) fail('catalog path escapes package');
   const stat = fs.statSync(resolved); if (!stat.isFile() || stat.size > MAX_BYTES) fail('catalog must be a bounded file');
   return parseAuthorizationCatalog(fs.readFileSync(resolved, 'utf8'));
 }
-module.exports = { validateAuthorizationCatalog, parseAuthorizationCatalog, loadApplicationAuthorization };
+module.exports = { validateAuthorizationCatalog, parseAuthorizationCatalog, loadApplicationAuthorization, declaredCatalogFiles };

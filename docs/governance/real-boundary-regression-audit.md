@@ -1104,3 +1104,40 @@ explicit legacy scope, rather than treating existing lint success as full rule c
 The inherited `handleSendMessage` callback still exceeds the 50-line function rule. The new
 observation adapter and other new helpers remain below that limit; this logging repair does not
 certify the older callback. Its decomposition remains separate follow-up work.
+
+## Local CI runner on a host without cygpath (2026-10-08)
+
+`scripts/ci-local.sh` called `cygpath` unguarded for its state directory and for the gitleaks
+volume mount, and `scripts/ci/ci-quiesce.sh` (standalone) did the same for its state directory.
+On Linux the state directory became `/oshal` and every nightly on the Spark ended "another ci-local
+run is in progress", exit 2. Both now go through `scripts/ci/ci-host-path.sh`.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/ci-local-host-path.spec.ts` (the runner deriving an unusable state directory, misreporting it as a held lock, or mounting an empty source into the secret scanner) | Scoped doubles: a `docker` stand-in first on PATH that records argv (the mount case and the runner cases, which end before any engine call) and a `cygpath` stand-in for the unchanged Git Bash branch. REAL: bash, the filesystem, `scripts/ci/ci-host-path.sh`, `scripts/ci-local.sh` itself run up to its lock, the shipped `gitleaks_container_scan` text and `scripts/ci/ci-quiesce.sh --resume`; the Linux cases first prove no `cygpath` is reachable. | The mount against the real engine: `tests/unit/ci-local-secret-scan-planted-fixture.spec.ts` runs `zricethezav/gitleaks:latest` through the production gate and now sources the helper. | Real companion present: on this Linux host (2026-10-08, gitleaks v8.30.1) it passes 6 of 6 with the fix; with the previous `ci-local.sh` it fails 5 of 6 at `docker: invalid spec: :/scan:ro: empty section between colons`. |
+
+## Trading watchdog reads the live books as its own verified principal (2026-10-08)
+
+Block G of `scripts/trading-watchdog.ps1` read every live book with the container's service secret
+plus a sub header. The application-authorization guard needs a subject and a verified issuer, so it
+refused every read with 401 `authorization_identity_required`, and the watchdog told the operator to
+re-login to Schwab. It now sends a session-minted personal access token named by
+`OSHAL_WATCHDOG_TOKEN_FILE`, reports `authorization_*` refusals as its own access problem, and ends
+with `return` instead of `exit`.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/trading-watchdog-identity.spec.ts` (the watchdog's book reads refused for want of a verified identity, the token leaking into argv or a log, a refusal of the watchdog reported as a broker re-login, `exit` journal noise) | Scoped doubles: the `oshal_cli_tokens` table is a substring-routed fake pool (as in `cli-token-auth.spec.ts`), the policy store is `MemoryAuthorizationStore`, a fixture cookie stands in for the OIDC login, the trading package is a fixture module mounted with intelligent-trades' `/api/trading` declaration, and `docker` is a recording node script in the PowerShell cases. REAL: an HTTP listener with the real `/api/cli-tokens` mint route, Bearer middleware, application-authorization actor resolver and runtime in enforce mode and `ManifestRouteMounterImpl`; the shipped container-side fetcher under node; the shipped PowerShell sections, the PowerShell parser and the market-hours gate under pwsh. | A market-hours run of the installed watchdog on the Spark with `OSHAL_WATCHDOG_TOKEN_FILE` set to a token minted by the live-book owner: block G reads all three live books with no UNREADABLE line. | Owed (live): needs the operator's token. Local: 8 of 8 pass; against the previous script 5 of 8 fail and the 3 unchanged-behaviour cases pass. |
+
+## Kernel manifest catalogs read the same way by both runtimes (2026-10-08)
+
+`swarm-apps/jarvis.yaml` declares `catalog: swarm-apps/jarvis-authorization.yaml`, spelled from the
+platform root because the native kernel reads platform declarations with the root as their package
+directory, and the running native kernel reads this tree. This repository's confined loader joined
+it to `swarm-apps/` and failed with ENOENT, and every manifest scan loaded the catalog as an
+application. The loader now translates that spelling inside a `swarm-apps` directory only (still
+confined there), and scans skip a catalog a sibling manifest declares (`declaredCatalogFiles`).
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/kernel-manifest-catalog.spec.ts` (a kernel manifest whose catalog one runtime cannot read, a catalog loaded as an application, a translated spelling that escapes its directory) | No double on the legacy side: the real `loadApplicationAuthorization`, `readManifest`, `listManifestFiles`, `declaredCatalogFiles` and `scripts/ai-usage-ledger.js` over the real `swarm-apps/` and real temp directories, symlink included. The NATIVE resolution is MIRRORED, not executed: the case re-states `platform_apps.rs` (package directory = platform root) and `application_authorization.rs` `read_catalog` (segment join, no symlink, inside the root) and requires it to reach the same file the legacy loader parsed. | The native kernel loading this tree's `swarm-apps/jarvis.yaml` with its catalog. Production native reads it today (`OSHAL_PLATFORM_DIR`); the kernel's native RAG tests (`crates/oshald/tests/native_rag.rs` and the others built on `tests/support/native_rag_fixture.rs`) load the same spelling from their fixture copy. | Legacy side real: 12 spec files, 212 cases pass; the resolver, boot-scan and manifest-shape mutations each go red. Native side: mirrored here, real in the kernel repository. |

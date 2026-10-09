@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | renderToolView appends the ribbon's consumed one-shot tool query (sanitized k=v&k=v) to the tile's own iframeUrl — the Create front door's deep link into AI Office.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Notify the directory bridge only when the current Home has finished rendering.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | ADR-149 locked surface: renderToolView refuses to iframe a view the kernel marked `locked` (the target package is not discoverable for this person) and renders the lock panel with the role-guidance link instead. The rail button already followed that link on a click, but every OTHER way into a tool view — the landing defaultView, an embedded surface's app-navigate, a handoff — reached the iframe directly and showed the kernel's role-guidance 403 inside the frame. This is the one choke point all of them pass through. lockedSurfacePanel is the pure, exported decision, and it reuses ribbonTilePresentation so the same-origin rule for the guidance link is stated once.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | The platform's own pages are framed without a sandbox. Every tool surface, /users and /access among them, was framed with allow-scripts plus allow-same-origin, which isolates nothing for a same-origin page (it can reach its parent and lift its own sandbox) and makes Chrome log "An iframe which has both allow-scripts and allow-same-origin ... can escape its sandboxing" on every load - 81 of 88 rail views on the native 'Today' cockpit. surfaceSandbox is now the one exported rule: same-origin /users, /access, /app-loader, /swarm-admin, /config, /cockpit/tools/ and /api/forge (resolved against this origin, so a cross-origin or dot-segment URL is judged by where it lands) and the Jarvis voice surface get none; a package-authored surface keeps exactly its previous allow-list. renderToolView, renderForgeView and the assistant bubble (createAssistantFrame, used by app.js) all take their sandbox from it.
  */
 
 import {
@@ -66,6 +67,74 @@ export function lockedSurfacePanel(viewDef) {
             ${guidance}
           </div>
         </div>`;
+}
+
+/**
+ * The allow-list a package-authored surface keeps. allow-downloads is load-bearing: without it a
+ * sandboxed surface's download is discarded SILENTLY — the popup opens (allow-popups) and shows a
+ * blank tab, with no file and no console error. That is what broke the one-click node installer,
+ * whose route had already rendered the script and logged it as issued.
+ */
+export const PACKAGE_SURFACE_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-top-navigation-by-user-activation';
+
+/** The narrower allow-list an app's assistant bubble has always had (ADR-085 D9). */
+export const ASSISTANT_SURFACE_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
+
+/**
+ * Root paths of the platform's own pages: its administration pages, the cockpit's own tool pages
+ * and the core Bot Forge page. No package route is served under any of them.
+ */
+const FIRST_PARTY_SURFACE = /^\/(?:(?:users|access|app-loader|swarm-admin|config|api\/forge)(?:\/|$)|cockpit\/tools\/)/;
+
+/**
+ * @description Whether a frame URL is one of the platform's own pages rather than a
+ * package-authored surface. The URL is resolved against this page's origin first, so a
+ * cross-origin or protocol-relative URL, or a dot-segment walk out of /cockpit/tools/, is judged by
+ * where it actually lands.
+ * @param {string} url - Root-relative or absolute frame URL.
+ * @returns {boolean} true only for a same-origin path under a first-party root.
+ */
+export function isFirstPartySurface(url) {
+  let target;
+  try { target = new URL(String(url), window.location.origin); } catch { return false; }
+  return target.origin === window.location.origin && FIRST_PARTY_SURFACE.test(target.pathname);
+}
+
+/**
+ * @description The sandbox allow-list a frame gets, or '' for none. A same-origin frame holding
+ * both allow-scripts and allow-same-origin is not isolated (it can reach its parent and lift its
+ * own sandbox), and Chrome warns on every load. So the platform's own pages, and the Jarvis voice
+ * surface (getUserMedia is refused in any sandboxed frame, even with allow="microphone"), get no
+ * sandbox, while a package-authored surface keeps exactly the allow-list it had. Isolating package
+ * surfaces for real needs a separate origin, which this does not attempt.
+ * @param {string} url - Frame URL.
+ * @param {string} [allowances=PACKAGE_SURFACE_SANDBOX] - The allow-list a package surface keeps.
+ * @returns {string} The allow-list, or '' for a first-party or voice surface.
+ */
+export function surfaceSandbox(url, allowances = PACKAGE_SURFACE_SANDBOX) {
+  const isVoiceSurface = /\/api\/jarvis(\/|$|\?)/.test(String(url));
+  return isVoiceSurface || isFirstPartySurface(url) ? '' : allowances;
+}
+
+/** @description The `sandbox="…"` attribute text for a frame URL. @param {string} url @returns {string} '' when it gets none. */
+function sandboxAttribute(url) {
+  const sandbox = surfaceSandbox(url);
+  return sandbox ? `sandbox="${sandbox}"` : '';
+}
+
+/**
+ * @description The iframe for an app's declarative assistant bubble (ADR-085 D9), sandboxed by
+ * the same rule as every other cockpit frame. The caller has already refused any URL that is not
+ * root-relative, and sets src lazily on first open.
+ * @param {{label: string, iframeUrl: string, title?: string}} assistant - Manifest declaration.
+ * @returns {HTMLIFrameElement} The frame, without src.
+ */
+export function createAssistantFrame(assistant) {
+  const frame = document.createElement('iframe');
+  frame.title = assistant.title || assistant.label;
+  const sandbox = surfaceSandbox(assistant.iframeUrl, ASSISTANT_SURFACE_SANDBOX);
+  if (sandbox) frame.setAttribute('sandbox', sandbox);
+  return frame;
 }
 
 /**
@@ -344,7 +413,8 @@ export class CockpitViewController {
   /**
    * @description Renders the Bot Forge front door inline on the framework-default
    * cockpit (the agentic-swarm-injection engine: gallery + Ready-to-inject tray).
-   * Same first-party sandbox as tool surfaces so its fetches + inject modals work.
+   * A first-party page (the core /api/forge route serves src/api/forge.html), so surfaceSandbox
+   * frames it without a sandbox.
    * For the full authoring experience (the packer chat in the right rail) the
    * surface's "Build a new bot" CTA links to /cockpit/?app=codex-packer.
    * @param {HTMLElement} container - Main content container
@@ -352,7 +422,7 @@ export class CockpitViewController {
   renderForgeView(container) {
     container.innerHTML = `
       <div class="tool-view-container" style="display:flex;flex-direction:column;height:100%;width:100%;">
-        <iframe src="/api/forge" style="flex:1;border:none;width:100%;height:100%;" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals allow-top-navigation-by-user-activation"></iframe>
+        <iframe src="/api/forge" style="flex:1;border:none;width:100%;height:100%;" ${sandboxAttribute('/api/forge')}></iframe>
       </div>`;
   }
 
@@ -383,10 +453,6 @@ export class CockpitViewController {
     if (locked) { container.innerHTML = locked; return; }
 
     if (iframeUrl) {
-      // The Jarvis surface needs the microphone (getUserMedia), which Chrome refuses inside a
-      // sandboxed iframe even with allow="microphone". It's our own first-party same-origin page,
-      // so drop the sandbox for it (keep it for third-party/tool surfaces). Other surfaces stay sandboxed.
-      const isVoiceSurface = /\/api\/jarvis(\/|$|\?)/.test(String(iframeUrl));
       // Cache-bust the surface so UI edits always load fresh (no stale iframe/CDN copy).
       let bustedUrl = String(iframeUrl) + (iframeUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
       // ADR-139 D4a: forward a one-shot artifact handle from the cockpit URL to the surface, so
@@ -402,13 +468,8 @@ export class CockpitViewController {
       // the ribbon): opens the tile's OWN surface on a purpose, e.g. kind=docx&starter=resume.
       const toolQuery = ribbon?.consumeToolQuery?.(viewId);
       if (toolQuery) bustedUrl += '&' + toolQuery;
-      const sandboxAttr = isVoiceSurface
-        ? ''
-        // allow-downloads is load-bearing: without it a sandboxed surface's download is
-        // discarded SILENTLY — the popup opens (allow-popups) and shows a blank tab, with no
-        // file and no console error. That is what broke the one-click node installer, whose
-        // route had already rendered the script and logged it as issued.
-        : 'sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-top-navigation-by-user-activation"';
+      // The platform's own pages and the voice surface get no sandbox; a package surface keeps its own.
+      const sandboxAttr = sandboxAttribute(iframeUrl);
 
       // Guest read-only treatment: for Tier-B apps (open but not interactive), show a
       // banner and dim/disable data-entry controls inside the surface. The server already

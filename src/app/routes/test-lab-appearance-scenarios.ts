@@ -16,6 +16,7 @@
  * 10 | maintainer@emeraldcoastsystemsgroup.com | Link the light/dark contrast walk. The existing appearance coverage proves a surface consumes theme tokens and inherits a live change; none of it measures what the pixels come out as, which is where a wrongly mapped role hides.
  * 11 | maintainer@emeraldcoastsystemsgroup.com | Register actual dashboard swarm activity refusal, unavailable, empty and escaped-row browser coverage.
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | Link shipped Project Manager envelope, refusal, unavailable and safe-text browser coverage; readiness still reads only fixed stylesheets.
+ * 13 | maintainer@emeraldcoastsystemsgroup.com   | Link the cockpit surface sandbox guard to workspace navigation: the platform's own pages (/users, /access, /app-loader, /swarm-admin, /config, /cockpit/tools/, Bot Forge) are framed without a sandbox, while package surfaces and the assistant bubble keep their exact allow-lists.
  * =============================================================================
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
@@ -113,6 +114,7 @@ export const APPEARANCE_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/career-group-navigation.spec.ts' },
     { level: 'integration', path: 'tests/unit/swarm-app-groups.spec.ts' },
     { level: 'integration', path: 'tests/unit/default-rail-groups.spec.ts' },
+    { level: 'unit', path: 'tests/unit/cockpit-surface-sandbox.spec.ts' },
   ],
   steps: [{ id: 'workspace-discovery', app: 'cockpit', label: 'Current workspace navigation', run: workspaceDiscovery }],
 }, {
