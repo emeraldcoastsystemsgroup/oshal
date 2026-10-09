@@ -8,6 +8,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added selectEscalationDetail so an empty durable swarm_escalations lookup can no longer erase the escalation reason the ticket payload already carries from the recorded status transition
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | selectEscalationDetail preferred any durable record that named a reason, with nothing testing that the record belonged to the escalation on screen. The durable lookup is by ticket id and returns the ticket's newest record, so a ticket that escalated, de-escalated and escalated again explained its current escalation with a reason from the run that had already closed. Date the durable record against the current escalation and drop one written before it, so an escalation that recorded nothing says so instead of borrowing an old answer.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-163 D3: the canonical escalation record leads. swarm_escalations answers only escalations raised INSIDE a swarm run - one writer, and it needs a run id - while every escalating path writes the ticket_status_history transition the payload carries. Leading with the run record meant the cockpit's first question was answered by the store that sees a strict subset. The transition now explains the escalation and a current run record contributes only what a run knows (target, retryClass, attemptState), so the panel keeps every chip it had without the reason depending on which store happened to have a row.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Preserve native failed and blocked states separately from legacy escalations and treat native recorded activity as plain text.
  */
 
 import { getStatusLabel } from '../utils/formatters.js';
@@ -49,7 +50,9 @@ export const VALID_STATE_TRANSITIONS = {
  */
 export function normalizeWorkflowState(state) {
   const normalized = String(state || '').trim().toLowerCase();
-  if (!normalized) return 'backlog';
+  if (!normalized || normalized === 'queued') return 'backlog';
+  if (normalized === 'running') return 'in_process_build';
+  if (normalized === 'failed' || normalized === 'blocked') return normalized;
   if (VALID_STATE_TRANSITIONS[normalized]) return normalized;
   if (normalized.includes('approval')) return 'approval_required';
   if (normalized.includes('discovery') || normalized.includes('phase 0') || normalized === 'phase0') return 'in_process_discovery';
@@ -78,7 +81,7 @@ export function buildStateOptions(currentState) {
   const nextStates = VALID_STATE_TRANSITIONS[normalizedState] || [];
   return [normalizedState, ...nextStates]
     .filter((value, index, array) => array.indexOf(value) === index)
-    .map((value) => ({ value, label: getStatusLabel(value) }));
+    .map((value) => ({ value, label: stateLabel(value) }));
 }
 
 /**
@@ -97,7 +100,27 @@ export function getTicketStateGroup(state) {
  * @returns Formatted label.
  */
 export function stateLabel(state) {
-  return getStatusLabel(normalizeWorkflowState(state));
+  const normalized = normalizeWorkflowState(state);
+  if (normalized === 'failed') return 'Failed';
+  if (normalized === 'blocked') return 'Blocked';
+  return getStatusLabel(normalized);
+}
+
+/**
+ * @description Keep native transition notes literal when the retained feed renders Markdown or HTML.
+ * @param {object} payload Actual admitted activity response. @returns {object[]} Recorded activity entries.
+ */
+export function ticketActivityTimeline(payload) {
+  if (!Array.isArray(payload?.timeline)) return [];
+  return payload.timeline.map(entry => entry?.plainText === true && typeof entry.summary === 'string'
+    ? { ...entry, nativeNote: entry.summary, summary: escapePlainActivity(entry.summary) }
+    : entry);
+}
+
+/** @description Escape HTML and Markdown punctuation before literal recorded text reaches the feed.
+ * @param {string} text Actual recorded note. @returns {string} Safe literal feed text. */
+function escapePlainActivity(text) {
+  return text.replace(/[&<>"'`*_\[\]()!#\\]/g, char => `&#${char.codePointAt(0)};`);
 }
 
 /**
