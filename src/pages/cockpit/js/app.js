@@ -57,6 +57,7 @@
  * 51 | maintainer@emeraldcoastsystemsgroup.com | Mount the per-surface help control and feed it every view change from switchView — the shell already owns the one chokepoint that knows which surface is on screen, so the control never has to guess from the DOM.
  * 52 | maintainer@emeraldcoastsystemsgroup.com | Show a focused profile refusal before opening a default workbench or ticket deep link.
  * 53 | maintainer@emeraldcoastsystemsgroup.com | Shell-lock fix (client): the ribbon-ready step is bootInitialView (cockpit-profile-refusal.js), which is unit-tested on the profile the real ribbon produces — the refusal stops the boot, and ?ticket= opens Tickets only when Tickets is a registered view. Header Settings and Knowledge (and the profile modal's Settings action, which shares openCockpitSettingsPage) refuse while the shell is locked or still undecided.
+ * 54 | maintainer@emeraldcoastsystemsgroup.com | renderAppAssistant builds its frame with createAssistantFrame from cockpit-view-controller.js, so the assistant bubble takes its sandbox from the cockpit's one surface rule (surfaceSandbox): a package surface keeps the same allow-scripts allow-same-origin allow-forms list as before, and only a same-origin first-party platform page goes unsandboxed.
  */
 
 import { ThemeManager } from './theme-manager.js';
@@ -72,7 +73,7 @@ import { CockpitBotSelectorController } from './cockpit-bot-selector-controller.
 // CM-7: Legacy CockpitChatPanelController removed — cockpit always uses embedded iframe
 import { CockpitEmbeddedChatPanelController } from './embedded-chat-panel-controller.js';
 import { CockpitStatusController } from './cockpit-status-controller.js';
-import { CockpitViewController } from './cockpit-view-controller.js';
+import { CockpitViewController, createAssistantFrame } from './cockpit-view-controller.js';
 import { CockpitWorkspaceFocusController } from './cockpit-workspace-focus-controller.js';
 import {
   bindWorkspaceActionButton,
@@ -291,8 +292,8 @@ class CockpitApp {
    * content and call any API as them. The manifest declares what it wants; the framework builds it.
    *
    * The iframeUrl is validated same-origin and root-relative at manifest load (readManifest), so it
-   * cannot be turned into a cross-origin embed. The iframe is sandboxed the same way every packaged
-   * surface already is.
+   * cannot be turned into a cross-origin embed. The frame is sandboxed by the cockpit's one surface rule
+   * (createAssistantFrame): a package surface keeps its allow-list.
    *
    * @param {{label: string, icon: string, iframeUrl: string, title?: string}} assistant - Manifest declaration.
    * @returns {void}
@@ -312,9 +313,7 @@ class CockpitApp {
     panel.hidden = true;
     panel.className = 'app-assistant-panel';
 
-    const frame = document.createElement('iframe');
-    frame.title = assistant.title || assistant.label;
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+    const frame = createAssistantFrame(assistant);
     panel.appendChild(frame);
 
     const fab = document.createElement('button');
