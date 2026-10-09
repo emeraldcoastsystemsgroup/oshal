@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | CORE-06 timeout containment: retain a 20-second exception only for the real-repository tree walk; tiny fixture mutations return to the global unit-test budget.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Package-build residue: the gate now judges UNTRACKED state too. A fixture may plant files AFTER its commit, and five cases pin the rule: an untracked file under src/app/routes/ (the shape seventeen sports-edge sources took there on 2026-09-09) is red; a gitignored one is not (it is not what `git add -A` stages); a surviving src/__oshal_store_parity_* (store compiler) or src/__oshal_build_* (`oshal-app.js build`) staging directory is red; a tracked route file stays green. Each red case failed against the previous gate before the change.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Two cases for check 4b, the cross-repo-import shape: a fixture file whose specifier leaves the repo is RED, and a deep relative import that stays inside it stays GREEN. The second is not padding - the first draft of the check reported every any-bot/server/app-modules file, because `git rev-parse` answers with forward slashes on Windows and the prefix comparison never matched. The escaping specifier is ASSEMBLED from parts rather than written out: the guard reads every tracked source line, so spelling it as a literal would make this very file the violation it tests for, which is the fixture-literal trap the publish gate has the same way.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com   | Three cases for the declared-catalog rule: a kernel manifest's authorization catalog beside it (jarvis.yaml -> jarvis-authorization.yaml, the real tree's shape) passes; a catalog-shaped file no manifest declares still fails; and a manifest-shaped file another manifest names as its catalog still fails as a non-kernel manifest, so no manifest can hide an application here.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -302,6 +303,45 @@ describe('repo separation (ADR-115): application code never mixes into the swarm
   it('FAILS when a non-kernel manifest appears in swarm-apps/', () => {
     withFixture(
       (dir) => writeFileSync(join(dir, 'swarm-apps/eats.yaml'), 'name: eats\n', 'utf8'),
+      ({ code, output }) => {
+        expect(output).toContain('non-kernel manifest(s) in swarm-apps/');
+        expect(output).toContain('swarm-apps/eats.yaml');
+        expect(code).toBe(1);
+      },
+    );
+  });
+
+  it('passes when a kernel manifest declares its authorization catalog beside it (the jarvis.yaml shape)', () => {
+    withFixture(
+      (dir) => {
+        writeFileSync(join(dir, 'swarm-apps/jarvis.yaml'),
+          'name: jarvis\nauthorization:\n  version: 1\n  catalog: swarm-apps/jarvis-authorization.yaml\n', 'utf8');
+        writeFileSync(join(dir, 'swarm-apps/jarvis-authorization.yaml'), 'version: 1\nresources: {}\n', 'utf8');
+      },
+      ({ code, output }) => {
+        expect(output).toContain('swarm-apps/ holds exactly the 10 kernel manifests');
+        expect(code).toBe(0);
+      },
+    );
+  });
+
+  it('FAILS when a catalog-shaped file sits in swarm-apps/ with no manifest declaring it', () => {
+    withFixture(
+      (dir) => writeFileSync(join(dir, 'swarm-apps/orphan-authorization.yaml'), 'version: 1\nresources: {}\n', 'utf8'),
+      ({ code, output }) => {
+        expect(output).toContain('swarm-apps/orphan-authorization.yaml');
+        expect(code).toBe(1);
+      },
+    );
+  });
+
+  it('FAILS when a manifest names another manifest as its catalog (no manifest can hide an application)', () => {
+    withFixture(
+      (dir) => {
+        writeFileSync(join(dir, 'swarm-apps/jarvis.yaml'),
+          'name: jarvis\nauthorization:\n  version: 1\n  catalog: swarm-apps/eats.yaml\n', 'utf8');
+        writeFileSync(join(dir, 'swarm-apps/eats.yaml'), 'name: eats\n', 'utf8');
+      },
       ({ code, output }) => {
         expect(output).toContain('non-kernel manifest(s) in swarm-apps/');
         expect(output).toContain('swarm-apps/eats.yaml');

@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Guard for the ADR-170 rating label: the closed tier/generation/degrade/basis sets, readManifest accepting a valid `rating:` block and refusing each malformed shape (unknown tier, memory low > high, bytes typed as MiB, duplicate id, `reduced` without text, unknown keys), a missing block staying warn-only, every in-repo kernel manifest rated, and the REAL ledger generator over a temp checkout going red on a stale file and on an unrated manifest.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Expected ledger rows follow the generator dropping its Version column.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | T0 closed-set membership, T0 accepted for a hosted-generation feature, T0 with no generation refused.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | The in-repo walk skips an authorization catalog a sibling manifest declares (declaredCatalogFiles, the rule listManifestFiles and the manifests gate use): swarm-apps/jarvis-authorization.yaml is jarvis.yaml's catalog, and readManifest threw on it as a manifest missing name and displayName.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -13,6 +14,7 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { declaredCatalogFiles } from '../../src/shared/application-authorization';
 import {
   readManifest,
   APP_RATING_TIERS, isAppRatingTier,
@@ -131,7 +133,8 @@ describe('every in-repo kernel manifest is rated', () => {
     const unrated: string[] = [];
     for (const dir of MANIFEST_DIRS) {
       const abs = join(REPO_ROOT, dir);
-      for (const file of readdirSync(abs).filter((f) => f.endsWith('.yaml'))) {
+      const catalogs = declaredCatalogFiles(abs);
+      for (const file of readdirSync(abs).filter((f) => f.endsWith('.yaml') && !catalogs.has(f))) {
         const m = readManifest(join(abs, file)); // a malformed block throws here
         if (!m.rating) unrated.push(`${dir}/${file}`);
       }

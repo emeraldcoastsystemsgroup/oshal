@@ -9,6 +9,7 @@
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Structural guard for the two-trunk split (ADR-115): application code must never mix into the swarm/kernel repo, and kernel code must never mix into the store repo. ADR-085 carved 21 app surfaces OUT of core; nothing stopped one from walking back in. The public core trunk is a DERIVED, app-free artifact — a re-mixed app is a release-blocking defect discovered at publish time, which is far too late.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Package-build residue (check 5): the package builders stage application TypeScript INSIDE this checkout so the kernel's tsc can compile it, each relying on a `finally` a killed build never reaches. On 2026-09-09 seventeen sports-edge sources sat untracked in src/app/routes/ after an `oshal-app.js build`, passing every tracked-path check. The gate now fails on any untracked, non-ignored file under src/app/routes/ (the `git add -A` set) and on any src/__oshal_build_* or src/__oshal_store_parity_* staging directory, tracked or not.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | Check 4b, the MIRROR IMAGE of every check above it: not application code carried inside the kernel, but kernel code reaching OUT of it. A core spec imported a store package's route module through a relative path into the sibling checkout. It resolved on a developer box with the sibling beside it and could never resolve in the sanctioned gate, which builds from a git-archive export with no sibling anywhere near it, so the whole file collapsed at import and counted red in the nightly for as long as it stood. Every tracked source file's relative specifiers are now resolved against the repo root and anything landing outside it fails. resolveCoreDir() gained a path.resolve for the same check: `git rev-parse` answers with FORWARD slashes on Windows, so a prefix comparison against a natively-resolved path matched nothing and the first draft reported every any-bot file as an escape.
+ * 6 | maintainer@emeraldcoastsystemsgroup.com   | Check 2 skips an authorization catalog that a sibling manifest declares (declaredCatalogFiles from scripts/oshal-authorization-contract.js). swarm-apps/jarvis-authorization.yaml is jarvis.yaml's catalog, read from this path by the native kernel, not an eleventh application, yet it failed this gate as a non-kernel manifest. A file shaped like a manifest is never claimed, and any other stray file still fails.
  */
 
 /**
@@ -48,6 +49,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { declaredCatalogFiles } = require('./oshal-authorization-contract');
 
 /**
  * The kernel-RESIDENT manifests — the ten core-platform applications that must NOT carve
@@ -196,8 +198,11 @@ function checkCore(coreDir) {
 
   // 2. swarm-apps/ is the kernel manifest set, exactly.
   const manifestDir = path.join(coreDir, 'swarm-apps');
+  // A catalog a manifest here declares (jarvis.yaml -> jarvis-authorization.yaml) is part of that
+  // manifest, not an application; a manifest-shaped file is never claimed, so nothing hides here.
+  const catalogs = fs.existsSync(manifestDir) ? declaredCatalogFiles(manifestDir) : new Set();
   const present = fs.existsSync(manifestDir)
-    ? fs.readdirSync(manifestDir).filter((f) => /\.ya?ml$/.test(f)).sort()
+    ? fs.readdirSync(manifestDir).filter((f) => /\.ya?ml$/.test(f) && !catalogs.has(f)).sort()
     : [];
   const unexpected = present.filter((f) => !KERNEL_MANIFESTS.includes(f));
   const missing = KERNEL_MANIFESTS.filter((f) => !present.includes(f));

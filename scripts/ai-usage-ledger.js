@@ -8,6 +8,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Drop the Version column: a version bump by any lane made the ledger stale and failed that lane's push, and the rating does not depend on version. Complete the declared-memory rule for the store: bot containers count per application (not additive), off-box services are not counted, and a package engine container with a declared mem_limit counts it as high and a quarter as low.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Accept T0 with a generation backend, refuse it without one, and say so in the ledger header.
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Match the loader's declaration boundary and refuse unknown measurement fields or invalid values before rendering or writing a ledger; keep unmeasured evidence explicit.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com   | Core mode skips an authorization catalog that a sibling manifest declares (declaredCatalogFiles from scripts/oshal-authorization-contract.js): swarm-apps/jarvis-authorization.yaml is jarvis.yaml's catalog, not an unrated manifest, and failed --check as one.
  */
 /**
  * @description Generate or check the ledger for a core checkout (`swarm-apps/*.yaml`) or a store
@@ -26,6 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const { declaredCatalogFiles } = require('./oshal-authorization-contract');
 
 const NOT_MEASURED = 'not yet measured';
 const NONE_RECORDED = 'none recorded';
@@ -59,7 +61,8 @@ function parseArgs(argv) {
 function listManifests(opts) {
   if (opts.core) {
     const dir = path.join(opts.core, 'swarm-apps');
-    return fs.readdirSync(dir).filter((f) => f.endsWith('.yaml')).sort()
+    const catalogs = declaredCatalogFiles(dir);
+    return fs.readdirSync(dir).filter((f) => f.endsWith('.yaml') && !catalogs.has(f)).sort()
       .map((f) => ({ file: path.join(dir, f), label: `swarm-apps/${f}` }));
   }
   return fs.readdirSync(opts.store, { withFileTypes: true })

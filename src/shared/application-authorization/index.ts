@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Publish the AUTH-07 catalog migration contract types.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Export the shared operation binding resolver for callers outside the authorization feature.
  * 6 | maintainer@emeraldcoastsystemsgroup.com | Support reviewed experience role lifecycle with explicit selections, durable provenance and existing authority checks.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Publish declaredCatalogFiles from the shared contract, so every manifest scan skips an authorization catalog a sibling manifest declares instead of loading it as an application.
  */
 /** Shared types and the exact validator used by the standalone package CLI. */
 import { createRequire } from 'node:module';
@@ -18,10 +19,13 @@ const contract = createRequire(__filename)(resolve(__dirname, '../../../scripts/
   validateAuthorizationCatalog(value: unknown): AuthorizationCatalog;
   parseAuthorizationCatalog(source: string): AuthorizationCatalog;
   loadApplicationAuthorization(packageDir: string, manifest: { authorization?: unknown; uses?: unknown }): AuthorizationCatalog | null;
+  declaredCatalogFiles(dir: string): Set<string>;
 };
 export const validateAuthorizationCatalog = contract.validateAuthorizationCatalog;
 export const parseAuthorizationCatalog = contract.parseAuthorizationCatalog;
 export const loadApplicationAuthorization = contract.loadApplicationAuthorization;
+/** @description File names in a flat manifest directory that a sibling manifest declares as its authorization catalog: part of that manifest, not applications of their own. */
+export const declaredCatalogFiles = contract.declaredCatalogFiles;
 export * from './types';
 export * from './management-roles';
 export * from './platform-audit';
