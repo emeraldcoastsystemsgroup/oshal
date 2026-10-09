@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Acceptance fixes: calendarDay and the agenda's class events read UTC-midnight DATE values as their own day under America/Chicago; littleMonstersRefusal and the probe's carried code; an agenda for a caller whose plan does not admit Little Monsters, or whose probe is refused by authorization, says "not available to you" and sends no education request; the no-profile copy says to open Little Monsters once to set up the school profile.
  * 5 | maintainer@emeraldcoastsystemsgroup.com | Actual renderer source-state cases: loading,503/refusal/partial/unreadable/empty and keyboard retry without invented totals or discarded successful rows.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Prove the shipped Jarvis agenda and provenance retain admitted personal fields with an omitted roster, refuse malformed global fields, and clean up the owned browser.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Prove successful native-shaped declarations and deliberate roster omission do not request work retries or invent liveness, while genuine mixed refusals remain recoverable.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -482,7 +483,7 @@ describe('caller-bound overview in the shipped Jarvis renderer', () => {
     expect(await page.locator('.agenda-sources').innerText()).toContain('Swarm calendar feed from the overview.');
     expect(await page.locator('.live-agenda img').count()).toBe(0);
     expect(await page.evaluate(() => (window as any).overviewPhantom)).toBeUndefined();
-    expect(await page.locator('body').innerText()).toContain('Assistant status unavailable'); await noInventedRoster();
+    expect(await page.locator('body').innerText()).toContain('Assistant status is not provided to this session.'); await noInventedRoster();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await openProvenance();
     const panel = await page.locator('#full-dialog').innerText();
@@ -604,6 +605,34 @@ describe('visible work source states', () => {
     expect(text).toContain('Assistant status unavailable');
     expect(text).not.toContain('Synthetic ledger review');
     await noInventedWork();
+  });
+  it.each(['declarations', 'omitted'])('Jarvis explains %s without retrying successful work', async mode => {
+    const body: Record<string, unknown> = { activity: { openCount: 0, tickets: [] },
+      comms: { digest: null, signals: [] }, calendar: { events: [] },
+      sources: { bots: mode, calendar: 'unavailable', communications: 'unavailable' } };
+    if (mode === 'declarations') body.bots = [{ agentId: 'synthetic-declared', name: 'Synthetic Declared', status: 'declared', online: null }];
+    await page.route('**/api/jarvis/overview', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }));
+    await open('/jarvis', '.full-jarvis'); await page.waitForLoadState('networkidle');
+    const text = await page.locator('body').innerText();
+    expect(text).toContain(mode === 'declarations' ? 'Assistant status has not been measured.' : 'Assistant status is not provided to this session.');
+    expect(text).not.toMatch(/Assistant status unavailable|Only loaded work is shown|assistants online/);
+    expect(await page.getByRole('button', { name: 'Retry work sources', exact: true }).count()).toBe(0);
+    expect(await page.locator('.work-source-status').count()).toBe(0);
+    expect(await page.evaluate(() => (window as any).OSHAL_LIVE.sourceState((window as any).OSHAL_LIVE.snapshot, ['overview']).complete)).toBe(false);
+    expect(fixture.state.calls.filter(call => call.startsWith('POST ') || call.startsWith('PUT '))).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+  it('Jarvis keeps a retry when tickets fail beside valid declarations', async () => {
+    await controlWorkReads({ tasks: 200, tickets: 503 });
+    await page.route('**/api/jarvis/overview', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      bots: [{ agentId: 'synthetic-declared', name: 'Synthetic Declared', status: 'declared', online: null }],
+      activity: { openCount: 0, tickets: [] }, sources: { bots: 'declarations' } }) }));
+    await open('/jarvis', '.full-jarvis'); await page.waitForLoadState('networkidle');
+    expect(await page.locator('.work-source-status').innerText()).toContain('Only loaded work is shown.');
+    expect(await page.getByRole('button', { name: 'Retry work sources', exact: true }).count()).toBe(1);
+    expect(await page.locator('body').innerText()).toContain('Assistant status has not been measured.');
+    expect(await page.locator('body').innerText()).not.toMatch(/Assistant status unavailable|assistants online/);
+    expect(errors).toEqual([]);
   });
   it.each(sourceStateViews)('%s displays successful empty separately from unavailable', async path => {
     fixture.state.tickets = []; fixture.state.tasks = []; fixture.state.bots = [];

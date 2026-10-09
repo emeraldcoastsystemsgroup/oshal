@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Prove admitted personal overview fields survive intentional roster omission while malformed and failed reads retain unknown readiness and valid companion work.
  * 8 | maintainer@emeraldcoastsystemsgroup.com | Preserve the auth-state issuer independently of display claims, including explicit unknown provenance and guest namespaces.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Keep declaration-only liveness unknown and honor explicitly unavailable personal sources.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Preserve truthful declaration-only and omitted-roster explanations without converting unknown online status into a measured count.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -215,7 +216,8 @@ describe('experience adapter: client over an injected fetch', () => {
     const snap = await LIVE.createClient({ fetch, storage: memoryStorage() }).load();
     expect(snap.bots).toEqual(bots); expect(snap.openTickets).toBe(1);
     expect(snap.comms).toEqual(body.comms); expect(snap.calendarEvents).toEqual(body.calendar.events);
-    expect(LIVE.sourceState(snap, ['overview']).complete).toBe(false);
+    expect(LIVE.sourceState(snap, ['overview'])).toMatchObject({ complete: false, message: 'Assistant status has not been measured.' });
+    expect(snap.botsOnline).toBe(0); expect(snap.bots.every((bot: { online: unknown }) => bot.online === null)).toBe(true);
     const declared = LIVE.declaredAssistants({ manifest: { bots: [{ name: 'Declared assistant', agentId: 'declared-bot' }] } }, bots);
     expect(declared[0].state).toBe('declared');
   });
