@@ -23,6 +23,7 @@
  * 18 | maintainer@emeraldcoastsystemsgroup.com | Distinguish loading, partial and unavailable work from successful empty reads; preserve admitted rows and unknown counts with accessible retry.
  * 19 | maintainer@emeraldcoastsystemsgroup.com   | Describe caller-bound communications and calendar separately from intentionally omitted global assistant status using the same overview receipt.
  * 20 | maintainer@emeraldcoastsystemsgroup.com | Carry read-only selected-app context, revalidate foreground member navigation and every reopened tool frame before loading, and retain backward draft selection during retry.
+ * 21 | maintainer@emeraldcoastsystemsgroup.com | Explain successfully declared or intentionally omitted assistant status without a futile work retry, while preserving unknown online counts and genuine read failures.
  */
 (() => {
   'use strict';
@@ -167,12 +168,19 @@
       return read.complete ? `${count} ${label}` : read.kind === 'partial' && count ? `${count} ${label} loaded` : read.kind === 'loading' ? 'Work loading' : 'Work unavailable';
     }
     /** @description Never infer online assistants from failed overview reads. @param {string} label Successful count text. @returns {string} Exact count or unknown state. */
-    const overviewCount = label => workState(['overview']).complete ? label : workState(['overview']).kind === 'loading' ? 'Assistant status loading' : 'Assistant status unavailable';
+    function overviewCount(label) {
+      const read = workState(['overview']);
+      if (read.complete) return label;
+      if (read.kind === 'loading') return 'Assistant status loading';
+      return snapshot.overviewDeclared || snapshot.overviewRosterOmitted ? read.message : 'Assistant status unavailable';
+    }
     /** @description Show genuine empty only after successful reads. @param {string} empty Successful empty wording. @param {string[]} [keys] Required sources. @returns {string} Escaped status markup. */
     const workEmpty = (empty, keys) => `<p class="note-line">${esc(workState(keys).complete ? empty : workState(keys).message)}</p>`;
     /** @description Display incomplete sources and accessible recovery. @param {string[]} [keys] Required sources. @returns {string} Notice or nothing on success. */
     function workNotice(keys = ['tickets', 'tasks', 'overview']) {
-      const read = workState(keys); if (read.complete) return '';
+      const statusExplained = snapshot.sources.overview === 200 && (snapshot.overviewDeclared || snapshot.overviewRosterOmitted);
+      const required = statusExplained ? keys.filter(key => key !== 'overview') : keys;
+      const read = workState(required); if (read.complete) return '';
       const blocked = !canRetry();
       return `<div class="note-line work-source-status" data-work-source-state="${read.kind}" role="status"><p>${esc(read.message)}</p>${read.kind === 'loading' ? '' : button('Retry work sources', 'retry-work', 'action button', blocked ? 'disabled' : '')}${blocked ? '<p>Close the application view before retrying work sources.</p>' : ''}</div>`;
     }
