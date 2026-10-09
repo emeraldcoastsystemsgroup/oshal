@@ -1115,3 +1115,16 @@ run is in progress", exit 2. Both now go through `scripts/ci/ci-host-path.sh`.
 | Boundary audited | Mock/stub disposition | Required real companion | Status |
 |---|---|---|---|
 | `tests/unit/ci-local-host-path.spec.ts` (the runner deriving an unusable state directory, misreporting it as a held lock, or mounting an empty source into the secret scanner) | Scoped doubles: a `docker` stand-in first on PATH that records argv (the mount case and the runner cases, which end before any engine call) and a `cygpath` stand-in for the unchanged Git Bash branch. REAL: bash, the filesystem, `scripts/ci/ci-host-path.sh`, `scripts/ci-local.sh` itself run up to its lock, the shipped `gitleaks_container_scan` text and `scripts/ci/ci-quiesce.sh --resume`; the Linux cases first prove no `cygpath` is reachable. | The mount against the real engine: `tests/unit/ci-local-secret-scan-planted-fixture.spec.ts` runs `zricethezav/gitleaks:latest` through the production gate and now sources the helper. | Real companion present: on this Linux host (2026-10-08, gitleaks v8.30.1) it passes 6 of 6 with the fix; with the previous `ci-local.sh` it fails 5 of 6 at `docker: invalid spec: :/scan:ro: empty section between colons`. |
+
+## Trading watchdog reads the live books as its own verified principal (2026-10-08)
+
+Block G of `scripts/trading-watchdog.ps1` read every live book with the container's service secret
+plus a sub header. The application-authorization guard needs a subject and a verified issuer, so it
+refused every read with 401 `authorization_identity_required`, and the watchdog told the operator to
+re-login to Schwab. It now sends a session-minted personal access token named by
+`OSHAL_WATCHDOG_TOKEN_FILE`, reports `authorization_*` refusals as its own access problem, and ends
+with `return` instead of `exit`.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/trading-watchdog-identity.spec.ts` (the watchdog's book reads refused for want of a verified identity, the token leaking into argv or a log, a refusal of the watchdog reported as a broker re-login, `exit` journal noise) | Scoped doubles: the `oshal_cli_tokens` table is a substring-routed fake pool (as in `cli-token-auth.spec.ts`), the policy store is `MemoryAuthorizationStore`, a fixture cookie stands in for the OIDC login, the trading package is a fixture module mounted with intelligent-trades' `/api/trading` declaration, and `docker` is a recording node script in the PowerShell cases. REAL: an HTTP listener with the real `/api/cli-tokens` mint route, Bearer middleware, application-authorization actor resolver and runtime in enforce mode and `ManifestRouteMounterImpl`; the shipped container-side fetcher under node; the shipped PowerShell sections, the PowerShell parser and the market-hours gate under pwsh. | A market-hours run of the installed watchdog on the Spark with `OSHAL_WATCHDOG_TOKEN_FILE` set to a token minted by the live-book owner: block G reads all three live books with no UNREADABLE line. | Owed (live): needs the operator's token. Local: 8 of 8 pass; against the previous script 5 of 8 fail and the 3 unchanged-behaviour cases pass. |

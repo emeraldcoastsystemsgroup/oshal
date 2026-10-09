@@ -116,6 +116,37 @@
   operator-local .env, then the defaults in trading-watchdog-checks.js defaultSettings(). $AlertPct
   resolves BEFORE $LiveAlertPct, because it is the live threshold's fallback.
 
+  DEDICATED WATCHDOG TOKEN (block G's identity). The per-book reads go through the trading
+  application's caller-scoped routes, behind the application-authorization guard. That guard admits
+  only a VERIFIED principal - a subject plus the issuer that verified it. The container's service
+  secret with the sub header carries no issuer, so the guard answers 401
+  authorization_identity_required (src/app/middleware/application-authorization-identity.ts) - on
+  purpose: every bot holds that fleet-wide secret, and it must not let one act as the operator. Give
+  the watchdog its own principal instead, a personal access token minted from a signed-in session
+  (src/app/routes/cli-token-routes.ts records the session's verified issuer at mint time and restores
+  it on every Bearer request):
+    1. Sign in to the cockpit of the api this watchdog reads (the one on 127.0.0.1:35457) as the
+       LIVE-BOOK OWNER - the first OSHAL_OPERATOR_SUBS entry, the sub whose books block G audits.
+    2. In that browser's console, on the cockpit origin, mint the token:
+         await (await fetch('/api/cli-tokens', { method: 'POST', credentials: 'same-origin',
+           headers: { 'content-type': 'application/json' },
+           body: JSON.stringify({ label: 'trading-watchdog' }) })).json()
+       The response's `token` (oshal_pat_...) is shown ONCE. Only a SESSION mint works: a bootstrap
+       mint through the service secret (`swarm-cli login --secret`) records no issuer and is refused
+       exactly like the secret itself.
+    3. Put the token alone in a file only the watchdog's account can read (for example
+       `install -m 600 /dev/null ~/.config/oshal/trading-watchdog.token`, then paste it in) and set
+       OSHAL_WATCHDOG_TOKEN_FILE to that path in the scheduled job's environment (for a systemd unit:
+       Environment=OSHAL_WATCHDOG_TOKEN_FILE=...).
+    4. To rotate, mint a new one the same way, replace the file, then revoke the old one:
+       DELETE /api/cli-tokens/<id> from the same session (GET /api/cli-tokens lists the ids).
+  The token value is never logged, written to a file or put on a command line: block G hands it to
+  the container-side fetcher as OSHAL_WD_BEARER through `docker exec -e OSHAL_WD_BEARER` with no
+  =value, which forwards it from this process's environment. Without OSHAL_WATCHDOG_TOKEN_FILE the
+  reads use the service-secret headers exactly as before; a path that is set but unusable raises
+  'watchdog-token-unreadable'. A refusal by that guard is reported as the watchdog's own access
+  problem ('watchdog-access-<code>-<date>'), never as a broker that needs a Schwab re-login.
+
   CHANGE LOG (started 2026-09-06; earlier revisions remain described above and in Git)
   -----------------------------------------------------------------------------
   SEQ | AUTHOR                                     | DESCRIPTION
@@ -124,6 +155,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com   | Round-2 review fixes, all three on the real-money half. (a) $AlertPct now resolves BEFORE $LiveAlertPct: the other order meant TRADING_WD_ALERT_PCT=3 tightened the paper book and left the Schwab books on the param default of 5 - looser where it matters most. (b) Invoke-WdExec runs docker as a real child process with a DEADLINE (TRADING_WD_EXEC_TIMEOUT_SEC, default 60): block G reads three endpoints per book, so an api that answers /api/health while /api/trading is wedged could park the run on undici's 300s-per-request default, past the next scheduled runs, with api-down/engine-blind already raised and never emailed; the container-side fetcher additionally bounds ONE read (TRADING_WD_HTTP_TIMEOUT_SEC, default 20) so a single wedged book does not cost the others. (c) The TRADING_CORE_SYMBOLS and TRADING_MULTI_ACCOUNT reads go through Invoke-WdExec too (node -p with a 'wd:' sentinel, since printenv exits 1 on an unset variable) - an empty catch used to hand the checks an empty exemption set, which would have paged 'HOLDING PAST ITS STOP' on a deliberate :0 hold once per window per book; a failed core read now withholds every core-exempting check for the run and says so. Also: every docker cp into the container is fail-closed (a stale /tmp file otherwise yields a well-formed wrong result), block G's fallback alert has its own key so the beat check's does not swallow it, and an unparseable setting is reported as a warning instead of silently defaulting.
   3 | maintainer@emeraldcoastsystemsgroup.com   | Round-3 review fixes. (a) CORRECTS SEQ 2's claim that TRADING_WD_HTTP_TIMEOUT_SEC alone kept one wedged book from costing the others: it does not, because two unrelated numbers cannot agree by luck. Measured against a real hanging server at the shipped defaults, THREE wedged books spent 126s inside a 60s exec deadline (20s per read x 2 attempts x 3 books), so the child was killed and every book's result - wedged and healthy alike - was thrown away. The audit is now handed a BUDGET derived from the exec deadline (Get-WdAuditBudgetSec = deadline - 10s slack), slices it equally per book, caps each read at min(HTTP_TIMEOUT_SEC, what is left of that book's share), and never retries a read that TIMED OUT (a wedge does not clear in 2s; retrying doubled the cost of exactly the failure the deadline exists to bound). The fetcher therefore always prints inside the deadline, and the deadline is a backstop again. (b) docker cp is deadline-bound too, through Invoke-WdProcess - it could not use Invoke-WdExec because a successful cp prints nothing - and Copy-WdChecksModule is now that one helper with its own alert key instead of a second copy of the same logic. ConvertTo-WdArgLine accordingly refuses only a double quote or a TRAILING backslash (a Windows path full of backslashes is exactly what cp needs). (c) The audit's suppression-state read no longer swallows its failure - an unreadable state file becomes a warning in the log, since it silently turns every open condition into a fresh page. The block-G gate is now marker-wrapped so the spec can EXECUTE the withholding wiring instead of pinning its source text.
   4 | maintainer@emeraldcoastsystemsgroup.com   | Plumbs TRADING_WD_BLEED_BOOKS from the operator-local .env into the audit request, so the BLEED check can be scoped to the books the autopilot manages while the hand-traded rollover keeps its deep-loss coverage. It is a STRING setting, so it cannot ride Get-WdSetting (which parses doubles under InvariantCulture) and is read straight off the parsed $script:WdEnv map; an absent key resolves to the empty string, which the module reads as "every book". Proven at the real boundary in the spec (real powershell.exe, a real .env file, the shipped Read-WdEnvSettings and this exact expression) because the watchdog hard-exits outside 08:00-19:59 ET and cannot be exercised live off-session.
+  5 | maintainer@emeraldcoastsystemsgroup.com   | Block G gets a dedicated verified principal. On the Spark the watchdog's log opens with its first run (2026-10-07 07:00) already reporting book 'live' UNREADABLE, and all 852 UNREADABLE lines through 2026-10-08 18:55 (all three live books) are 401 authorization_identity_required: the service-secret read carries a sub but no issuer, and the application-authorization guard refuses that by design. OSHAL_WATCHDOG_TOKEN_FILE names a file holding a session-minted personal access token (minting is in the header above); the audit exec forwards it as OSHAL_WD_BEARER (docker exec -e with no value, so it is in no argv, file or log) and the fetcher then sends only Authorization: Bearer. Unset keeps the previous headers; set but unusable raises 'watchdog-token-unreadable'. An authorization_* refusal is now its own alert naming the watchdog's access, instead of telling the operator to re-login to Schwab. The two `exit 0` statements became `return`: PowerShell 7 logs "[Command_Health:ExecutePipeline.Exception.Warning] Error Message = System error." to the journal whenever a [CmdletBinding()] script calls exit - once per run on the Spark - while `return` ends the script with the same exit code 0 (measured with this host's pwsh 7.6.6, including after a failed native command).
 
   Register (every 10 minutes, windowless -- launch through trading-watchdog-hidden.vbs; a bare
   powershell action pops a visible console every run, which steals focus from desktop automation):
@@ -179,8 +211,10 @@ function Log($m) { ("[{0}] {1}" -f (Get-Date -Format s), $m) | Add-Content $logF
 
 # Market-hours gate: 08:00-20:00 ET, Mon-Fri (covers pre + regular + after hours).
 # ('Eastern Standard Time' on Windows carries DST rules, so this resolves to EDT in summer.)
+# `return`, not `exit`: both end the run with exit code 0, but PowerShell 7 logs an `exit` from a
+# [CmdletBinding()] script to the journal as "System error." on every run (change log 5).
 $et = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), 'Eastern Standard Time')
-if ($et.DayOfWeek -in @('Saturday','Sunday') -or $et.Hour -lt 8 -or $et.Hour -ge 20) { exit 0 }
+if ($et.DayOfWeek -in @('Saturday','Sunday') -or $et.Hour -lt 8 -or $et.Hour -ge 20) { return }
 
 # NYSE full closures + half-days (13:00 ET close), published years ahead. The watchdog needs its OWN
 # holiday source: its $rth is a LOCAL clock calc with no calendar, so without this it would treat a
@@ -628,10 +662,12 @@ if (-not $apiUp) { Raise 'api-down' 'OSHAL api is NOT responding on 127.0.0.1:35
 # message comes from /tmp/oshal-wd-checks.js (scripts/lib/trading-watchdog-checks.js, copied in by
 # Copy-WdChecksModule), which is the file tests/unit/trading-watchdog-checks.spec.ts mutation-proves.
 # Reads go through the api's own caller-scoped endpoints with ?book=<ref> (query-first: the store's
-# routeBook reads req.query.book first), authenticated with the container's service secret plus the
-# canonical base64url sub header (the plain header is sent too, for a kernel that still prefers it) -
-# no broker credential ever touches the host. FAIL-CLOSED: a non-2xx or a payload whose array field
-# is missing becomes a per-book error, never an empty (healthy-looking) book.
+# routeBook reads req.query.book first), authenticated as the dedicated watchdog principal when the
+# host forwarded its token (OSHAL_WD_BEARER, see "Dedicated watchdog token" above), otherwise with the
+# container's service secret plus the canonical base64url sub header (the plain header is sent too,
+# for a kernel that still prefers it) - no broker credential ever touches the host. FAIL-CLOSED: a
+# non-2xx or a payload whose array field is missing becomes a per-book error, never an empty
+# (healthy-looking) book.
 $auditJs = @'
 const fs = require("fs");
 const C = require("/tmp/oshal-wd-checks.js");
@@ -644,13 +680,21 @@ const warnings = [];
 try { prior = JSON.parse(fs.readFileSync("/tmp/wd-audit-state.json", "utf8")); }
 catch (e) { prior = {}; warnings.push("prior suppression state unreadable (" + String((e && e.message) || e) + ") - conditions already raised this window may page again"); }
 const sub = String(req.sub || "");
-// The canonical encoded header is preferred by the kernel (authz.ts getTrustedServiceUserSub) and
-// the legacy plain one is still accepted; send both, and NEITHER when the sub is unknown - an empty
-// encoded header fails the decode closed rather than authenticating as nobody.
-const H = sub ? {"X-Service-Secret": process.env.SWARM_SERVICE_SECRET,
-                 "X-Oshal-User-Sub-B64": Buffer.from(sub, "utf8").toString("base64url"),
-                 "X-OSHAL-User-Sub": sub}
-              : {"X-Service-Secret": process.env.SWARM_SERVICE_SECRET};
+// The dedicated watchdog principal: a personal access token minted from a signed-in session, so the
+// api restores its owner AND the issuer verified at mint time, which the application-authorization
+// guard requires (the service secret proves a service, not a user, and is refused there with 401
+// authorization_identity_required). It arrives in this process's environment only, and is sent
+// ALONE, so the reads carry exactly one identity: the token's owner. Without it, the service-secret
+// headers as before: the canonical encoded sub
+// header is preferred by the kernel (authz.ts getTrustedServiceUserSub) and the legacy plain one is
+// still accepted; send both, and NEITHER when the sub is unknown - an empty encoded header fails the
+// decode closed rather than authenticating as nobody.
+const bearer = String(process.env.OSHAL_WD_BEARER || "");
+const H = bearer ? {"Authorization": "Bearer " + bearer}
+  : sub ? {"X-Service-Secret": process.env.SWARM_SERVICE_SECRET,
+           "X-Oshal-User-Sub-B64": Buffer.from(sub, "utf8").toString("base64url"),
+           "X-OSHAL-User-Sub": sub}
+        : {"X-Service-Secret": process.env.SWARM_SERVICE_SECRET};
 const base = "http://127.0.0.1:5000/api/trading";
 // TWO deadlines, and the SECOND one is what makes the promise true. httpMs
 // (TRADING_WD_HTTP_TIMEOUT_SEC, default 20) caps ONE read. bookDeadline caps everything this run
@@ -733,6 +777,34 @@ function Copy-WdChecksModule($path) {
   return (Copy-WdIntoApi 'checks-module' $path '/tmp/oshal-wd-checks.js' 'wd-checks-unavailable')
 }
 
+# ---- wd: watchdog token ----
+# The dedicated principal block G reads the books as ("Dedicated watchdog token" in the header).
+# OSHAL_WATCHDOG_TOKEN_FILE names a file holding ONE session-minted personal access token. Its value
+# is never logged, written to a file or put on a command line: the audit exec gets `-e
+# OSHAL_WD_BEARER` with no =value, so docker forwards it from this process's environment, which holds
+# it only for that one exec (the pattern scripts/lib/deploy-verify.sh uses for its operator token).
+# Returns @{ State = 'unset' | 'ok' | 'unreadable'; Token; Why } - Why never contains the file's text.
+function Read-WdWatchdogToken($path) {
+  if (-not $path) { return @{ State = 'unset' } }
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @{ State = 'unreadable'; Why = 'the file does not exist' } }
+  try { $text = ([System.IO.File]::ReadAllText($path)).Trim() } catch { return @{ State = 'unreadable'; Why = 'the file could not be read' } }
+  if ($text -cnotmatch '^oshal_pat_[A-Za-z0-9_-]{16,}$') { return @{ State = 'unreadable'; Why = 'the file does not hold exactly one oshal_pat_ token' } }
+  return @{ State = 'ok'; Token = $text }
+}
+# The audit's docker exec argv and the bearer it forwards. A token file that is set but unusable is a
+# FAILED setup, never a silent fallback: it is raised, and the run still tries the service-secret
+# read it used before, whose refusal is raised on its own.
+function Get-WdAuditExec {
+  $token = Read-WdWatchdogToken $env:OSHAL_WATCHDOG_TOKEN_FILE
+  if ($token.State -eq 'unreadable') {
+    Raise 'watchdog-token-unreadable' ("OSHAL_WATCHDOG_TOKEN_FILE is set (" + $env:OSHAL_WATCHDOG_TOKEN_FILE + ") but " + $token.Why + " - block G falls back to the service-secret read, which the api refuses without a verified identity, so the live books stay unwatched. Fix the file ('Dedicated watchdog token' in the header of scripts/trading-watchdog.ps1).")
+  }
+  $argv = @('exec')
+  if ($token.State -eq 'ok') { $argv += @('-e', 'OSHAL_WD_BEARER') }
+  return @{ Argv = @($argv + @($ApiContainer, 'node', '/tmp/wd-audit.js')); Token = $token.Token }
+}
+# ---- wd: end watchdog token ----
+
 # Block G: one exec, every live book. Writes the request + prior suppression state as files (a
 # here-string through -e would be at the mercy of PS 5.1 native-argument quoting), runs the fetcher,
 # and returns the parsed result - or $null, which Invoke-WdExec has already alerted about.
@@ -767,7 +839,10 @@ function Invoke-WdBookAudit($books, $rthFlag, $coreSymbols, $priorState) {
   if (-not (Copy-WdIntoApi 'book-audit' $reqFile '/tmp/wd-audit-request.json')) { return $null }
   if (-not (Copy-WdIntoApi 'book-audit' $stFile '/tmp/wd-audit-state.json')) { return $null }
   if (-not (Copy-WdIntoApi 'book-audit' $jsFile '/tmp/wd-audit.js')) { return $null }
-  $out = Invoke-WdExec 'book-audit' @('exec', $ApiContainer, 'node', '/tmp/wd-audit.js')
+  $exec = Get-WdAuditExec
+  if ($exec.Token) { $env:OSHAL_WD_BEARER = $exec.Token }
+  try { $out = Invoke-WdExec 'book-audit' $exec.Argv }
+  finally { Remove-Item Env:\OSHAL_WD_BEARER -ErrorAction SilentlyContinue }
   if ($null -eq $out) { return $null }
   try { return ($out | ConvertFrom-Json) } catch {
     Raise 'audit-parse' ("The watchdog could not parse its per-book audit output - treated as a REAL problem, not an all-clear: " + $out.Substring(0, [Math]::Min(300, $out.Length)))
@@ -777,13 +852,21 @@ function Invoke-WdBookAudit($books, $rthFlag, $coreSymbols, $priorState) {
 
 # Delivery for block G. The module already decided suppression per key, so alerts go through
 # Add-WdAlert (not Raise, whose 60-minute key would suppress a WORSENING condition a second time).
-# A per-book READ failure is a real problem: a Schwab re-login gets the existing once-daily key,
-# anything else gets its own per-book key - never an empty healthy book.
+# A per-book READ failure is a real problem: a refusal of the WATCHDOG'S OWN read by the api's
+# application-authorization guard gets its own key and says so, a Schwab re-login gets the existing
+# once-daily key, anything else gets its own per-book key - never an empty healthy book.
 function Send-WdAuditAlerts($r, $statePath) {
   if ($null -eq $r) { return }
   if ($r.error) { Raise 'audit-error' ("The watchdog per-book audit FAILED before it could read any book - treated as a REAL problem (fail-closed): " + [string]$r.error); return }
   foreach ($e in @($r.errors)) {
-    if ([string]$e.error -match 'not configured|broker_not_configured|unauthor|401|403|token|reconnect|expired|disconnect|auth') {
+    # Every refusal that guard sends is an authorization_* code (401 authorization_identity_required
+    # is the service-secret read, which has no verified identity). No broker re-login can fix that,
+    # so it must never be reported as one (on the Spark it was, until change log 5).
+    if ([string]$e.error -cmatch 'authorization_[a-z_]+') {
+      $code = $Matches[0]
+      $fix = if ($code -eq 'authorization_identity_required') { "give the watchdog its own verified identity: mint a dedicated token and set OSHAL_WATCHDOG_TOKEN_FILE ('Dedicated watchdog token' in the header of scripts/trading-watchdog.ps1)" } else { "check the watchdog token's owner and that owner's access to the trading application" }
+      Raise ('watchdog-access-' + $code + '-' + (Get-Date -Format 'yyyy-MM-dd')) ("Book '" + [string]$e.ref + "' is UNREADABLE because the oshal api refused the WATCHDOG'S OWN read (" + [string]$e.error + "). This is not a broker problem and a Schwab re-login will not fix it. Until it is fixed the watchdog cannot see that book's positions or its protective orders - " + $fix + ".")
+    } elseif ([string]$e.error -match 'not configured|broker_not_configured|unauthor|401|403|token|reconnect|expired|disconnect|auth') {
       Raise ('live-relogin-' + (Get-Date -Format 'yyyy-MM-dd')) ("Book '" + [string]$e.ref + "' is UNREADABLE - the broker looks disconnected/expired (" + [string]$e.error + "). The watchdog cannot see that book's positions OR its protective orders until you re-login (the ~weekly Schwab refresh). Reconnect from the trading surface.")
     } else {
       Raise ('audit-error-' + [string]$e.ref) ("The watchdog audit of book '" + [string]$e.ref + "' FAILED - treated as a REAL problem (fail-closed), NOT an empty healthy book: " + [string]$e.error)
@@ -1070,4 +1153,4 @@ if ($alerts.Count -gt 0) {
   } catch {}
 }
 ($state | ConvertTo-Json) | Set-Content $stateFile -Encoding ascii
-exit 0
+return
