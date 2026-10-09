@@ -43,6 +43,7 @@
 # 36 | maintainer@emeraldcoastsystemsgroup.com   | Integrate init_run_log and finish_run_log from scripts/ci/ci-run-log.sh to retain per-run logs in ci-runs/<ts>-XXXXXX/full.log.
 # 37 | maintainer@emeraldcoastsystemsgroup.com   | The nightly stops measuring the host as if it were the code (BACKLOG "The nightly gate runs against a saturated box"; operator decision 2026-09-21). (1) run_gate gains a third outcome, RESOURCE-EXHAUSTED, decided by measurement in scripts/ci/ci-resource.sh: a gate is not started while host free memory stays below OSHAL_CI_MIN_FREE_MB, and a gate that fails while the host was measured below it is resource-exhausted rather than FAIL. Those gates go to EXHAUSTED_GATES, never FAILED_GATES: the outcome line names them separately, skip markers inherit the cause of the gate they depend on, the image is never published from such a run, the alert subject says RESOURCE-EXHAUSTED, and a run whose only problem is exhaustion exits 3 (not 0, not 1). (2) Scheduled runs (and --quiesce) stop the workers the operator named in OSHAL_CI_QUIESCE_WORKERS through scripts/ci/ci-quiesce.sh - only running `oshal.tier=worker` containers that are not routing-critical, with their SwarmContainerDown alert silenced - and restore exactly those: at the end of the run, in on_exit on failure or interruption, and, for a run killed outright, from the state file at the start of the next run that takes the lock. The stale-lock window becomes CI_LOCK_STALE_SECONDS so the silence is sized by the same bound.
 # 38 | maintainer@emeraldcoastsystemsgroup.com   | gate_trivy posture kept current after the 2026-10-02 red (29 findings, all fixed, no new budget line). The comment now records the trap that red exposed: gate_image builds with the Docker build cache, so the `apk upgrade` / `apk add` layers stay CACHED and a published Alpine fix never lands by itself; an OS fix is taken with a version floor in Dockerfile.oshal's `apk add`. Comment only, no behaviour change.
+# 39 | maintainer@emeraldcoastsystemsgroup.com   | The runner works on Linux, where it now runs (the Spark's 23:30 host job). STATE_DIR and the gitleaks mount called `cygpath` unguarded; Linux has none, so STATE_DIR became `/oshal`, its mkdir was refused, the lock mkdir under it failed silently, and both nights the job has run (logs/ci-local/2026-10-06.log, 2026-10-07.log) ended "another ci-local run is in progress", exit 2. Both now go through scripts/ci/ci-host-path.sh (cygpath only where it exists; LOCALAPPDATA, then XDG_STATE_HOME, otherwise). A state directory that cannot be created or written, and a lock path that cannot be created for any reason but an existing lock, now say exactly that and exit 4; exit 2 means only a lock held by another run.
 # =============================================================================
 #
 # Usage:  bash scripts/ci-local.sh [--scheduled] [--head] [--skip-e2e] [--skip-image] [--install]
@@ -85,8 +86,10 @@
 #     broker/trading credential so the mock-auth test server can never touch a
 #     live account even though src/app/server.ts loads the repo .env.
 #   - Exit: 0 = all gates green, 1 = gate failure, 2 = another run holds the lock,
-#     3 = no gate failed but at least one was RESOURCE-EXHAUSTED (not judged; see run_gate).
-#   - Logs: %LOCALAPPDATA%\oshal\ci-local.log (summary) + ci-local-last-run.log (full).
+#     3 = no gate failed but at least one was RESOURCE-EXHAUSTED (not judged; see run_gate),
+#     4 = the state directory or the lock cannot be created (host setup; nothing ran).
+#   - Logs: %LOCALAPPDATA%\oshal\ci-local.log (summary) + ci-local-last-run.log (full). On Linux
+#     the directory is $LOCALAPPDATA/oshal, else $XDG_STATE_HOME/oshal, else ~/.local/state/oshal.
 #   - Settings by name, from the environment or the checkout's .env (scripts/ci/ci-config.sh):
 #     OSHAL_CI_MIN_FREE_MB, OSHAL_CI_RESOURCE_WAIT_SECONDS, OSHAL_CI_RESOURCE_SAMPLE_SECONDS,
 #     OSHAL_CI_QUIESCE_WORKERS, OSHAL_CI_QUIESCE_ALERTMANAGER_URL,
@@ -105,10 +108,13 @@ if [ "$#" = "1" ] && [ "$1" = "--store-compatibility-only" ]; then
     --core "$REPO_WIN" --store "${OSHAL_STORE_REPO:-$REPO_WIN/../oshal-applications}" \
     --store-ref "${OSHAL_STORE_REF:-HEAD}" --dependencies "$REPO_WIN"
 fi
-STATE_DIR="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/oshal"
+# host_path, ci_state_dir, ci_state_dir_ready: cygpath where Git Bash has it, the plain path elsewhere.
+. "$REPO_DIR/scripts/ci/ci-host-path.sh"
+STATE_DIR="$(ci_state_dir)"
 LOG="$STATE_DIR/ci-local.log"
 RUN_LOG="$STATE_DIR/ci-local-last-run.log"
-mkdir -p "$STATE_DIR"
+# Before anything writes there: an unusable directory is a setup fault, never "a run in progress".
+ci_state_dir_ready "$STATE_DIR" || exit 4
 
 SCHEDULED=0; SKIP_E2E=0; SKIP_IMAGE=0; DO_INSTALL=0; HEAD_MODE=0; PUBLISH_IMAGE=0
 CLUSTER_GATES=0; K8S_ONLY=0; QUIESCE=0
@@ -166,15 +172,24 @@ LOCK="$STATE_DIR/ci-local.lock"
 # The longest a legitimate run can last. It also sizes the quiesce's alert silence, so a run killed
 # outright cannot leave its workers' alerts silenced past the point the next run would steal the lock.
 CI_LOCK_STALE_SECONDS=14400
+# Returns 0 with the lock held, 1 when another run holds it, 2 when it cannot be created at all
+# (CI_LOCK_ERROR says why) - only an existing lock directory is a run in progress.
 acquire_lock() {
-  if mkdir "$LOCK" 2>/dev/null; then date +%s >"$LOCK/ts"; return 0; fi
-  local ts; ts=$(cat "$LOCK/ts" 2>/dev/null || echo 0)
+  local ts
+  if CI_LOCK_ERROR="$(mkdir "$LOCK" 2>&1)"; then date +%s >"$LOCK/ts"; return 0; fi
+  [ -d "$LOCK" ] || return 2
+  ts=$(cat "$LOCK/ts" 2>/dev/null || echo 0)
   if [ $(( $(date +%s) - ts )) -gt "$CI_LOCK_STALE_SECONDS" ]; then
     rm -rf "$LOCK" && mkdir "$LOCK" 2>/dev/null && { date +%s >"$LOCK/ts"; log "stale lock stolen"; return 0; }
   fi
   return 1
 }
-acquire_lock || { log "another ci-local run is in progress - exiting"; exit 2; }
+acquire_lock
+case $? in
+  0) ;;
+  2) log "cannot create the run lock $LOCK: ${CI_LOCK_ERROR:-mkdir failed} - exiting"; exit 4 ;;
+  *) log "another ci-local run is in progress - exiting"; exit 2 ;;
+esac
 
 # ── Ephemeral e2e/smoke datastores. 127.0.0.1-bound - never LAN-reachable.
 # Ports 25432/26379: the LIVE stack publishes its redis at 127.0.0.1:16379
@@ -543,7 +558,7 @@ gate_lint() {
 # in tests/unit/ci-local-secret-scan.spec.ts replaces `docker` on PATH and pins these arguments.
 gitleaks_container_scan() {
   MSYS_NO_PATHCONV=1 timeout 900 docker run --rm --network none \
-    -v "$(cygpath -m "$1"):/scan:ro" \
+    -v "$(host_path "$1"):/scan:ro" \
     zricethezav/gitleaks:latest detect --source=/scan --no-git \
     --config=/scan/.gitleaks.toml --redact
 }

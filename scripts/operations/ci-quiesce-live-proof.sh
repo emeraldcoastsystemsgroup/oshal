@@ -4,6 +4,7 @@
 # SEQ | AUTHOR | DESCRIPTION
 # -----------------------------------------------------------------------------
 # 1 | maintainer@emeraldcoastsystemsgroup.com | New. Live acceptance for the nightly gate's worker quiesce and resource check (BACKLOG "The nightly gate runs against a saturated box"). The specs prove the shipped shell over stand-ins; this proves the two boundaries they double, on the real box: --resource checks that the probe reads THIS host's available memory (against Windows' own counter), --plan asks the real engine about every running container and requires the operator's protections to hold by compose identity (db, redis, chromadb, tsdb, vault, arangodb, the api, the routing-critical bots and the trading bot are refused), and --cycle stops the named workers through the shipped functions and restores them twice - once normally and once after the process that stopped them is killed outright, restored from the state file the way the next nightly would. Every check prints PASS or FAIL; the workers are restored on any exit.
+# 2 | maintainer@emeraldcoastsystemsgroup.com | The default state directory comes from scripts/ci/ci-host-path.sh (ci_state_dir), the helper ci-local.sh uses, instead of an unguarded `cygpath` that Linux lacks - so --cycle reads and writes the same ci-quiesce.state the nightly does on either host. OSHAL_CI_STATE_DIR still wins. The --resource check still compares against Windows' memory counter.
 #
 # Run from the checkout the scheduled task runs (C:\Projects\oshal), with Docker up:
 #   bash scripts/operations/ci-quiesce-live-proof.sh                      read-only: --resource and --plan
@@ -13,7 +14,9 @@
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-STATE_DIR="${OSHAL_CI_STATE_DIR:-$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/oshal}"
+# The state directory ci-local.sh uses, so --cycle restores from the same state file a run would.
+. "$REPO_DIR/scripts/ci/ci-host-path.sh"
+STATE_DIR="${OSHAL_CI_STATE_DIR:-$(ci_state_dir)}"
 log() { printf '[%s] %s\n' "$(date +%FT%T)" "$*"; }
 if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi
 . "$REPO_DIR/scripts/ci/ci-resource.sh"

@@ -60,7 +60,8 @@ same SHA for the node export, secret scan, image build, start log, and failure a
 fetch does not silently reuse a stale remote-tracking ref; the log labels
 `DEGRADED_FETCH_FAILED_HEAD_FALLBACK` and judges the already-resolved local HEAD instead.
 
-One run at a time (single-instance lock, exit 2 if held). **Never edit
+One run at a time (single-instance lock, exit 2 if held). A state directory or lock that cannot be
+created at all is exit 4 with the `mkdir` error, never reported as a held lock. **Never edit
 `scripts/ci-local.sh` while a run is in flight** — bash reads the script
 incrementally, and a mid-run rewrite makes the running instance execute shifted
 lines. If you kill a run, check `ps -ef | grep ci-local` for surviving children
@@ -123,7 +124,9 @@ schtasks /create /tn "OSHAL Local CI" /sc daily /st 23:30 /f ^
   `LastTaskResult` now agrees with the completed run instead of reporting launch success early.
 
 Logs: `%LOCALAPPDATA%\oshal\ci-local.log` (one line per gate) and
-`%LOCALAPPDATA%\oshal\ci-local-last-run.log` (full output of the latest run).
+`%LOCALAPPDATA%\oshal\ci-local-last-run.log` (full output of the latest run). On Linux, which has
+no `cygpath`, the same files live in `$LOCALAPPDATA/oshal` when that is set, otherwise
+`$XDG_STATE_HOME/oshal`, otherwise `~/.local/state/oshal` (`scripts/ci/ci-host-path.sh`).
 
 ## Reading the failure alert
 

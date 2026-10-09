@@ -4,6 +4,7 @@
  * SEQ | AUTHOR | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com | Run the production gate_secrets body in Git Bash against a disposable git repository with a stand-in docker on PATH that replays the installed gitleaks image's exact unreadable-path wording and exit 0, and prove the gate fails with the unread count in its verdict line, still fails on findings, still passes a clean scan, and always purges its export.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Source scripts/ci/ci-host-path.sh beside the purge and scan helpers: `gitleaks_container_scan` now spells its mount source through `host_path`. This spec stays red until it also sources scripts/ci/ci-export.sh (docs/BACKLOG.md, "tests/unit/ci-local-secret-scan.spec.ts fails since 30e9b7cd"); that is unchanged here.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -16,6 +17,7 @@ const ROOT = resolve(__dirname, '../..');
 const CI_SOURCE = readFileSync(join(ROOT, 'scripts', 'ci-local.sh'), 'utf8');
 const PURGE_HELPER = join(ROOT, 'scripts', 'ci', 'ci-purge.sh').replaceAll('\\', '/');
 const SCAN_HELPER = join(ROOT, 'scripts', 'ci', 'ci-secret-scan.sh').replaceAll('\\', '/');
+const HOST_PATH_HELPER = join(ROOT, 'scripts', 'ci', 'ci-host-path.sh').replaceAll('\\', '/');
 const SCRATCH = mkdtempSync(join(tmpdir(), 'oshal-ci-secret-scan-'));
 
 /** Exactly what zricethezav/gitleaks v8.30.1 writes to stderr (color included, tty or not), probed 2026-09-14. */
@@ -112,12 +114,12 @@ function runGate(fixture: { repo: string; sha: string }, scanner: ScannerScript)
     'command -v docker | grep -q "^$FAKE_BIN/docker$" || { echo "stand-in docker is not first on PATH: $(command -v docker)" >&2; exit 97; }',
     'log() { printf \'LOG:%s\\n\' "$*"; }',
     'if ! command -v timeout >/dev/null 2>&1; then timeout() { shift; "$@"; }; fi',
-    '. "$5"', '. "$6"',
+    '. "$5"', '. "$6"', '. "$7"',
     gateSource(),
     'gate_secrets',
   ].join('\n') + '\n');
   const toBash = (p: string) => p.replaceAll('\\', '/');
-  const result = spawnSync(BASH, [toBash(probe), toBash(fixture.repo), fixture.sha, toBash(stateDir), toBash(fakeBin), PURGE_HELPER, SCAN_HELPER], {
+  const result = spawnSync(BASH, [toBash(probe), toBash(fixture.repo), fixture.sha, toBash(stateDir), toBash(fakeBin), PURGE_HELPER, SCAN_HELPER, HOST_PATH_HELPER], {
     encoding: 'utf8', timeout: 60_000,
   });
   const argsPath = join(fakeBin, 'args.txt');

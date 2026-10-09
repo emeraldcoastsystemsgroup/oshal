@@ -1104,3 +1104,14 @@ explicit legacy scope, rather than treating existing lint success as full rule c
 The inherited `handleSendMessage` callback still exceeds the 50-line function rule. The new
 observation adapter and other new helpers remain below that limit; this logging repair does not
 certify the older callback. Its decomposition remains separate follow-up work.
+
+## Local CI runner on a host without cygpath (2026-10-08)
+
+`scripts/ci-local.sh` called `cygpath` unguarded for its state directory and for the gitleaks
+volume mount, and `scripts/ci/ci-quiesce.sh` (standalone) did the same for its state directory.
+On Linux the state directory became `/oshal` and every nightly on the Spark ended "another ci-local
+run is in progress", exit 2. Both now go through `scripts/ci/ci-host-path.sh`.
+
+| Boundary audited | Mock/stub disposition | Required real companion | Status |
+|---|---|---|---|
+| `tests/unit/ci-local-host-path.spec.ts` (the runner deriving an unusable state directory, misreporting it as a held lock, or mounting an empty source into the secret scanner) | Scoped doubles: a `docker` stand-in first on PATH that records argv (the mount case and the runner cases, which end before any engine call) and a `cygpath` stand-in for the unchanged Git Bash branch. REAL: bash, the filesystem, `scripts/ci/ci-host-path.sh`, `scripts/ci-local.sh` itself run up to its lock, the shipped `gitleaks_container_scan` text and `scripts/ci/ci-quiesce.sh --resume`; the Linux cases first prove no `cygpath` is reachable. | The mount against the real engine: `tests/unit/ci-local-secret-scan-planted-fixture.spec.ts` runs `zricethezav/gitleaks:latest` through the production gate and now sources the helper. | Real companion present: on this Linux host (2026-10-08, gitleaks v8.30.1) it passes 6 of 6 with the fix; with the previous `ci-local.sh` it fails 5 of 6 at `docker: invalid spec: :/scan:ro: empty section between colons`. |
