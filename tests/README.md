@@ -305,3 +305,12 @@ not evidence of remote bot execution or delegated-result authorization.
 ### Jarvis durable task delivery
 
 Run `npx playwright test --config tests/fixtures/jarvis-task-delivery.config.ts` for the real Jarvis page with isolated feeds: 4,000 metadata-only workflows cause no automatic delivery, actual answers announce once, receipt requests are limited to three with pending-ID deduplication, failed writes retry on a later poll, and concurrent refreshes share one read. The Experience Test Lab scenario registers this browser guard. `npx vitest run tests/unit/jarvis-dashboard-assets.spec.ts tests/unit/jarvis-catchup-summary.spec.ts` verifies authenticated asset bytes and existing catch-up behavior. These local fixtures do not claim installed acceptance or PostgreSQL persistence.
+
+## Trading protection basis
+
+See [the review proposal](../docs/trading-protection-basis-proposal.md) for the exact
+behavior and focused one-worker command. The Trading parity card and isolated nightly
+regression register `trading-protection-basis.spec.ts` (unit) and
+`trading-protection-basis-postgres.spec.ts` (integration). They exercise covered economic
+profit/trailing/new-peak math and real disposable-PostgreSQL ledger/dispatch/peak behavior.
+These fixtures do not certify live brokerage execution or authorize live activation.

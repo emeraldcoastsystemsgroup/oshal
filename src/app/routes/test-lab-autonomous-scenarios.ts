@@ -52,6 +52,7 @@
  * 46 | maintainer@emeraldcoastsystemsgroup.com   | Register the concierge node guards on the protected remote application execution scenario: the route end to end over the real routers, chokepoint, node client, registry and stream against a loopback stub node (concierge-node-dispatch, integration), the inline app-bot owner gate (inline-app-bots, unit) and the served-agent policy with the handler's foreign-agent rules (bot-node-served-agents, unit). The delegation and protected-boundary cases extend suites already registered here.
  * 47 | maintainer@emeraldcoastsystemsgroup.com   | Register tests/unit/concierge-static-app-bots.spec.ts (the reviewed static app-concierge list) with the protected remote execution scenario.
  * 48 | maintainer@emeraldcoastsystemsgroup.com   | Register tests/unit/ci-local-host-path.spec.ts on the isolated nightly scenario beside the other ci-local guards: the runner's state directory, lock refusal, gitleaks mount and standalone quiesce restore on a host without cygpath (the Spark), plus the unchanged Git Bash translation.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Register the pure and owned-PostgreSQL protection-basis regressions in the isolated nightly runner.
  */
 import type { Scenario, StepResult } from './test-lab-scenarios';
 
@@ -123,6 +124,8 @@ export const AUTONOMOUS_SCENARIOS: Scenario[] = [{
     { level: 'integration', path: 'tests/unit/ci-local-host-path.spec.ts' },
     { level: 'unit', path: 'tests/unit/ci-run-durations.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-engine-cost-basis-postgres.spec.ts' },
+    { level: 'unit', path: 'tests/unit/trading-protection-basis.spec.ts' },
+    { level: 'integration', path: 'tests/unit/trading-protection-basis-postgres.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-event-plans.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-earnings-rules.spec.ts' },
     { level: 'integration', path: 'tests/unit/trading-schema-bootstrap-race.spec.ts' },
