@@ -22,6 +22,7 @@
  * 16 | maintainer@emeraldcoastsystemsgroup.com | The tenant-isolation cluster acceptance's logic spec joins beside it: it runs accept-tenant-isolation.sh, provision-tenant.sh and verify-tenant-isolation.sh in Git Bash against a stateful kubectl stand-in, so it needs Git Bash and reaches no cluster - the same shape as the ci-local guards in this set.
  * 17 | maintainer@emeraldcoastsystemsgroup.com | The three nightly-saturation guards join the fixed isolated set beside the other ci-local guards: the worker quiesce and the resource-exhausted outcome each run production pieces of scripts/ci-local.sh in Git Bash over stand-ins (a stateful docker, an Alertmanager on loopback, a scripted /proc/meminfo) and reach no engine, and the duration check reads fixture logs only.
  * 18 | maintainer@emeraldcoastsystemsgroup.com | The host-path guard joins the fixed isolated set beside the other ci-local guards: it runs the shipped runner shell on a host without cygpath (state directory, lock refusal, gitleaks mount, standalone quiesce restore) and the unchanged Git Bash translation through a cygpath stand-in. It starts no container and reads no database.
+ * 19 | maintainer@emeraldcoastsystemsgroup.com | Execute the covered protection-basis unit and disposable-PostgreSQL suites in the actual fixed nightly command, not only its display catalog.
  */
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -53,6 +54,8 @@ export const NIGHTLY_ISOLATED_SUITES = Object.freeze([
   'tests/unit/ci-local-host-path.spec.ts',
   'tests/unit/ci-run-durations.spec.ts',
   'tests/unit/trading-engine-cost-basis-postgres.spec.ts',
+  'tests/unit/trading-protection-basis.spec.ts',
+  'tests/unit/trading-protection-basis-postgres.spec.ts',
   'tests/unit/trading-event-plans.spec.ts',
   'tests/unit/trading-earnings-rules.spec.ts',
   'tests/unit/trading-schema-bootstrap-race.spec.ts',

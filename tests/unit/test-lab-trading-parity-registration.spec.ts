@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Require both protection-basis suites in the Trading card and isolated nightly runner.
  */
 import { existsSync } from 'node:fs';
+import { NIGHTLY_ISOLATED_SUITES } from '../../scripts/ci/run-nightly-isolated.mjs';
 import { describe, expect, it } from 'vitest';
 import { SCENARIOS } from '@/app/routes/test-lab-scenarios';
 import { AUTONOMOUS_SCENARIOS } from '@/app/routes/test-lab-autonomous-scenarios';
@@ -46,6 +47,7 @@ describe('ADR-052 addendum trading-parity Test Lab card', () => {
     for (const path of ['tests/unit/trading-protection-basis.spec.ts', 'tests/unit/trading-protection-basis-postgres.spec.ts']) {
       expect(scenario.regressionTests!.map(t => t.path)).toContain(path);
       expect(nightly).toContain(path);
+      expect(NIGHTLY_ISOLATED_SUITES).toContain(path);
     }
     expect(scenario.description).toContain('never claim the paper soak');
   });

@@ -37,6 +37,9 @@ describe('retained local nightly result', () => {
     expect(readFileSync(first.outputLog, 'utf8')).toContain('fixture child completed');
     expect(first.notRun).toContain('unattended-scheduler-proof');
     expect(first.source.selection).toBe('working-tree');
+    expect(first.suites.map(suite => suite.path)).toEqual(expect.arrayContaining([
+      'tests/unit/trading-protection-basis.spec.ts', 'tests/unit/trading-protection-basis-postgres.spec.ts',
+    ]));
   });
   it.each([['failed', 1], ['passed', 9], ['pending', 0]] as const)('keeps a %s suite / exit %s red', async (status, exit) => {
     const root = fakeRoot(status, exit);
