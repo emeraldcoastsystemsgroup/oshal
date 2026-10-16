@@ -21,6 +21,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Volatility-scaled trailing stops (trading-advisor.md item 12): computeExits builds a batch 14-day volMap for held positions via barsBatch and passes it to trailingExits so trail givebacks scale with asset volatility.
  *
  * @module trading-dispatch-exits-entries
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Document covered economic profit/trailing decisions while retaining the suppress-only stop veto.
  */
 
 import type { AppContext } from './composition-root';
@@ -104,8 +105,9 @@ export async function computeExits(ctx: AppContext, sub: string, bookOrMode: Tra
   // The positions arrive MARKED (withEngineCostBasis, applied once by the caller): the engine's own
   // cost where its ledger covers the whole position — which lets exitsToRun veto a stop that exists
   // only because the venue reports a wash-sale-adjusted basis — and `unmanaged` where it does not,
-  // which withholds all three rules for that name (ADR-159). Both directions only ever SUPPRESS an
-  // exit the venue basis already wanted; neither can create one.
+  // which withholds all three rules for that name (ADR-159). The stop veto remains suppress-only.
+  // Profit/trailing gains and new peak floors use covered engine cost; those rules can therefore
+  // emit or withhold an exit relative to a tax-adjusted venue basis.
   // ADR-052 addendum: with plans armed, a planned position exits on ITS OWN stored plan (its doors
   // come first) and only the unplanned rest meet the global rules; null = the whole book, as before.
   const byPlan = parity?.plans ? await splitExitsByPlan(ctx.pool, parity.plans, positions, peaks) : null;

@@ -29,6 +29,7 @@
  * 12 | maintainer@emeraldcoastsystemsgroup.com   | ADR-168 — MULTI_MARKET_BUCKETS, the single source of the 41-name multi-market extension (developed ex-US, emerging, fixed income, commodities, real estate, currency, digital assets), and SECTOR coverage for every one of those names. Each bucket is NEW: no default-universe name uses it, and the block is spread FIRST into SECTOR so it can never overwrite an existing mapping. A book that trades only DEFAULT_UNIVERSE therefore sizes, caps and tilts exactly as before; the change reaches only a book that holds or scans one of the 41 names, which moves from the shared 'other' bucket to its own market bucket. No dispatch leg reads the extension.
  * 13 | maintainer@emeraldcoastsystemsgroup.com   | ADR-052 addendum — ExitOrder's reason union gains the four per-position PLAN doors (plan-stop, plan-tp, plan-trail, plan-expiry) and an optional planId, so an exit taken on a position's own stored plan names the door and the plan it honored on the decision row. Type-only widening: no rule in this file emits a plan door (position-plan.ts does), and every existing exit keeps its exact shape.
  * 14 | maintainer@emeraldcoastsystemsgroup.com   | Volatility-scaled trailing stop giveback (trading-advisor.md item 12): trailingExits optionally accepts volPcts (Map or Record) to scale trailGivebackPct by (volPct / baseVol), floored at 0.5x and capped at 3x, so volatile winners are not prematurely shaken out by normal noise.
+ * 15 | maintainer@emeraldcoastsystemsgroup.com | Use covered engine cost consistently for take-profit, trailing gain and new peak floors; retain the suppress-only stop safeguard, venue fallback and existing recorded peaks.
  *
  * @module portfolio
  */
@@ -252,6 +253,34 @@ export function dipExits(positions: Position[], priorClose: Map<string, number>,
 export interface NameStrength { score: number; action: 'buy' | 'sell' | 'hold'; }
 
 /**
+ * @description Basis for profit/trailing rules. The adapter preserves venue tax basis;
+ * the ledger attests engineAvgCost only when its fills cover the entire held quantity.
+ * @param p - Position with optional ledger coverage.
+ * @returns Positive covered engine cost, otherwise positive venue cost, or no usable basis.
+ */
+export function protectionCostBasis(p: Position): number | undefined {
+  const covered = !p.unmanaged && p.engineAvgCost;
+  if (typeof covered === 'number' && Number.isFinite(covered) && covered > 0) return covered;
+  return Number.isFinite(p.avgEntryPrice) && p.avgEntryPrice > 0 ? p.avgEntryPrice : undefined;
+}
+
+/**
+ * @description Economic gain for covered positions; preserve the venue P&L fallback.
+ * @param p - Position carrying the optional ledger coverage and current quote.
+ * @returns Gain percentage, or no usable quote/basis.
+ */
+function protectionGainPct(p: Position): number | undefined {
+  const basis = protectionCostBasis(p);
+  if (basis === undefined) return undefined;
+  if (!p.unmanaged && basis === p.engineAvgCost) {
+    const last = p.currentPrice;
+    return typeof last === 'number' && Number.isFinite(last) && last > 0 ? ((last - basis) / basis) * 100 : undefined;
+  }
+  const gain = (p.unrealizedPl / (basis * p.qty)) * 100;
+  return Number.isFinite(gain) ? gain : undefined;
+}
+
+/**
  * @description Protective exits across open longs: sell anything down past stop-loss or up past
  * take-profit. This is the standing "manage the money" loop, run every cycle before new entries.
  *
@@ -267,14 +296,21 @@ export function exitsToRun(positions: Position[], policy: RiskPolicy, stopMult =
     if (!(p.qty > 0)) continue; // v1 manages long book only
     if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
     const cost = p.avgEntryPrice * p.qty;
-    if (!(cost > 0)) continue;
-    const pnlPct = (p.unrealizedPl / cost) * 100;
+    const pnlPct = Number.isFinite(cost) && cost > 0 && Number.isFinite(p.unrealizedPl)
+      ? (p.unrealizedPl / cost) * 100 : undefined;
     // stopMult widens the hard stop in thin sessions (pre/post) so a low-liquidity wick doesn't
     // whipsaw us out at a bad print — the "lost in extended hours" failure mode.
     const stopLine = -policy.stopLossPct * stopMult;
-    if (pnlPct <= stopLine) {
-      if (!washSaleStopVetoed(p, stopLine)) exits.push({ symbol: p.symbol, qty: p.qty, reason: 'stop_loss', pnlPct });
-    } else if (pnlPct >= policy.takeProfitPct) exits.push({ symbol: p.symbol, qty: p.qty, reason: 'take_profit', pnlPct });
+    if (pnlPct !== undefined && pnlPct <= stopLine) {
+      if (!washSaleStopVetoed(p, stopLine)) {
+        exits.push({ symbol: p.symbol, qty: p.qty, reason: 'stop_loss', pnlPct });
+        continue;
+      }
+    }
+    const gainPct = protectionGainPct(p);
+    if (gainPct !== undefined && gainPct >= policy.takeProfitPct) {
+      exits.push({ symbol: p.symbol, qty: p.qty, reason: 'take_profit', pnlPct: gainPct });
+    }
   }
   return exits;
 }
@@ -320,9 +356,12 @@ export function nextPeaks(positions: Position[], peaks: Map<string, number>): Ma
   for (const p of positions) {
     if (!(p.qty > 0)) continue;
     const sym = p.symbol.toUpperCase();
-    const cur = p.currentPrice ?? p.avgEntryPrice;
-    const prior = peaks.get(sym) ?? p.avgEntryPrice;
-    out.set(sym, Math.max(prior, cur, p.avgEntryPrice));
+    const basis = protectionCostBasis(p);
+    if (basis === undefined) continue;
+    const cur = typeof p.currentPrice === 'number' && Number.isFinite(p.currentPrice) && p.currentPrice > 0 ? p.currentPrice : basis;
+    const stored = peaks.get(sym);
+    const prior = typeof stored === 'number' && Number.isFinite(stored) && stored > 0 ? stored : basis;
+    out.set(sym, Math.max(prior, cur, basis));
   }
   return out;
 }
@@ -351,13 +390,14 @@ export function trailingExits(
   const exits: ExitOrder[] = [];
   const baseVol = Number(process.env.TRADING_BASELINE_VOL_PCT || 2);
   for (const p of positions) {
-    if (!(p.qty > 0) || !(p.avgEntryPrice > 0)) continue;
-    if (p.unmanaged) continue;  // ADR-159: no engine basis for this quantity → no engine decision
+    if (!(p.qty > 0) || p.unmanaged) continue;
+    const basis = protectionCostBasis(p);
+    if (basis === undefined) continue;
     const cur = p.currentPrice ?? 0;
-    if (!(cur > 0)) continue; // no live price → can't trail this fire
+    if (!Number.isFinite(cur) || !(cur > 0)) continue; // no live price → can't trail this fire
     const sym = p.symbol.toUpperCase();
-    const peak = peaks.get(sym) ?? p.avgEntryPrice;
-    const gainPct = ((cur - p.avgEntryPrice) / p.avgEntryPrice) * 100;
+    const peak = peaks.get(sym) ?? basis;
+    const gainPct = ((cur - basis) / basis) * 100;
     const givebackPct = peak > 0 ? ((peak - cur) / peak) * 100 : 0;
     // Volatility-normalized giveback: scale trailGivebackPct by (volPct / baseVol)
     // so a volatile name gets wider room to breathe without whipsawing out on normal noise.
