@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-118 Phase 2: real PostgreSQL proof for FORCE RLS, exact owner reads, operator-only assignments, explicit deny, defaults, clearing, and a NOSUPERUSER/NOBYPASSRLS runtime role.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Resolve compose-internal admin/probe database values through the published host port for host-side Playwright runs, matching the managed webServer's database resolution instead of attempting DNS for `oshal-db`.
+ * 3 | maintainer@emeraldcoastsystemsgroup.com   | The self-clear case expected clear() to throw, but PostgreSQL applies a failing DELETE policy by matching no row (DELETE 0), so clear() resolves false and the case could not pass (it failed the zero-retry CI-mirror run). It now asserts what the boundary really does: the self-clear reports false and the owner's explicit deny is still resolved afterwards, so a policy that let the owner delete would still go red.
  */
 
 import { expect, test } from '@playwright/test';
@@ -126,9 +127,14 @@ test('real PostgreSQL enforces exact assignments, explicit deny, defaults, and o
   await expect(asIdentity(OWNER_A, false, () => service.assign({
     userSub: OWNER_A, appName: APP, tier: 'admin', assignedBySub: OWNER_A, reason: 'self promotion attempt',
   }))).rejects.toThrow();
+  // FORCE RLS answers a non-operator DELETE by matching no row, not by raising: the self-clear
+  // reports false and the explicit deny must still be there afterwards.
   await expect(asIdentity(OWNER_A, false, () => service.clear({
     userSub: OWNER_A, appName: APP, assignedBySub: OWNER_A, reason: 'self clear attempt',
-  }))).rejects.toThrow();
+  }))).resolves.toBe(false);
+  await expect(asIdentity(OWNER_A, false, () => service.resolve(APP, OWNER_A, DECLARATION))).resolves.toMatchObject({
+    tier: 'deny', source: 'explicit',
+  });
 
   await expect(asIdentity(OPERATOR, true, () => service.clear({
     userSub: OWNER_A, appName: APP, assignedBySub: OPERATOR, reason: 'review completed',
