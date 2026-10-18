@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Extracted HTTP helpers, DOM utilities, and agent ID resolution from config-admin.js (1277 → <1000 decomposition)
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity: helper changes used by the ported configuration page.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -104,12 +105,15 @@ export async function requestJson(url, options = {}) {
   });
   const payload = await parseResponseJson(response);
   if (!response.ok) {
-    const errorMessage = readString(payload?.error) || `${response.status} ${response.statusText}`;
+    const errorMessage = readString(payload?.detail) || readString(payload?.error) || `${response.status} ${response.statusText}`;
     logger.warn('Config admin request failed', {
       url, method, status: response.status,
       durationMs: Date.now() - startedAt, errorMessage,
     });
     throw new Error(errorMessage);
+  }
+  if (payload === null || typeof payload !== 'object') {
+    throw new Error('No valid JSON receipt returned; reload to verify the operation');
   }
   logger.info('Config admin request completed', {
     url, method, status: response.status, durationMs: Date.now() - startedAt,
@@ -124,7 +128,7 @@ async function readErrorMessage(response) {
   const fallback = response.statusText || 'Request failed';
   try {
     const body = await response.json();
-    return body.error || fallback;
+    return body.detail || body.error || fallback;
   } catch (_error) {
     return fallback;
   }

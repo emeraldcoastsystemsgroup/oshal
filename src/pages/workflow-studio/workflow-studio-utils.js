@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): canvas constants + pure helpers (field-group markup, inspector value parsing, JSON fetch, HTML escaping, clamp/clone/id) shared by the studio modules
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Hoisted workflowTicketTypeSlug out of workflow-studio-data.js so the publish path and the Runs panel derive the ticketType join key from ONE function — a second copy that drifted would silently break the definition→runs join (workflow_runs.ticket_type is the only key, definitions are file-backed).
  * 3 | maintainer@emeraldcoastsystemsgroup.com | Bind native publication/run to acknowledged caller drafts and display actual ticket transitions without changing legacy behavior.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity: a select without a current value offers "Choose an option" first.
  */
 
 /** @description Node card width in world (unscaled canvas) pixels; used to center newly added nodes. */
@@ -90,6 +91,7 @@ function formatFieldValue(value, inputType) {
 
 function buildSelectOptions(options, currentValue) {
   const normalized = Array.isArray(options) ? [...options] : [];
+  if (!currentValue && !normalized.some(option => option.value === '')) normalized.unshift({value: '', label: 'Choose an option'});
   if (currentValue && !normalized.some((option) => option.value === currentValue)) {
     normalized.unshift({ value: currentValue, label: currentValue });
   }
@@ -135,7 +137,7 @@ export async function requestJson(url, options = {}) {
   const response = await fetch(url, options);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `Request failed: ${response.status}`);
+    throw new Error(payload.detail || payload.error || `Request failed: ${response.status}`);
   }
   return payload;
 }

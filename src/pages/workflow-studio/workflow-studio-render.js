@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from workflow-studio.js (1000-line cap decomposition): rendering mixin — definition list, palette, canvas nodes/edges, inspector (+ change handling), selection state, validation/compile/version panels, metrics, and field-option/edge-label resolution
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity: render adjustment for native definitions.
  */
 
 import {
@@ -59,6 +60,7 @@ export const workflowStudioRenderMethods = {
       this.syncNodeCard(node);
     } else {
       node.config[fieldKey] = readInspectorValue(target, fieldInput);
+      if (fieldKey === 'agentId') delete node.config.agentBinding;
     }
 
     this.invalidateReports();
@@ -249,7 +251,7 @@ export const workflowStudioRenderMethods = {
     }
 
     const dynamicFields = entry.fields
-      .map((field) => buildFieldGroup(field, node.config[field.key], this.resolveFieldOptions(field)))
+      .map((field) => buildFieldGroup(field, field.key === 'agentId' ? (node.config.agentId || node.config.agentBinding || '') : node.config[field.key], this.resolveFieldOptions(field)))
       .join('');
     this.elements.inspectorForm.innerHTML = `
       ${buildFieldGroup({ key: 'title', label: 'Title', input: 'text' }, node.title, [])}
@@ -408,7 +410,7 @@ export const workflowStudioRenderMethods = {
     if (field.optionsSource === 'agents') {
       const liveAgents = this.state.agents
         .map((agent) => ({
-          value: String(agent.agentId || agent.agent_id || ''),
+          value: String(agent.name || agent.agentId || agent.agent_id || ''),
           label: `${String(agent.name || 'Unknown')} (${String(agent.status || 'unknown')})`,
         }))
         .filter((agent) => agent.value.length > 0)

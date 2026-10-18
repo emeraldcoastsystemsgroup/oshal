@@ -5,6 +5,7 @@
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | The fleet-default switch control ("a bot's LLM provider is a row in a table"; operator acceptance 2026-09-17: moving the whole fleet back to Codex is ONE write from the cockpit). Renders the one reserved row beside the per-bot provider select: a provider select over the SAME /api/providers list the per-bot control uses, a model input, Save (PUT /api/agents/provider-switch/fleet-default) and Clear (DELETE). The API's refusal text (unknown id + the accepted ids) is shown verbatim; the browser never re-derives the catalog. A non-operator or a box without Postgres sees the panel disabled with the API's own reason.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | The FALLBACK ORDER is settable here (operator, 2026-09-18: "we better have a configuration that is setable in the ux and we better have a env that corialtes as well"). An ordered comma-separated control beside the provider it falls back FROM, suggesting ids from the same /api/providers list the selects use - never a hardcoded list. The box always shows the stored chain, so what is in it IS the intent, including an empty box, which stores [] ("no failover, surface the failure") rather than being guessed as "unchanged". The panel states the chain in words, so it can never imply a failover that is not configured, and names the per-node env override.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Native reset retains the effective deployment defaults from the receipt; changes take effect on the next native call and an invalid acknowledgement cannot report success.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The panel destroyed the stored chain on every save and promised a timing it does not deliver. It sent fallbackOrder unconditionally, so the store's deliberate "a provider change must not wipe the chain" protection was unreachable from the only UI that writes the row - change the model, save, and the chain silently became []. A value identical to the rendered one now means untouched and the key is omitted, which is how the API is told to leave the chain alone. An explicit empty chain renders as `none` so it is visibly different from an empty box ("nothing configured"), and `none`/`off`/`false` parse back to [] - the resolver's own vocabulary. The success banner also claimed "the next dispatch to an idle bot runs on it" for BOTH the provider and the chain; only the provider is resolved per dispatch, so the chain sentence now says it reaches each bot at its next start.
  */
 
@@ -56,7 +57,7 @@ export function renderFleetDefaultPanel(app) {
   const status = state.error
     ? `Fleet default unavailable: ${state.error}`
     : row
-      ? `Fleet default: ${row.providerId}${row.modelId ? ` / ${row.modelId}` : ''} (set by ${row.updatedBy || 'operator'}${row.updatedAt ? ` at ${row.updatedAt}` : ''}). Every registry LLM bot without its own row runs on it. ${describeChain(row)}`
+      ? `Fleet default: ${row.providerId}${row.modelId ? ` / ${row.modelId}` : ''}. Native calls without an explicit model selection use this configuration. ${describeChain(row)}`
       : 'No fleet default set: bots without their own row run on the registry literal.';
   const snapshot = state.snapshot
     ? ` Snapshot: ${state.snapshot.rowCount} row(s), loaded ${state.snapshot.loadedAt || 'never'}${state.snapshot.lastError ? `, last error: ${state.snapshot.lastError}` : ''}.`
@@ -72,7 +73,7 @@ export function renderFleetDefaultPanel(app) {
       <label class="field field-wide"><span>Fallback order</span>
         <input id="fleetDefaultFallbackInput" type="text" list="fleetDefaultProviderIds"
                value="${escapeHtmlAttribute(chainText(row))}"
-               placeholder="e.g. claude-code, openrouter, anthropic \u2014 as many as you want, tried in this order"${disabled}>
+               placeholder="registered provider ids, tried in this order (maximum 16)"${disabled}>
       </label>
       <datalist id="fleetDefaultProviderIds">${renderDatalist(app.state.providers)}</datalist>
       <span class="field-copy field-wide">Comma-separated provider ids, tried left to right when the
@@ -82,7 +83,7 @@ export function renderFleetDefaultPanel(app) {
       <span id="fleetDefaultStatus" class="field-copy field-wide">${escapeHtml(status + snapshot)}</span>
       <div class="agent-config-actions field-wide">
         <button id="saveFleetDefaultButton" type="submit"${disabled}>Save Fleet Default</button>
-        <button id="clearFleetDefaultButton" type="button"${disabled || (row ? '' : ' disabled')}>Clear Fleet Default</button>
+        <button id="clearFleetDefaultButton" type="button"${disabled || (row ? '' : ' disabled')}>Reset Fleet Default</button>
       </div>
     </form>`;
 }
@@ -117,38 +118,47 @@ export async function saveFleetDefault(app) {
         ...(fallbackOrder === undefined ? {} : { fallbackOrder }),
       }),
     });
-    app.state.fleetDefault = { ...app.state.fleetDefault, row: body.fleetDefault || null, snapshot: body.snapshot || null, error: null };
+    const row = verifiedDefault(body);
+    app.state.fleetDefault = { ...app.state.fleetDefault, row, snapshot: body.snapshot || null, error: null };
     await refreshAgentsAfterSwitch(app);
-    // Two different timings, and saying one sentence for both was wrong: the PROVIDER is resolved
-    // per dispatch, so the next idle bot picks it up; the CHAIN reaches a node on its boot pull.
     app.setStatus(
       `Fleet default is now ${body.fleetDefault?.providerId}${body.fleetDefault?.modelId ? ` / ${body.fleetDefault.modelId}` : ''}`
-      + ' — the next dispatch to an idle bot runs on it. '
-      + `${describeChain(body.fleetDefault)} A chain change reaches each bot at its next start.`,
+      + `. ${describeChain(row)} The next native call uses the saved default and fallback order.`,
       'success',
     );
   } catch (error) {
     logger.error('Fleet default write failed', serializeUiError(error));
-    app.setStatus(`Fleet default not changed: ${error?.message || error}`, 'error');
+    app.setStatus(`Fleet change not confirmed: ${error?.message || error}. Reload configuration to verify its state.`, 'error');
   }
 }
 
 /**
- * @description Clear the fleet default so bots without their own row fall back to the registry literal.
+ * @description Reset the fleet provider, model and fallback order to the deployment boot defaults.
  * @param {object} app - The config-admin app.
  * @returns {Promise<void>}
  */
 export async function clearFleetDefault(app) {
-  app.setStatus('Clearing the fleet default...', 'info');
+  app.setStatus('Resetting the fleet default...', 'info');
   try {
     const body = await requestJson(`${ENDPOINT}/fleet-default`, { method: 'DELETE' });
-    app.state.fleetDefault = { ...app.state.fleetDefault, row: null, snapshot: body.snapshot || null, error: null };
+    const row = verifiedDefault(body);
+    app.state.fleetDefault = { ...app.state.fleetDefault, row, snapshot: body.snapshot || null, error: null };
     await refreshAgentsAfterSwitch(app);
-    app.setStatus('Fleet default cleared — bots without their own row run on the registry literal.', 'success');
+    app.setStatus(`Fleet default reset to ${row.providerId} / ${row.modelId}. ${describeChain(row)} The next native call uses these deployment defaults.`, 'success');
   } catch (error) {
     logger.error('Fleet default clear failed', serializeUiError(error));
-    app.setStatus(`Fleet default not cleared: ${error?.message || error}`, 'error');
+    app.setStatus(`Fleet reset not confirmed: ${error?.message || error}. Reload configuration to verify its state.`, 'error');
   }
+}
+
+/** A successful HTTP response still needs the native configuration receipt. */
+function verifiedDefault(body) {
+  const row = body?.fleetDefault;
+  if (!row || typeof row.providerId !== 'string' || !row.providerId
+      || typeof row.modelId !== 'string' || !row.modelId || !Array.isArray(row.fallbackOrder)) {
+    throw new Error('No valid fleet configuration receipt returned');
+  }
+  return row;
 }
 
 /** Re-read /api/agents so every bot's reported providerSource reflects the new rung, then re-render. */

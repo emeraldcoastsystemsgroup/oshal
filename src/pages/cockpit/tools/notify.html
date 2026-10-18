@@ -72,10 +72,9 @@
 <div class="wrap">
   <h1>Notifications</h1>
   <p class="sub">Where each topic reaches <strong>you</strong> — your own saved routing over
-  <code>/api/notify/prefs</code>. Email always sends from your own connected Gmail. SMS uses your
-  own connected Twilio when you have one, otherwise this deployment's notification service; voice
-  calls and Telegram always go through the deployment's service. Whichever account sends, the
-  destination is always your own number or chat.</p>
+  <code>/api/notify/prefs</code>. Available channels come from this installation's configured
+  notification transports. Messages follow your saved destination and quiet hours. Muting a topic
+  also overrides the default route.</p>
 
   <div class="status" id="status">Loading…</div>
   <div id="banner"></div>
@@ -116,12 +115,13 @@
   const $addBtn = document.getElementById('addBtn');
   const $addResult = document.getElementById('addResult');
 
-  let channels = ['email', 'sms', 'telegram', 'none'];
+  let channels = ['none'];
   let defaultChannel = 'none';
   // Per channel, whose account would carry it for you — read from the route, never guessed here.
   let tiers = {};
   const ACCOUNT_KIND = {
     own: 'your own account',
+    user: 'your saved destination',
     deployment: 'this deployment\'s service',
     unavailable: 'unavailable, no account can send it yet',
   };
@@ -137,8 +137,17 @@
     try { return JSON.parse(raw); } catch { return null; }
   }
 
+  async function confirmedHeaders() {
+    const response = await fetch('/confirmations', { method: 'POST', credentials: 'same-origin' });
+    const data = await readJson(response);
+    if (!response.ok || !data || typeof data.confirmation !== 'string') {
+      throw new Error((data && (data.detail || data.error)) || 'Confirmation could not be issued.');
+    }
+    return { 'Content-Type': 'application/json', 'x-oshal-confirm': data.confirmation };
+  }
+
   function when(ts) {
-    if (!ts) return 'never saved';
+    if (!ts) return 'timestamp unavailable';
     const d = new Date(ts);
     return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
   }
@@ -156,10 +165,12 @@
   /** A <select> of the channel list the API returned (never a hardcoded list). */
   function channelSelect(selected) {
     const sel = document.createElement('select');
-    for (const c of channels) {
+    const offered = selected && !channels.includes(selected) ? [selected, ...channels] : channels;
+    for (const c of offered) {
       const opt = document.createElement('option');
       opt.value = c;
-      opt.textContent = channelLabel(c);
+      opt.textContent = channelLabel(c) + (!channels.includes(c) ? ' (unavailable)' : '');
+      opt.disabled = !channels.includes(c);
       if (c === selected) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -216,10 +227,12 @@
     phone.type = 'tel';
     phone.placeholder = '+15551234567';
     phone.value = pref.phone || '';
+    phone.disabled = !channels.includes('sms');
     const chat = document.createElement('input');
     chat.type = 'text';
     chat.placeholder = 'telegram chat id';
     chat.value = pref.telegramChatId || '';
+    chat.disabled = !channels.includes('telegram');
     grid.appendChild(field('Channel', chan));
     grid.appendChild(field('Quiet from (hour)', qStart));
     grid.appendChild(field('Quiet until (hour)', qEnd));
@@ -248,7 +261,8 @@
     const test = document.createElement('button');
     test.type = 'button';
     test.textContent = 'Send test';
-    test.title = 'Sends a REAL notification to you on this topic’s resolved channel.';
+    test.title = 'Sends a real notification through this topic’s saved route.';
+    test.disabled = pref.enabled === false || pref.channel === 'none' || !channels.includes(pref.channel);
     const result = document.createElement('span');
     result.className = 'result';
     actions.appendChild(save);
@@ -266,8 +280,8 @@
         enabled: enabled.checked,
         quietHoursStart: qStart.value === '' ? null : Number(qStart.value),
         quietHoursEnd: qEnd.value === '' ? null : Number(qEnd.value),
-        phone: phone.value.trim() || null,
-        telegramChatId: chat.value.trim() || null,
+        phone: phone.disabled ? null : phone.value.trim() || null,
+        telegramChatId: chat.disabled ? null : chat.value.trim() || null,
       };
       try {
         const res = await fetch('/api/notify/prefs', {
@@ -283,7 +297,7 @@
           await load();
         } else {
           result.className = 'result bad';
-          result.textContent = 'Not saved — ' + ((data && data.error) || 'HTTP ' + res.status);
+          result.textContent = 'Not saved — ' + ((data && (data.detail || data.error)) || 'HTTP ' + res.status);
         }
       } catch (err) {
         result.className = 'result bad';
@@ -298,12 +312,12 @@
       result.className = 'result';
       result.textContent = 'Sending…';
       try {
+        const headers = await confirmedHeaders();
         const res = await fetch('/api/notify/test', {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          // confirm:true is required — the route 428s without it, because this sends for real.
-          body: JSON.stringify({ confirm: true, topic: pref.topic }),
+          headers,
+          body: JSON.stringify({ topic: pref.topic }),
         });
         const data = await readJson(res);
         result.className = 'result ' + (res.ok && data && data.delivered ? 'ok' : 'bad');
@@ -336,8 +350,8 @@
       if (data.channel) parts.push('channel: ' + data.channel);
       if (data.skipped) parts.push('skipped');
       if (data.reason) parts.push('reason: ' + data.reason);
-      if (data.error) parts.push('error: ' + data.error);
-      if (!data.reason && !data.error) parts.push('the router gave no reason (HTTP ' + status + ')');
+      if (data.detail || data.error) parts.push('error: ' + (data.detail || data.error));
+      if (!data.reason && !data.detail && !data.error) parts.push('the router gave no reason (HTTP ' + status + ')');
     }
     return parts.join(' ');
   }
@@ -351,7 +365,7 @@
     div.appendChild(strong);
     div.appendChild(document.createTextNode(
       defaultChannel === 'none'
-        ? 'You have no Gmail-send connection, so a topic with no saved pref reaches you nowhere. Connect Google (with gmail.send) or save a pref below.'
+        ? 'No default route is saved. Choose an available channel for each topic; delivery also requires your saved destination.'
         : 'A topic with no saved pref falls back to this channel. Channels offered by this deployment: ' + channels.join(', ') + '.'));
     $banner.appendChild(div);
   }
@@ -368,10 +382,10 @@
     if (res.status === 401) { say('Not signed in — reload the cockpit to authenticate.', true); return; }
     const data = await readJson(res);
     if (!res.ok) {
-      say('Could not read your notification prefs: ' + ((data && data.error) || 'HTTP ' + res.status), true);
+      say('Could not read your notification prefs: ' + ((data && (data.detail || data.error)) || 'HTTP ' + res.status), true);
       return;
     }
-    channels = Array.isArray(data && data.channels) && data.channels.length ? data.channels : channels;
+    channels = [...new Set([...(Array.isArray(data && data.channels) ? data.channels : []), 'none'])];
     defaultChannel = (data && data.defaultChannel) || 'none';
     tiers = data && data.tiers && typeof data.tiers === 'object' ? data.tiers : {};
     bannerText();
@@ -381,7 +395,8 @@
     for (const c of channels) {
       const opt = document.createElement('option');
       opt.value = c;
-      opt.textContent = channelLabel(c);
+      opt.textContent = channelLabel(c) + (!channels.includes(c) ? ' (unavailable)' : '');
+      opt.disabled = !channels.includes(c);
       $newChannel.appendChild(opt);
     }
 
@@ -432,7 +447,7 @@
         await load();
       } else {
         $addResult.className = 'result bad';
-        $addResult.textContent = 'Not created — ' + ((data && data.error) || 'HTTP ' + res.status);
+        $addResult.textContent = 'Not created — ' + ((data && (data.detail || data.error)) || 'HTTP ' + res.status);
       }
     } catch (err) {
       $addResult.className = 'result bad';

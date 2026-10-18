@@ -1,348 +1,212 @@
-/**
- * CHANGE LOG
- * -----------------------------------------------------------------------------
- * SEQ                 | AUTHOR                      | DESCRIPTION
- * -----------------------------------------------------------------------------
- * 1 | maintainer@emeraldcoastsystemsgroup.com   | Added OSHAL-native config admin browser logic for shared config, ownership guidance, and agent route summaries
- * 2 | maintainer@emeraldcoastsystemsgroup.com   | Corrected provider option labels to prefer displayName and support functional config save-reload validation
- * 3 | maintainer@emeraldcoastsystemsgroup.com   | Added native per-bot config loading, profile saves, and tool auth updates with agent-focused /config deep links
- * 4 | maintainer@emeraldcoastsystemsgroup.com   | Added bot-scoped config view mode so /config links can open directly into per-agent settings context
- * 5 | maintainer@emeraldcoastsystemsgroup.com   | Added try/catch error handling to all async methods to prevent permanent UI freezes on API failures
- * 6 | maintainer@emeraldcoastsystemsgroup.com   | Added shared Presentron runtime config and health controls so service-backed workspaces can hand off to one canonical config screen
- * 7 | maintainer@emeraldcoastsystemsgroup.com   | Added shared code-server workspace-root config so swarm operators can align code-server mount paths like /usr/workspace with cockpit artifact handoff
- * 8 | maintainer@emeraldcoastsystemsgroup.com   | Fixed buildClaudeCodeAuthState: show Sign In button even when authenticated via api_key so users can upgrade to OAuth without signing out first
- * 9 | maintainer@emeraldcoastsystemsgroup.com   | Sign In always visible for claude-code: PKCE OAuth does not require CLI availability, removed available gate from canSignIn
- * 10 | maintainer@emeraldcoastsystemsgroup.com   | Rebased per-bot config theme choices onto the shared cockpit theme catalog so Config Admin matches cockpit and swarm workspace options
- * 11 | maintainer@emeraldcoastsystemsgroup.com   | CM-6: Decomposed 1277-line file into orchestrator + 4 modules; added RAG + Google Search MCP service runtime sections
- * 12 | maintainer@emeraldcoastsystemsgroup.com   | Removed the retired Presentron + deprecated Google Search MCP service-runtime sections (wiring, state, load, render); RAG runtime config retained
- * 13 | maintainer@emeraldcoastsystemsgroup.com   | Fleet-default LLM provider switch panel (config-admin-fleet-default.js) above the per-bot section: loaded with the rest of the page, rendered from state, Save/Clear wired to PUT/DELETE /api/agents/provider-switch/fleet-default. The per-bot provider select is live now that the API reports providerOverridable for every registry bot (its save path is unchanged: PUT /runtime writes the bot's own row).
- * 14 | maintainer@emeraldcoastsystemsgroup.com   | The page's start (app.init: event wiring plus the six load reads) runs only when no ADR-164 D6 audience view is active, so a shell framing /config/ with ?audience=company|family gets the read-only card from index.html and the full page never loads or wires its save controls; without an audience, with one the page does not provide, or on a core without the kit, it starts exactly as before.
- * 15 | maintainer@emeraldcoastsystemsgroup.com   | Agent-scoped deep links no longer read the hidden shared-config, ownership, or RAG panels. A shared secret-store refusal cannot blank the independent per-bot provider controls, while the full config surface keeps the existing encrypted-secret guard unchanged.
- * 16 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the capability providers panel (config-admin-capability-providers.js) below the fleet default: loaded with the page (not in the agent-scoped view, which reads no shared panels), rendered from state, its saves and clears wired by the panel module.
+/** CHANGE LOG
+ * 1 | maintainer@emeraldcoastsystemsgroup.com | Replace legacy configuration drafts with native current-authority controls and verified runtime receipts.
  */
-
-import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
-import { clearFleetDefault, loadFleetDefault, renderFleetDefaultPanel, saveFleetDefault } from './config-admin-fleet-default.js';
-import { bindCapabilityProvidersPanel, loadCapabilityProviders, renderCapabilityProvidersPanel } from './config-admin-capability-providers.js';
-import {
-  fetchJson, postJson, requestJson,
-  readString, readRecord, readSelectedAgentIdFromUrl, readScopeFromUrl,
-  resolveSelectedAgentId, resolveInitialSelectedAgentId,
-  toErrorMessage, setText, countItems,
-} from './config-admin-utils.js';
-import { renderProviderOptions, buildSharedConfigPayload } from './config-admin-shared-config.js';
-import {
-  renderRagRuntimeForm, saveRagRuntimeConfig, testRagRuntimeConnection, updateRagTierVisibility,
-} from './config-admin-service-runtimes.js';
-import { loadAgentRuntimeConfig, saveAgentRuntimeConfig } from './agent-runtime-config.js';
-import {
-  createPendingAuthState, renderModelOptionMarkup,
-  loadSelectedAgentDetails, saveSelectedAgentProfile, applyBulkTemplate,
-  updateSelectedToolAuthMode, renderSelectedAgentPanelMarkup,
-  renderSelectedAgentAuthState, refreshSelectedAgentAuthStatus,
-  startSelectedAgentAuth, signOutSelectedAgentAuth,
-  renderAgentCards, renderOwnershipCards,
-} from './config-admin-agent-panel.js';
-
-const logger = createUiLogger('config-admin');
-
-class ConfigAdminApp {
-  constructor() {
-    this.state = {
-      ownership: null,
-      config: {},
-      ragConfig: {},
-      providers: [],
-      agents: [],
-      selectedAgentId: readSelectedAgentIdFromUrl(),
-      viewScope: readScopeFromUrl(),
-      selectedAgentAuth: createPendingAuthState(),
-      selectedAgentProfile: null,
-      selectedAgentTools: [],
-      selectedAgentRuntimeConfig: null,
-      fleetDefault: null,
-      capabilityProviders: null,
-    };
-
-    this.elements = {
-      actProviderSelect: document.getElementById('actProviderSelect'),
-      agentConfigHeading: document.getElementById('agentConfigHeading'),
-      agentList: document.getElementById('agentList'),
-      apiKeyInput: document.getElementById('apiKeyInput'),
-      codeServerWorkspaceRootInput: document.getElementById('codeServerWorkspaceRootInput'),
-      gitRepoUrlInput: document.getElementById('gitRepoUrlInput'),
-      ownershipGrid: document.getElementById('ownershipGrid'),
-      planeUrlInput: document.getElementById('planeUrlInput'),
-      planProviderSelect: document.getElementById('planProviderSelect'),
-      // RAG
-      ragConfigEndpointInput: document.getElementById('ragConfigEndpointInput'),
-      ragConfigDefaultCollectionInput: document.getElementById('ragConfigDefaultCollectionInput'),
-      ragConfigEmbeddingProviderInput: document.getElementById('ragConfigEmbeddingProviderInput'),
-      ragConfigEmbeddingModelInput: document.getElementById('ragConfigEmbeddingModelInput'),
-      ragConfigChunkStrategySelect: document.getElementById('ragConfigChunkStrategySelect'),
-      ragConfigChunkSizeInput: document.getElementById('ragConfigChunkSizeInput'),
-      ragConfigChunkOverlapInput: document.getElementById('ragConfigChunkOverlapInput'),
-      ragConfigTierSizesInput: document.getElementById('ragConfigTierSizesInput'),
-      ragConfigTierOverlapsInput: document.getElementById('ragConfigTierOverlapsInput'),
-      ragTierFieldsWrap: document.getElementById('ragTierFieldsWrap'),
-      ragTierOverlapsWrap: document.getElementById('ragTierOverlapsWrap'),
-      ragRuntimeForm: document.getElementById('ragRuntimeForm'),
-      ragRuntimeStatus: document.getElementById('ragRuntimeStatus'),
-      testRagRuntimeBtn: document.getElementById('testRagRuntimeBtn'),
-      // General
-      redisUrlInput: document.getElementById('redisUrlInput'),
-      refreshButton: document.getElementById('refreshButton'),
-      selectedAgentPanel: document.getElementById('selectedAgentPanel'),
-      fleetDefaultPanel: document.getElementById('fleetDefaultPanel'),
-      capabilityProvidersPanel: document.getElementById('capabilityProvidersPanel'),
-      sharedConfigForm: document.getElementById('sharedConfigForm'),
-      statusBanner: document.getElementById('statusBanner'),
-    };
-  }
-
-  async init() {
-    logger.info('Initializing config admin', {
-      viewScope: this.state.viewScope,
-      selectedAgentId: this.state.selectedAgentId || null,
-    });
-    this.bindEvents();
-    document.body.dataset.scope = this.state.viewScope;
-    await this.loadAll();
-    const selectedAgentId = resolveInitialSelectedAgentId(
-      this.state.selectedAgentId, this.state.viewScope, this.state.agents,
-    );
-    if (selectedAgentId) {
-      await loadSelectedAgentDetails(this, selectedAgentId);
-    }
-    if (this.state.viewScope === 'agent') {
-      this.focusAgentConfigSection();
-    }
-  }
-
-  bindEvents() {
-    this.elements.refreshButton.addEventListener('click', async () => {
-      await this.loadAll();
-      if (this.state.selectedAgentId) {
-        await loadSelectedAgentDetails(this, this.state.selectedAgentId);
-      }
-    });
-
-    // Shared config
-    this.elements.sharedConfigForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      await this.saveSharedConfig();
-    });
-
-    // Service runtimes
-    this.elements.ragRuntimeForm?.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      await saveRagRuntimeConfig(this.elements, this.state, (m, t) => this.setStatus(m, t));
-    });
-    this.elements.testRagRuntimeBtn?.addEventListener('click', async () => {
-      await testRagRuntimeConnection(this.elements, (m, t) => this.setStatus(m, t));
-    });
-    this.elements.ragConfigChunkStrategySelect?.addEventListener('change', () => {
-      updateRagTierVisibility(this.elements);
-    });
-
-    // Agent panel
-    this.elements.agentList.addEventListener('click', async (event) => {
-      const trigger = event.target.closest('[data-agent-config-id]');
-      if (!trigger) { return; }
-      await loadSelectedAgentDetails(this, trigger.dataset.agentConfigId);
-    });
-
-    this.elements.fleetDefaultPanel?.addEventListener('submit', async (event) => {
-      if (event.target.matches('#fleetDefaultForm')) {
-        event.preventDefault();
-        await saveFleetDefault(this);
-      }
-    });
-    this.elements.fleetDefaultPanel?.addEventListener('click', async (event) => {
-      if (event.target.closest('#clearFleetDefaultButton')) {
-        event.preventDefault();
-        await clearFleetDefault(this);
-      }
-    });
-
-    bindCapabilityProvidersPanel(this);
-
-    this.elements.selectedAgentPanel.addEventListener('submit', async (event) => {
-      if (event.target.matches('#agentProfileForm')) {
-        event.preventDefault();
-        await saveSelectedAgentProfile(this);
-        return;
-      }
-      if (event.target.matches('#agentRuntimeConfigForm')) {
-        event.preventDefault();
-        await this.saveSelectedAgentRuntimeConfig(event.target);
-      }
-    });
-
-    this.elements.selectedAgentPanel.addEventListener('change', async (event) => {
-      const select = event.target.closest('.tool-auth-select');
-      if (select) {
-        await updateSelectedToolAuthMode(this, select.dataset.toolId, select.value);
-        return;
-      }
-      if (event.target.matches('#agentProviderInput')) {
-        const modelSelect = this.elements.selectedAgentPanel.querySelector('#agentModelInput');
-        if (modelSelect) {
-          modelSelect.innerHTML = renderModelOptionMarkup(this.state.providers, event.target.value, '');
-        }
-        this.state.selectedAgentAuth = createPendingAuthState();
-        renderSelectedAgentAuthState(this);
-        await refreshSelectedAgentAuthStatus(this);
-      }
-    });
-
-    this.elements.selectedAgentPanel.addEventListener('click', async (event) => {
-      const authButton = event.target.closest('[data-provider-auth-action]');
-      if (authButton) {
-        if (authButton.dataset.providerAuthAction === 'signin') {
-          await startSelectedAgentAuth(this);
-          return;
-        }
-        if (authButton.dataset.providerAuthAction === 'signout') {
-          await signOutSelectedAgentAuth(this);
-          return;
-        }
-      }
-      const bulkButton = event.target.closest('[data-bulk-profile-mode]');
-      if (!bulkButton) { return; }
-      await applyBulkTemplate(this, bulkButton.dataset.bulkProfileMode);
-    });
-  }
-
-  async loadAll() {
-    const startedAt = Date.now();
-    const agentScope = this.state.viewScope === 'agent';
-    this.setStatus(agentScope ? 'Loading bot configuration...' : 'Loading config ownership and admin data...', 'info');
-    logger.info('Loading config admin state', {
-      selectedAgentId: this.state.selectedAgentId || null,
-      viewScope: this.state.viewScope,
-    });
-    try {
-      const sharedReads = agentScope
-        ? [
-            Promise.resolve({ ownership: {} }),
-            Promise.resolve({ config: {} }),
-            Promise.resolve({ config: {} }),
-          ]
-        : [
-            fetchJson('/api/config/ownership'),
-            fetchJson('/api/config'),
-            requestJson('/api/config/rag').catch(() => ({ config: {} })),
-          ];
-      const [ownership, config, ragConfig, providers, agents] = await Promise.all([
-        ...sharedReads,
-        fetchJson('/api/providers'),
-        fetchJson('/api/agents'),
-      ]);
-
-      this.state.ownership = ownership.ownership || ownership;
-      this.state.config = config.config || config;
-      this.state.ragConfig = readRecord(ragConfig?.config);
-      this.state.providers = Array.isArray(providers) ? providers : [];
-      this.state.agents = Array.isArray(agents.agents) ? agents.agents : [];
-      this.state.selectedAgentId = resolveSelectedAgentId(this.state.selectedAgentId, this.state.agents);
-      await loadFleetDefault(this);
-      if (!agentScope) await loadCapabilityProviders(this);
-
-      this.render();
-      this.setStatus('Config admin loaded from mounted OSHAL APIs.', 'success');
-      logger.info('Loaded config admin state', {
-        durationMs: Date.now() - startedAt,
-        providerCount: this.state.providers.length,
-        agentCount: this.state.agents.length,
-        selectedAgentId: this.state.selectedAgentId || null,
-      });
-    } catch (error) {
-      logger.error('Failed to load config admin state', {
-        durationMs: Date.now() - startedAt,
-        error: serializeUiError(error),
-      });
-      this.setStatus(`Failed to load config admin data: ${toErrorMessage(error)}. Click Refresh to retry.`, 'error');
-    }
-  }
-
-  render() {
-    this.renderMetrics();
-    this.renderSharedConfigForm();
-    renderRagRuntimeForm(this.elements, this.state.ragConfig);
-    renderOwnershipCards(this.elements, this.state.ownership);
-    renderAgentCards(this.elements, this.state.agents);
-    renderFleetDefaultPanel(this);
-    renderCapabilityProvidersPanel(this);
-    renderSelectedAgentPanelMarkup(this);
-    renderSelectedAgentAuthState(this);
-  }
-
-  renderMetrics() {
-    setText('metricSharedRoutes', countItems(this.state.ownership?.globalConfig?.routes));
-    setText('metricProviders', this.state.providers.length);
-    setText('metricAgents', this.state.agents.length);
-    setText('metricLegacyRoutes', countItems(this.state.ownership?.legacyCompatibility?.routes));
-  }
-
-  renderSharedConfigForm() {
-    renderProviderOptions(this.elements.planProviderSelect, this.state.providers, this.state.config.planModeApiProvider);
-    renderProviderOptions(this.elements.actProviderSelect, this.state.providers, this.state.config.actModeApiProvider);
-    this.elements.planeUrlInput.value = readString(this.state.config.planeUrl);
-    this.elements.redisUrlInput.value = readString(this.state.config.redisUrl);
-    this.elements.gitRepoUrlInput.value = readString(this.state.config.gitRepoUrl);
-    this.elements.codeServerWorkspaceRootInput.value = readString(this.state.config.codeServerWorkspaceRoot);
-    this.elements.apiKeyInput.value = readString(this.state.config.apiKey);
-  }
-
-  async saveSharedConfig() {
-    const payload = buildSharedConfigPayload(this.elements);
-    this.setStatus('Saving shared OSHAL config...', 'info');
-    try {
-      await postJson('/api/config', payload);
-      this.state.config = { ...this.state.config, ...payload };
-      this.setStatus('Shared OSHAL config saved.', 'success');
-    } catch (error) {
-      this.setStatus(`Failed to save shared config: ${toErrorMessage(error)}`, 'error');
-    }
-  }
-
-  async saveSelectedAgentRuntimeConfig(formEl) {
-    if (!this.state.selectedAgentId) {
-      return;
-    }
-
-    this.setStatus('Saving bot runtime config...', 'info');
-    try {
-      await saveAgentRuntimeConfig(this.state.selectedAgentId, formEl);
-      this.state.selectedAgentRuntimeConfig = await loadAgentRuntimeConfig(this.state.selectedAgentId);
-      renderSelectedAgentPanelMarkup(this);
-      renderSelectedAgentAuthState(this);
-      this.setStatus('Bot runtime config saved.', 'success');
-    } catch (error) {
-      this.setStatus(`Failed to save bot runtime config: ${toErrorMessage(error)}`, 'error');
-    }
-  }
-
-  setStatus(message, tone) {
-    this.elements.statusBanner.textContent = message;
-    this.elements.statusBanner.dataset.tone = tone;
-  }
-
-  focusAgentConfigSection() {
-    const section = document.getElementById('agentConfigSection');
-    section?.scrollIntoView({ block: 'start' });
-  }
-}
-
-const app = new ConfigAdminApp();
-if (!window.AppView || !AppView.active()) {
-  app.init().catch((error) => {
-    logger.error('Config admin bootstrap failed', { error: serializeUiError(error) });
-    const banner = document.getElementById('statusBanner');
-    if (banner) {
-      banner.textContent = `Config admin failed to load: ${error.message}`;
-      banner.dataset.tone = 'error';
-    }
+(() => {
+  'use strict';
+  const byId = id => document.getElementById(id);
+  const query = new URLSearchParams(window.location.search);
+  const audienceReadOnly = ['company', 'family'].includes(query.get('audience'));
+  const paths = Object.freeze({
+    config: '/api/admin/config', fleet: '/api/agents/provider-switch', providers: '/api/providers',
+    capabilities: '/api/capability-providers', role: '/api/swarm/roles/me', logging: '/api/admin/logging',
   });
-}
+  const state = { answers: {}, busy: false, canWrite: false, requiresRefresh: false, mutationAttempted: false, fallbackText: '' };
+  const text = (id, value) => { byId(id).textContent = value; };
+  const map = value => value && typeof value === 'object' && !Array.isArray(value);
+  const errorText = error => error?.message || String(error);
+  const operator = role => role?.isRoot === true || role?.isOperator === true;
+  const configuredSpeech = provider => provider.configured === true && provider.status !== 'unimplemented';
+  function status(message, tone = 'info') {
+    text('statusBanner', message); byId('statusBanner').dataset.tone = tone;
+  }
+  async function request(path, options = {}) {
+    const response = await fetch(path, {
+      credentials: 'same-origin', cache: 'no-store',
+      ...options, headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
+    });
+    let data;
+    try { data = JSON.parse(await response.text()); }
+    catch { throw new Error(`Native ${path} returned no valid JSON receipt (HTTP ${response.status})`); }
+    if (!response.ok) {
+      const error = new Error(data?.detail || data?.message || `Native read/write refused (HTTP ${response.status})`);
+      error.status = response.status; throw error;
+    }
+    if (!map(data) && !Array.isArray(data)) throw new Error(`Invalid native response from ${path}`);
+    return data;
+  }
+  function validate(name, data) {
+    if (name === 'config' && !(map(data.effective) && map(data.effective.inference) && map(data.effective.voice_tts))) throw new Error('Invalid effective configuration receipt');
+    if (name === 'fleet' && !(map(data.fleetDefault) && typeof data.fleetDefault.providerId === 'string' && data.fleetDefault.providerId && typeof data.fleetDefault.modelId === 'string' && data.fleetDefault.modelId && Array.isArray(data.fleetDefault.fallbackOrder) && data.fleetDefault.fallbackOrder.every(id => typeof id === 'string' && id))) throw new Error('Invalid effective fleet receipt');
+    if (name === 'providers' && !(Array.isArray(data) && data.every(provider => map(provider) && typeof provider.id === 'string' && provider.id && Array.isArray(provider.models) && provider.models.every(model => map(model) && typeof model.id === 'string' && model.id)))) throw new Error('Invalid registered provider roster');
+    if (name === 'capabilities' && !Array.isArray(data.capabilities)) throw new Error('Invalid native capability roster');
+    if (name === 'role' && !(typeof data.principalId === 'string' && typeof data.sub === 'string' && typeof data.role === 'string' && typeof data.isOperator === 'boolean' && typeof data.isRoot === 'boolean')) throw new Error('Invalid current native authority receipt');
+    if (name === 'logging' && !(['error', 'warn', 'info', 'debug', 'trace'].includes(data.level) && map(data.module_levels) && data.audit_always_enabled === true && typeof data.source === 'string')) throw new Error('Invalid native logging receipt');
+    return data;
+  }
+  async function read(name) {
+    try { return { ok: true, data: validate(name, await request(paths[name])) }; }
+    catch (error) { return { ok: false, error: errorText(error), status: error.status }; }
+  }
+  function option(select, value, label, disabled = false) {
+    const node = document.createElement('option'); node.value = value; node.textContent = label; node.disabled = disabled; select.appendChild(node);
+  }
+  function providers() { return state.answers.providers?.ok ? state.answers.providers.data.filter(provider => typeof provider.id === 'string' && Array.isArray(provider.models)) : []; }
+  function speechSection() { return state.answers.capabilities?.ok ? state.answers.capabilities.data.capabilities.find(cap => cap.capability === 'tts') : null; }
+  function renderModels(selected) {
+    const select = byId('fleetModelSelect'); select.replaceChildren();
+    const provider = providers().find(provider => provider.id === byId('fleetProviderSelect').value);
+    for (const model of provider?.models || []) if (typeof model.id === 'string') option(select, model.id, model.name || model.id);
+    if (selected && !Array.from(select.options).some(option => option.value === selected)) option(select, selected, `${selected} (current value outside selectable roster)`, true);
+    if (!select.options.length) option(select, '', 'No registered model', true);
+    select.value = selected || provider?.defaultModelId || select.options[0].value;
+    updateControls();
+  }
+  function updateControls() {
+    const writable = state.canWrite && !state.busy && !state.requiresRefresh;
+    const fleet = writable && state.answers.fleet?.ok && state.answers.providers?.ok && providers().length > 0;
+    for (const id of ['fleetProviderSelect', 'fleetModelSelect', 'fleetFallbackInput', 'fleetSaveButton']) byId(id).disabled = !fleet;
+    const tts = speechSection();
+    const speech = writable && tts?.providers?.some(provider => configuredSpeech(provider) && (provider.providerId || provider.id) === tts.swarmDefault?.providerId);
+    for (const id of ['ttsProviderSelect', 'ttsVoiceInput', 'ttsSaveButton']) byId(id).disabled = !speech;
+    for (const id of ['loggingLevelSelect', 'loggingSaveButton']) byId(id).disabled = !(writable && state.answers.logging?.ok);
+    byId('refreshButton').disabled = state.busy;
+  }
+  function render() {
+    const { config, fleet, providers: roster, capabilities, role, logging } = state.answers;
+    state.canWrite = role?.ok && operator(role.data) && !audienceReadOnly;
+    text('deploymentValue', config?.ok ? config.data.deployment || 'Not reported' : 'Unavailable');
+    text('fleetValue', fleet?.ok ? fleet.data.fleetDefault.providerId : 'Unavailable');
+    text('providersValue', roster?.ok ? String(roster.data.length) : 'Unavailable');
+    text('authorityValue', role?.ok ? (audienceReadOnly ? `${role.data.role} · preview` : role.data.role || (operator(role.data) ? 'admin' : 'read only')) : 'Unverified');
+    text('identitySummary', role?.ok ? `Account: ${role.data.sub}. Principal: ${role.data.principalId}. Saves require current native administrator authority.` : `Current authority could not be read: ${role?.error || 'not loaded'}. Editing is disabled.`);
+    const fleetSelect = byId('fleetProviderSelect'); fleetSelect.replaceChildren();
+    for (const provider of providers()) option(fleetSelect, provider.id, provider.displayName || provider.name || provider.id);
+    const row = fleet?.ok ? fleet.data.fleetDefault : null;
+    if (row && !providers().some(provider => provider.id === row.providerId)) option(fleetSelect, row.providerId, `${row.providerId} (current value outside selectable roster)`, true);
+    if (!fleetSelect.options.length) option(fleetSelect, '', 'No registered provider', true);
+    if (row) fleetSelect.value = row.providerId;
+    renderModels(row?.modelId);
+    state.fallbackText = row ? (row.fallbackOrder.length ? row.fallbackOrder.join(', ') : 'none') : '';
+    byId('fleetFallbackInput').value = state.fallbackText;
+    text('fleetSummary', row ? `Effective fleet: ${row.providerId} / ${row.modelId}. Fallback: ${row.fallbackOrder.length ? row.fallbackOrder.join(' → ') : 'none'}. The next native call uses saved deployment defaults.` : `Fleet configuration unavailable: ${fleet?.error || 'not loaded'}.`);
+    const tts = speechSection(); const speechSelect = byId('ttsProviderSelect'); speechSelect.replaceChildren();
+    for (const provider of tts?.providers || []) {
+      const id = provider.providerId || provider.id;
+      if (typeof id === 'string') option(speechSelect, id, `${provider.displayName || provider.name || id} · ${provider.status || 'health unmeasured'}`, !configuredSpeech(provider));
+    }
+    if (!speechSelect.options.length) option(speechSelect, '', 'No configured native speech adapter', true);
+    speechSelect.value = tts?.swarmDefault?.providerId || '';
+    byId('ttsVoiceInput').value = tts?.swarmDefault?.voice || '';
+    byId('ttsVoiceOptions').replaceChildren();
+    for (const voice of tts?.providers?.find(provider => (provider.providerId || provider.id) === speechSelect.value)?.voices || []) option(byId('ttsVoiceOptions'), voice.id, voice.displayName || voice.name || voice.id);
+    text('speechSummary', tts?.swarmDefault?.providerId ? `Deployment speech default: ${tts.swarmDefault.providerId} / ${tts.swarmDefault.voice || 'voice not reported'}. Health is unmeasured.` : `Speech configuration unavailable: ${capabilities?.error || tts?.swarmDefault?.reason || 'no configured adapter'}.`);
+    const callerSpeech = config?.ok ? config.data.effective.voice_tts : null;
+    text('speechEffectiveSummary', callerSpeech ? `Your effective speech selection: ${callerSpeech.provider} / ${callerSpeech.model} / ${callerSpeech.default_voice}. This includes your individual speech preference.` : 'Your effective speech selection could not be read.');
+    const log = logging?.ok ? logging.data : null;
+    byId('loggingLevelSelect').value = log?.level || '';
+    text('loggingSummary', log ? `Effective level: ${log.level}. Source: ${log.source}. Required audit output is enabled.` : `Logging administration unavailable: ${logging?.error || 'not loaded'}.`);
+    byId('loggingOverrides').replaceChildren();
+    if (log) {
+      const entries = Object.entries(log.module_levels);
+      if (!entries.length) { const p = document.createElement('p'); p.textContent = 'No module overrides.'; byId('loggingOverrides').appendChild(p); }
+      for (const [module, level] of entries) { const p = document.createElement('p'); p.textContent = `${module}: ${level}`; byId('loggingOverrides').appendChild(p); }
+    }
+    byId('configSources').replaceChildren();
+    for (const [name, path] of Object.entries(paths)) {
+      const answer = state.answers[name]; const row = document.createElement('tr');
+      for (const value of [path, answer?.ok ? 'Native response received' : `Unavailable: ${answer?.error || 'not loaded'}`]) {
+        const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
+      }
+      byId('configSources').appendChild(row);
+    }
+    updateControls();
+  }
+  async function load() {
+    state.busy = true; updateControls(); status('Loading native configuration…');
+    const names = Object.keys(paths);
+    const answers = await Promise.all(names.map(read));
+    state.answers = Object.fromEntries(names.map((name, index) => [name, answers[index]]));
+    state.busy = false; state.requiresRefresh = false; render();
+    const main = ['config', 'fleet', 'providers', 'capabilities', 'role'];
+    if (main.every(name => state.answers[name].ok)) status(`Native configuration loaded. ${state.canWrite ? 'Administrator controls are available.' : 'Read-only for this account or portal preview.'}`);
+    else status('Some native configuration could not be read. Unavailable sections are disabled; each source shows its refusal.', 'error');
+  }
+  async function freshAuthority() {
+    const role = validate('role', await request(paths.role));
+    state.answers.role = { ok: true, data: role };
+    if (audienceReadOnly || !operator(role)) { state.canWrite = false; updateControls(); throw new Error('Current native administrator authority is required; this view is read-only'); }
+  }
+  async function mutate(path, payload) {
+    await freshAuthority();
+    const confirmation = await request('/confirmations', { method: 'POST' });
+    if (typeof confirmation.confirmation !== 'string' || !confirmation.confirmation) throw new Error('No native confirmation token was issued');
+    state.mutationAttempted = true;
+    return request(path, { method: 'PUT', headers: { 'x-oshal-confirm': confirmation.confirmation }, body: JSON.stringify(payload) });
+  }
+  async function save(action) {
+    if (state.requiresRefresh) { status('Refresh to verify the current configuration before another explicit save.', 'error'); return; }
+    if (!state.canWrite || state.busy) { status('Editing requires current native administrator authority and an explicit save.', 'error'); return; }
+    state.busy = true; state.mutationAttempted = false; updateControls(); status('Saving and checking native readback…');
+    try { const message = await action(); state.busy = false; await load(); status(message, 'success'); }
+    catch (error) {
+      state.busy = false; state.requiresRefresh = state.mutationAttempted;
+      if (error.status === 401 || error.status === 403) {
+        state.answers.role = { ok: false, error: errorText(error), status: error.status }; render();
+      } else updateControls();
+      status(`Change not confirmed: ${errorText(error)}. Refresh to verify the current configuration before another explicit save.`, 'error');
+    }
+  }
+  byId('fleetForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const providerId = byId('fleetProviderSelect').value; const modelId = byId('fleetModelSelect').value;
+    const typed = byId('fleetFallbackInput').value.trim();
+    save(async () => {
+      if (!providers().some(provider => provider.id === providerId && provider.models.some(model => model.id === modelId))) throw new Error('Select a registered provider and model');
+      const old = state.answers.fleet.data.fleetDefault;
+      const payload = { providerId, modelId };
+      if (typed !== state.fallbackText) {
+        const order = ['none', 'off', 'false', ''].includes(typed.toLowerCase()) ? [] : typed.split(',').map(id => id.trim()).filter(Boolean);
+        if (order.length > 16 || new Set(order).size !== order.length || order.some(id => !providers().some(provider => provider.id === id))) throw new Error('Fallback must list at most 16 distinct registered provider IDs');
+        payload.fallbackOrder = order;
+      }
+      if (providerId === old.providerId && modelId === old.modelId && payload.fallbackOrder === undefined) return 'No fleet changes to save.';
+      const receipt = validate('fleet', await mutate(`${paths.fleet}/fleet-default`, payload));
+      if (receipt.fleetDefault.providerId !== providerId || receipt.fleetDefault.modelId !== modelId
+          || payload.fallbackOrder && JSON.stringify(receipt.fleetDefault.fallbackOrder) !== JSON.stringify(payload.fallbackOrder)) throw new Error('Fleet write receipt differs from the requested change');
+      const actual = validate('fleet', await request(paths.fleet));
+      if (JSON.stringify(actual.fleetDefault) !== JSON.stringify(receipt.fleetDefault)) throw new Error('Effective fleet readback differs from the write receipt');
+      return `Fleet defaults saved and read back: ${providerId} / ${modelId}. The next native call uses them.`;
+    });
+  });
+  byId('ttsForm').addEventListener('submit', event => {
+    event.preventDefault(); const providerId = byId('ttsProviderSelect').value; const voice = byId('ttsVoiceInput').value.trim();
+    save(async () => {
+      const tts = speechSection();
+      if (!voice || voice.length > 128 || /[\r\n]/.test(voice) || !tts?.providers?.some(provider => configuredSpeech(provider) && (provider.providerId || provider.id) === providerId)) throw new Error('Use a bounded voice with the configured native speech provider');
+      if (tts.swarmDefault.providerId === providerId && tts.swarmDefault.voice === voice) return 'No speech changes to save.';
+      const receipt = await mutate(`${paths.capabilities}/swarm/tts`, { providerId, voice });
+      if (receipt.ok !== true || receipt.capability !== 'tts' || !['updated', 'unchanged'].includes(receipt.result?.status)) throw new Error('No acknowledged native speech update');
+      const actual = validate('capabilities', await request(paths.capabilities)).capabilities.find(cap => cap.capability === 'tts');
+      if (actual?.swarmDefault?.providerId !== providerId || actual.swarmDefault.voice !== voice) throw new Error('Deployment speech readback differs from the request');
+      return `Deployment voice saved and read back: ${providerId} / ${voice}. Individual speech preferences can take precedence.`;
+    });
+  });
+  byId('loggingForm').addEventListener('submit', event => {
+    event.preventDefault(); const level = byId('loggingLevelSelect').value;
+    save(async () => {
+      const old = state.answers.logging?.ok ? state.answers.logging.data : null;
+      if (!old) throw new Error('Native logging configuration must be read before changing it');
+      if (old.level === level) return 'No logging changes to save.';
+      const expected = { level: old.level, module_levels: old.module_levels };
+      const receipt = validate('logging', await mutate(paths.logging, { level, module_levels: old.module_levels, expected_config: expected }));
+      const actual = validate('logging', await request(paths.logging));
+      if (receipt.level !== level || actual.level !== level || JSON.stringify(receipt.module_levels) !== JSON.stringify(old.module_levels) || JSON.stringify(actual.module_levels) !== JSON.stringify(old.module_levels)) throw new Error('Logging readback differs from the requested level and preserved overrides');
+      return `Runtime log level saved and read back: ${level}. Required audit output remains enabled.`;
+    });
+  });
+  byId('fleetProviderSelect').addEventListener('change', () => renderModels());
+  byId('refreshButton').addEventListener('click', load);
+  byId('audienceNotice').hidden = !audienceReadOnly;
+  byId('agentScopeNotice').hidden = query.get('scope') !== 'agent';
+  load();
+})();

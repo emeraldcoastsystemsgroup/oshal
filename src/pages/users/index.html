@@ -22,6 +22,7 @@
   2 | maintainer@emeraldcoastsystemsgroup.com | Show the complete known roster, exact application-access links and reviewed metadata imports.
   3 | maintainer@emeraldcoastsystemsgroup.com | Adopt the shared live theme bootstrap and semantic surface colors.
   4 | maintainer@emeraldcoastsystemsgroup.com | AUTH-03: while root is unclaimed, a caller signed in through an identity provider (HTTPS issuer) sees their own exact issuer and subject and can redeem the installer setup code the local installer bound to exactly that identity (POST /api/swarm/roles/installer-root). Local and mock sessions see no form; operator recovery is unchanged.
+  5 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity: grants and root transfer take an enrolled principal UUID or unique subject; the invite form is disabled where invitations are not offered.
 -->
 <!DOCTYPE html>
 <html lang="en" data-theme="midnight">
@@ -186,7 +187,7 @@
         </table>
       </div>
       <form class="grant-form" id="grantForm" style="margin-top:16px">
-        <input id="grantSub" type="text" placeholder="Subject (sub) to grant" aria-label="Subject to grant" required />
+        <input id="grantSub" type="text" placeholder="Enrolled principal UUID or unique subject" aria-label="Subject to grant" required />
         <input id="grantEmail" type="email" placeholder="Email (optional)" aria-label="Email" />
         <select id="grantRole" aria-label="Role">
           <option value="admin">admin</option>
@@ -202,6 +203,7 @@
     <!-- Accounts (LOCAL_AUTH only) -->
     <div class="card" id="accountsCard" style="display:none">
       <div class="card-head"><h2>Local accounts</h2><span class="pill user" id="accountsCount"></span></div>
+      <p id="nativeAccountNotice" class="hint" hidden></p>
       <div class="table-scroll">
         <table>
           <thead><tr><th>Email</th><th>Status</th><th>Subject</th><th style="text-align:right">Actions</th></tr></thead>
@@ -242,15 +244,27 @@
 
     /** One fetch helper so every call surfaces the API's own error text rather than a generic one. */
     async function call(method, url, body) {
-      var init = { method: method, headers: { accept: 'application/json' } };
+      var init = { method: method, headers: { accept: 'application/json' }, credentials: 'same-origin' };
+      if (method !== 'GET' && /^\/api\/swarm\/roles(?:\/|$)/.test(url)) {
+        var confirmation = await call('POST', '/confirmations', {});
+        if (!confirmation || typeof confirmation.confirmation !== 'string') throw new Error('Confirmation was not issued.');
+        init.headers['x-oshal-confirm'] = confirmation.confirmation;
+      }
       if (body !== undefined) {
         init.headers['content-type'] = 'application/json';
         init.body = JSON.stringify(body);
       }
       var res = await fetch(url, init);
       var payload = null;
-      try { payload = await res.json(); } catch (e) { /* empty body is fine for some 2xx */ }
-      if (!res.ok) { var error = new Error((payload && payload.error) || ('HTTP ' + res.status)); error.status = res.status; throw error; }
+      try { payload = await res.json(); } catch (e) { /* handled by the mutation receipt check below */ }
+      if (!res.ok) { var error = new Error((payload && (payload.detail || payload.error)) || ('HTTP ' + res.status)); error.status = res.status; throw error; }
+      if (method !== 'GET' && /^\/api\/swarm\/roles(?:\/|$)/.test(url)) {
+        var valid = payload && typeof payload === 'object' && !Array.isArray(payload);
+        if (/\/transfer-root$/.test(url)) valid = valid && payload.transferred === true && typeof payload.principalId === 'string';
+        else if (/\/claim-root$/.test(url)) valid = valid && payload.rootClaimed === true && payload.callerIsRoot === true;
+        else valid = valid && payload.ok === true;
+        if (!valid) throw new Error('The server did not return a valid receipt. Reload to check the current state before retrying.');
+      }
       return payload;
     }
 
@@ -315,14 +329,17 @@
     function bindRootTransfer() {
       document.getElementById('transferForm').addEventListener('submit', async function (ev) {
         ev.preventDefault();
+        var button = this.querySelector('button[type="submit"]');
+        if (button.disabled) return;
         var to = document.getElementById('transferSub').value.trim();
         if (!to) return;
-        if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will be demoted to admin. This cannot be undone from your side.')) return;
+        if (!confirm('Transfer swarm root to:\n\n' + to + '\n\nYou will lose root privileges. Your existing grants determine your remaining access.')) return;
+        button.disabled = true;
         try {
           await call('POST', '/api/swarm/roles/transfer-root', { toSub: to });
           show('ok', 'Swarm root transferred.');
           await load();
-        } catch (e) { show('err', e.message); }
+        } catch (e) { show('err', e.message); } finally { button.disabled = false; }
       });
     }
 
@@ -348,10 +365,9 @@
         pill.innerHTML = '<span class="pill root">you are root</span>';
         body.innerHTML = '<p class="sub">You hold swarm root. <span class="root-id">' + esc(me.sub || '') + '</span></p>' +
           '<form class="grant-form" id="transferForm" style="margin-top:14px">' +
-          '<input id="transferSub" type="text" placeholder="Transfer root to subject (sub)" aria-label="Transfer root to subject" required />' +
+          '<input id="transferSub" type="text" placeholder="Existing principal UUID or unique subject" aria-label="Existing root transfer target" required />' +
           '<button class="danger" type="submit">Transfer root</button></form>' +
-          '<p class="hint">Transferring hands the swarm to another identity. You are demoted to ' +
-          '<strong>admin</strong>, not removed &mdash; you keep administrative access to the machine you still run.</p>';
+          '<p class="hint">Transferring hands root to an existing local account. Your existing grants determine your remaining access.</p>';
         bindRootTransfer();
         return;
       }
@@ -365,7 +381,7 @@
         tbody.innerHTML = '<tr><td colspan="5" class="empty">No saved roles assigned yet. Configured operator access is shown above.</td></tr>';
         return;
       }
-      var meSub = (state.me && state.me.sub) || '';
+      var meSub = (state.me && (state.me.principalId || state.me.sub)) || '';
       tbody.innerHTML = state.roles.map(function (r) {
         var isRoot = r.role === 'root';
         var when = r.grantedAt ? new Date(r.grantedAt).toLocaleString() : '';
@@ -392,7 +408,7 @@
           try {
             btn.disabled = true;
             if (act === 'revoke') {
-              if (!confirm('Remove all role privileges from:\n\n' + sub + '?')) { btn.disabled = false; return; }
+              if (!confirm('Remove swarm administrator access from:\n\n' + sub + '?')) { btn.disabled = false; return; }
               await call('DELETE', '/api/swarm/roles/' + encodeURIComponent(sub));
             } else {
               var next = btn.dataset.role === 'admin' ? 'user' : 'admin';
@@ -451,6 +467,18 @@
 
     async function loadAccounts() {
       var card = document.getElementById('accountsCard');
+      if (state.status.source === 'native_kernel') {
+        card.style.display = '';
+        document.getElementById('accountsCount').textContent = 'management unavailable';
+        document.getElementById('nativeAccountNotice').hidden = false;
+        document.getElementById('nativeAccountNotice').textContent = 'Password invitations, account activation and suspension are not available from this native console. The enrolled identity roster and supported swarm roles are shown above.';
+        card.querySelector('.table-scroll').hidden = true;
+        document.getElementById('inviteForm').hidden = true;
+        document.getElementById('inviteForm').style.display = 'none';
+        document.querySelectorAll('#inviteForm input, #inviteForm button').forEach(function (input) { input.disabled = true; });
+        document.getElementById('inviteResult').hidden = true;
+        return;
+      }
       try {
         var data = await call('GET', '/api/local-auth/users');
         card.style.display = '';
@@ -470,13 +498,23 @@
       document.getElementById('rosterCount').textContent = users.length + ' / ' + (roster?.users.length || 0);
       document.getElementById('providerAccounts').innerHTML = '<table><thead><tr><th>User</th><th>Identity</th><th>Sign-in / source</th><th>Application access</th></tr></thead><tbody>' + users.map(function (user) {
         var link = '/access?' + new URLSearchParams({ issuer: user.issuer, sub: user.sub }).toString();
-        return '<tr><td>' + esc(user.label || user.sub) + '</td><td class="mono">' + esc(user.issuer) + '<br>' + esc(user.sub) + '</td><td>' + esc(user.signIn) + '<br>' + esc(user.source) + '</td><td><a href="' + esc(link) + '">Manage application access</a></td></tr>';
+        return '<tr><td>' + esc(user.label || user.sub) + '</td><td class="mono">' + esc(user.issuer) + '<br>' + esc(user.sub) + '</td><td>' + esc(user.signIn) + '<br>' + esc(user.source || '') + '</td><td><a href="' + esc(link) + '">Manage application access</a></td></tr>';
       }).join('') + '</tbody></table>';
     }
     async function loadProviderAccounts() {
       var card = document.getElementById('providerAccountsCard');
       try {
-        roster = await call('GET', '/api/user-directory'); card.hidden = false; renderRoster();
+        roster = await call('GET', '/api/user-directory');
+        if (!roster || !Array.isArray(roster.users)) throw new Error('The native directory returned no valid identity roster.');
+        card.hidden = false; renderRoster();
+        if (state.status.source === 'native_kernel') {
+          document.getElementById('loginProviders').textContent = 'These are existing enrolled identities in your current native administration scope. Account state is not a live identity-provider health or sign-in check.';
+          document.querySelector('#providerAccounts th:nth-child(3)').textContent = 'Account state';
+          document.getElementById('rosterImport').hidden = true;
+          document.getElementById('historicalAccounts').hidden = true;
+          document.getElementById('businessMemberships').hidden = true;
+          return;
+        }
         document.getElementById('loginProviders').textContent = 'Enabled login providers: ' + (roster.providers.map(function (provider) { return provider.name; }).join(', ') || 'Local account configuration only') + '. Directory snapshots are not live directory synchronization.';
         document.getElementById('historicalReferences').innerHTML = (roster.historical.entries || []).map(function (entry) {
           return '<p><code>' + esc(entry.sub) + '</code> — ' + esc(entry.sources.join(', ')) + '</p>';
