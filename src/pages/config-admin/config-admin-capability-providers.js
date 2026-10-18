@@ -4,6 +4,7 @@
  * SEQ                 | AUTHOR                      | DESCRIPTION
  * -----------------------------------------------------------------------------
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-173 S1b: the config-admin card for the capability swarm defaults and provider prices. One form per capability (text to speech, speech to text, image, video) over GET /api/capability-providers: a select of every registered provider labelled with who pays and, when it cannot be used now, the missing piece the API names (the browser never re-derives availability); a voice box for text to speech (the API keeps a voice only beside a provider that lists it); Save is ONE write (PUT /swarm/:capability) that the next call follows with no restart, and Clear returns the capability to the provider the config or selector names. Each provider row carries its unit price (USD per character, audio second, image or video second) and quota label, saved with PUT /offers/:capability/:providerId; spend is priced at that rate from the next call; an empty box clears the price, and a box that does not hold a number is refused in place rather than sent. The API's refusal text is shown verbatim. A non-operator or a box without Postgres sees the panel unavailable with the API's own reason.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity: provider and offer fields are disabled when the caller may not change them.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -57,22 +58,24 @@ export function defaultSentence(section) {
 
 /** @description The select of providers, the row's provider selected, or the "no row" entry. */
 function providerSelect(section) {
+  const disabled = section.status === 'unconfigured' ? ' disabled' : '';
   const selected = section.swarmDefault && section.swarmDefault.source === 'row' ? section.swarmDefault.providerId : '';
   const options = (section.providers || []).map((p) => `<option value="${escapeHtmlAttribute(p.providerId)}"${p.providerId === selected ? ' selected' : ''}>${escapeHtml(providerLabel(p))}</option>`);
-  return `<select data-capability-provider aria-label="${escapeHtmlAttribute(TITLES[section.capability] || section.capability)} swarm default"><option value=""${selected ? '' : ' selected'}>(no row — the config or selector decides)</option>${options.join('')}</select>`;
+  return `<select data-capability-provider${disabled} aria-label="${escapeHtmlAttribute(TITLES[section.capability] || section.capability)} swarm default"><option value=""${selected ? '' : ' selected'}>(no row — the config or selector decides)</option>${options.join('')}</select>`;
 }
 
 /** @description One provider's price row. */
 function priceRow(section, provider) {
   const offer = provider.offer || {};
+  const disabled = section.priceEditingSupported === false ? ' disabled' : '';
   const unit = readString(section.priceUnit).replace(/s$/, '') || 'unit';
   return `<tr data-capability-offer="${escapeHtmlAttribute(provider.providerId)}">
       <td>${escapeHtml(readString(provider.displayName) || provider.providerId)}</td>
       <td>${escapeHtml(PAYERS[provider.costClass] || 'no cost class')}</td>
       <td>${provider.available ? 'yes' : escapeHtml(`no — ${readString(provider.detail) || provider.missing || ''}`)}</td>
-      <td><input data-offer-price type="number" min="0" step="any" value="${offer.unitPriceUsd ?? ''}" aria-label="USD per ${escapeHtmlAttribute(unit)} for ${escapeHtmlAttribute(provider.providerId)}" placeholder="USD per ${escapeHtmlAttribute(unit)}"></td>
-      <td><input data-offer-label type="text" maxlength="120" value="${escapeHtmlAttribute(offer.quotaLabel || '')}" placeholder="e.g. shared free tier"></td>
-      <td><button type="button" data-capability-offer-save="${escapeHtmlAttribute(provider.providerId)}">Save price</button></td>
+      <td><input data-offer-price${disabled} type="number" min="0" step="any" value="${offer.unitPriceUsd ?? ''}" aria-label="USD per ${escapeHtmlAttribute(unit)} for ${escapeHtmlAttribute(provider.providerId)}" placeholder="USD per ${escapeHtmlAttribute(unit)}"></td>
+      <td><input data-offer-label${disabled} type="text" maxlength="120" value="${escapeHtmlAttribute(offer.quotaLabel || '')}" placeholder="e.g. shared free tier"></td>
+      <td><button type="button" data-capability-offer-save="${escapeHtmlAttribute(provider.providerId)}"${disabled}>Save price</button></td>
     </tr>`;
 }
 
@@ -83,6 +86,7 @@ function priceRow(section, provider) {
  */
 export function capabilitySectionMarkup(section) {
   const cap = section.capability;
+  const disabled = section.status === 'unconfigured' ? ' disabled' : '';
   const voice = cap === 'tts'
     ? `<label class="field"><span>Voice</span><input data-capability-voice type="text" value="${escapeHtmlAttribute(section.swarmDefault?.source === 'row' ? section.swarmDefault.voice || '' : '')}" placeholder="the provider's own default voice"></label>`
     : '';
@@ -92,7 +96,7 @@ export function capabilitySectionMarkup(section) {
     <label class="field"><span>Swarm default</span>${providerSelect(section)}</label>${voice}
     <span class="field-copy field-wide" data-capability-status>${escapeHtml(defaultSentence(section))}</span>
     <div class="agent-config-actions field-wide">
-      <button type="submit">Save ${escapeHtml(TITLES[cap] || cap)} default</button>
+      <button type="submit"${disabled}>Save ${escapeHtml(TITLES[cap] || cap)} default</button>
       <button type="button" data-capability-clear="${escapeHtmlAttribute(cap)}"${section.swarmDefault?.source === 'row' ? '' : ' disabled'}>Clear</button>
     </div>
     <table class="field-wide"><thead><tr><th>Provider</th><th>Who pays</th><th>Usable now</th><th>Unit price (USD per ${escapeHtml(readString(section.priceUnit).replace(/s$/, '') || 'unit')})</th><th>Quota label</th><th></th></tr></thead><tbody>${prices}</tbody></table>

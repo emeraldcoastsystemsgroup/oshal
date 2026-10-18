@@ -76,16 +76,16 @@
 <body>
 <div class="wrap">
   <h1>Dead-letter queue</h1>
-  <p class="sub">Tickets the queue gave up on — quarantined poison work in
-  <code>oshal_queue_dlq</code>. Read-only except for requeue, which resets the attempt counter and
-  releases one ticket back to <code>approved</code> so the swarm picks it up again.</p>
+  <p class="sub">Your failed native tickets and their recorded failure history. A confirmed retry
+  creates a new linked ticket. Review its input and explicitly start it from the ticket board;
+  the original ticket and its history stay available.</p>
 
   <div id="gate" hidden></div>
 
   <div id="main" hidden>
     <div class="row">
       <label class="checkrow"><input type="checkbox" id="all" />
-        Also show tickets still accumulating attempts (not yet quarantined)</label>
+        Also show blocked tickets</label>
       <button class="primary" id="reload" type="button">Reload</button>
       <!-- Plain anchor: the export route sets an attachment Content-Disposition, so the browser
            saves the file. Fetching it into JS would just discard the filename. -->
@@ -94,7 +94,7 @@
 
     <div class="tiles">
       <div class="tile"><div class="k">Entries shown</div><div class="v" id="countShown">—</div></div>
-      <div class="tile"><div class="k">Quarantined</div><div class="v" id="countQuarantined">—</div></div>
+      <div class="tile"><div class="k">Failed</div><div class="v" id="countQuarantined">—</div></div>
       <div class="tile"><div class="k">Already requeued</div><div class="v" id="countRequeued">—</div></div>
     </div>
 
@@ -102,17 +102,16 @@
 
     <div class="tblwrap"><table>
       <thead><tr>
-        <th>Title</th><th>Ticket type</th><th>Ticket status</th><th>Attempts</th><th>State</th>
-        <th>Reason</th><th>Last error</th><th>Remedy</th><th>Last failure</th><th>Quarantined</th><th>Requeued</th><th></th>
+        <th>Title</th><th>Ticket type</th><th>Ticket status</th><th>Recorded failures</th><th>State</th>
+        <th>Reason</th><th>Last error</th><th>Remedy</th><th>Last failure</th><th>Failed</th><th>Retry created</th><th></th>
       </tr></thead>
       <tbody id="rows"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
     </table></div>
   </div>
 
-  <p class="foot">Requeue outcomes are reported per row exactly as the API answers them:
-  <strong>404</strong> the DLQ row is gone, <strong>409</strong> the ticket is not in a state that
-  can be released (it may already be running), <strong>503</strong> the DLQ store is unavailable.
-  A requeue that reports nothing changed did not silently work.</p>
+  <p class="foot">Retries preserve the original history. A queued child has not started work.
+  Repeated clicks refuse once a retry intent exists; inspect the linked ticket before starting
+  another operation. Missing permissions, confirmation or storage are shown as refusals.</p>
 </div>
 
 <script>
@@ -135,6 +134,15 @@
     const raw = await res.text();
     if (!raw) return null;
     try { return JSON.parse(raw); } catch { return null; }
+  }
+
+  async function confirmedHeaders() {
+    const response = await fetch('/confirmations', { method: 'POST', credentials: 'same-origin' });
+    const data = await readJson(response);
+    if (!response.ok || !data || typeof data.confirmation !== 'string') {
+      throw new Error((data && (data.detail || data.error)) || 'Confirmation could not be issued.');
+    }
+    return { 'Content-Type': 'application/json', 'x-oshal-confirm': data.confirmation };
   }
 
   function when(ts) {
@@ -182,10 +190,10 @@
     const span = document.createElement('span');
     const quarantined = Boolean(entry.quarantinedAt);
     span.className = 'pill ' + (quarantined ? 'q' : 'acc');
-    span.textContent = quarantined ? 'quarantined' : 'accumulating';
+    span.textContent = entry.status || (quarantined ? 'failed' : 'blocked');
     span.title = quarantined
-      ? 'The queue stopped retrying this ticket.'
-      : 'Still inside the retry budget — shown because "all" is on.';
+      ? 'This original ticket failed; its recorded history is retained.'
+      : 'This ticket is blocked and needs review.';
     td.appendChild(span);
     return td;
   }
@@ -197,7 +205,15 @@
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'mini';
-    btn.textContent = 'Requeue';
+    btn.textContent = 'Create linked retry';
+    btn.disabled = Boolean(entry.retryState);
+    if (entry.retryTicketId) {
+      const link = document.createElement('a');
+      link.className = 'btn mini';
+      link.href = '/?tab=tickets';
+      link.textContent = 'Review retry ' + String(entry.retryTicketId).slice(0, 8);
+      td.appendChild(link);
+    }
     const msg = document.createElement('div');
     msg.className = 'rowmsg';
     td.appendChild(btn);
@@ -208,15 +224,16 @@
       msg.className = 'rowmsg';
       msg.textContent = 'Requeueing…';
       try {
+        const headers = await confirmedHeaders();
         const res = await fetch('/api/queue/dlq/' + encodeURIComponent(entry.ticketId) + '/requeue', {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
         });
         const data = await readJson(res);
         if (res.ok && data && data.ok) {
           msg.className = 'rowmsg ok';
-          msg.textContent = 'Released back to the queue.';
+          msg.textContent = data.started === false ? 'Linked retry queued. Review its input in Tickets, then start it.' : 'Retry created.';
           await load();
           return;
         }
@@ -234,12 +251,13 @@
 
   /** Map each distinct failure the requeue route can answer with to its real meaning. */
   function explainRequeue(status, data) {
-    const raw = data && data.error ? String(data.error) : '';
+    const raw = data && (data.detail || data.error) ? String(data.detail || data.error) : '';
     if (status === 400) return 'Not requeued — the ticket id was rejected as malformed.';
     if (status === 401) return 'Not requeued — you are not signed in.';
-    if (status === 403) return 'Not requeued — operator privilege required.';
+    if (status === 403) return 'Not retried — original ticket owner required.';
+    if (status === 428) return 'Not retried — a fresh confirmation is required.';
     if (status === 404) return 'Not requeued — no dead-letter row for this ticket (it may already have been released).';
-    if (status === 409) return 'Not requeued — the ticket is not in a releasable state (invalid-state); it may already be running.';
+    if (status === 409) return 'Not retried — ' + (raw || 'the ticket already has a retry or its queue is unavailable.');
     if (status === 503) return 'Not requeued — the dead-letter store is unavailable. Try again once the DB is reachable.';
     return 'Not requeued — HTTP ' + status + (raw ? ' (' + raw + ')' : '');
   }
@@ -247,8 +265,8 @@
   function renderRows(entries) {
     if (!entries.length) {
       messageRow($all.checked
-        ? 'Nothing in the dead-letter table — no ticket has accumulated a failed attempt.'
-        : 'No quarantined tickets. Tick the box above to also list tickets still accumulating attempts.');
+        ? 'You have no failed or blocked tickets.'
+        : 'You have no failed tickets. Tick the box above to also show blocked tickets.');
       return;
     }
     $rows.replaceChildren();
@@ -289,10 +307,8 @@
       return;
     }
     if (res.status === 403) {
-      showGate('Operator only', 'The dead-letter queue lists other users’ ticket titles and failure text, '
-        + 'and requeue re-triggers swarm work — so all three of its routes are restricted to the operator '
-        + 'allowlist (OSHAL_OPERATOR_SUBS / OSHAL_OPERATOR_EMAILS). Your account is not on it. This is the '
-        + 'expected answer, not a fault.');
+      showGate('Access refused', 'Your current account cannot read this native ticket scope. '
+        + 'Only the original owner can create a linked retry.');
       return;
     }
     if (res.status === 401) {
@@ -315,7 +331,7 @@
     document.getElementById('countRequeued').textContent = String(requeued);
     renderRows(entries);
     say(entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies')
-      + (includeAll ? ' (quarantined + still accumulating)' : ' (quarantined only)') + '.');
+      + (includeAll ? ' (failed + blocked)' : ' (failed only)') + '.');
   }
 
   document.getElementById('reload').addEventListener('click', () => { void load(); });

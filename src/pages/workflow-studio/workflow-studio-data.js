@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Publish now takes its slug from the shared workflowTicketTypeSlug helper instead of an inline regex chain, so the Runs panel can scope to the same ticketType the queue is published under without the two derivations drifting apart.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Send the selected acknowledged draft version so a stale browser tab cannot overwrite a newer save.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Bind native publication/run to acknowledged caller drafts and display actual ticket transitions without changing legacy behavior.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity: queue drafts, definition create/update and compile-then-publish through /api/workflow-studio.
  */
 
 import { createUiLogger, serializeUiError } from '../shared/ui-debug.js';
@@ -34,7 +35,7 @@ export const workflowStudioDataMethods = {
 
       this.state.catalog = catalogPayload.catalog;
       this.state.nativeStudio = definitionsPayload.source === 'caller-drafts';
-      this.state.definitions = Array.isArray(definitionsPayload.definitions) ? definitionsPayload.definitions : [];
+      this.state.definitions = [...(definitionsPayload.queues || []), ...(definitionsPayload.definitions || [])];
       this.state.agents = Array.isArray(agentsPayload.agents) ? agentsPayload.agents : [];
       this.renderTemplates(Array.isArray(templatesPayload.templates) ? templatesPayload.templates : []);
 
@@ -43,7 +44,9 @@ export const workflowStudioDataMethods = {
         return;
       }
 
-      const activeDefinitionId = this.state.selectedDefinition?.id ?? this.state.definitions[0].id;
+      const requestedQueue = new URLSearchParams(window.location.search).get('queue');
+      const requestedId = requestedQueue && this.state.definitions.find(item => item.queueId === requestedQueue)?.id;
+      const activeDefinitionId = requestedId || this.state.selectedDefinition?.id || this.state.definitions[0].id;
       await this.selectDefinition(activeDefinitionId, true);
       this.setStatus('Workflow studio ready.', 'success');
     } catch (error) {
@@ -77,7 +80,7 @@ export const workflowStudioDataMethods = {
   async reloadDefinitions() {
     const payload = await requestJson('/api/workflow-studio/definitions');
     this.state.nativeStudio = payload.source === 'caller-drafts';
-    this.state.definitions = Array.isArray(payload.definitions) ? payload.definitions : [];
+    this.state.definitions = [...(payload.queues || []), ...(payload.definitions || [])];
     this.renderDefinitions();
     this.renderMetrics();
   },
@@ -122,6 +125,15 @@ export const workflowStudioDataMethods = {
 
   async selectDefinition(definitionId, silent = false) {
     try {
+      if (String(definitionId).startsWith('queue:')) {
+        const queue = String(definitionId).slice(6);
+        const payload = await requestJson(`/api/workflow-studio/queues/${encodeURIComponent(queue)}/draft`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        definitionId = payload.definition?.id;
+        if (!definitionId) throw new Error('Queue workflow draft was not acknowledged.');
+        await this.reloadDefinitions();
+      }
       const [definitionPayload, versionPayload] = await Promise.all([
         requestJson(`/api/workflow-studio/definitions/${definitionId}`),
         requestJson(`/api/workflow-studio/definitions/${definitionId}/versions`).catch(() => ({ versions: [] })),
@@ -150,6 +162,22 @@ export const workflowStudioDataMethods = {
     }
 
     try {
+      if (this.state.nativeStudio) {
+        const created = await requestJson('/api/workflow-studio/definitions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: `${definition.name}-copy`, description: definition.description }),
+        });
+        const copy = created.definition;
+        await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(copy.id)}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: copy.id, expectedVersion: copy.version, name: copy.name,
+            description: definition.description, nodes: definition.nodes, edges: definition.edges }),
+        });
+        await this.reloadDefinitions();
+        await this.selectDefinition(copy.id, true);
+        this.setStatus(`Duplicated ${definition.name}.`, 'success');
+        return;
+      }
       const payload = await requestJson(`/api/workflow-studio/definitions/${definition.id}/duplicate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -341,15 +369,26 @@ export const workflowStudioDataMethods = {
       return;
     }
     try {
-      const payload = await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/publish`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const headers = { 'Content-Type': 'application/json' };
+      const compiled = await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/compile`, { method: 'POST' });
+      const queuePublication = Boolean(definition.runtimeQueue || compiled.preview?.usesKernelBots);
+      if (queuePublication) {
+        const confirmation = await requestJson('/confirmations', { method: 'POST' });
+        if (!confirmation.confirmation) throw new Error('Queue publication confirmation was not acknowledged.');
+        headers['x-oshal-confirm'] = confirmation.confirmation;
+      }
+      const action = queuePublication ? 'publish-queue' : 'publish';
+      const payload = await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/${action}`, {
+        method: 'POST', headers,
         body: JSON.stringify({ expectedVersion: definition.version }),
       });
       if (!payload.publication?.runtimeRegistered || !payload.definition) throw new Error('Publication was not acknowledged.');
       this.state.selectedDefinition = payload.definition;
       await this.reloadDefinitions();
       this.render();
-      this.setStatus(`Published saved version ${definition.version}. Open Runs to supply input and start an owned ticket.`, 'success');
+      this.setStatus(queuePublication
+        ? `Published workflow for the ${payload.publication.ticketType} queue.`
+        : `Published saved version ${definition.version}. Open Runs to supply input and start an owned ticket.`, 'success');
     } catch (error) {
       logger.error('Native workflow publication refused', { error: serializeUiError(error) });
       this.setStatus(`Publish failed: ${readErrorMessage(error)}`, 'error');
@@ -367,15 +406,16 @@ export const workflowStudioDataMethods = {
     try {
       const created = await requestJson('/tickets', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: publication.ticketType }),
+        body: JSON.stringify({ kind: publication.ticketType, title: definition.name, description: input.prompt }),
       });
       pending.ticketId = created.ticket?.id;
       if (!pending.ticketId) throw new Error('Ticket creation was not acknowledged; inspect your tickets before retrying.');
-      const payload = await requestJson(`/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/run`, {
+      const runPath = definition.runtimeQueue ? `/tickets/${encodeURIComponent(pending.ticketId)}/start` : `/api/workflow-studio/definitions/${encodeURIComponent(definition.id)}/run`;
+      const payload = await requestJson(runPath, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...input, ticketId: pending.ticketId, expectedVersion: pending.version }),
+        body: JSON.stringify(definition.runtimeQueue ? input : { ...input, ticketId: pending.ticketId, expectedVersion: pending.version }),
       });
-      if (payload.status !== 'queued' || !payload.envelope?.id) throw new Error('Run dispatch was not acknowledged.');
+      if (!payload.envelope?.id) throw new Error('Run dispatch was not acknowledged.');
       this.state.pendingNativeRun = null;
       this.setStatus(`Ticket ${pending.ticketId} queued for its declared worker. Completion appears in Runs.`, 'success');
       return payload;

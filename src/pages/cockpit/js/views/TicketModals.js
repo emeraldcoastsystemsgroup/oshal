@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | Extracted from TicketView.js (1000-line cap)
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Session 22: Added Intake Assistant tab — conversational ticket creation with interview flow
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Read the project response envelope, distinguish unavailable from empty, and render project fields as text without changing creation authority.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Native kernel parity (2026-10-08 cutover): the new-ticket modal lists queues from /api/ticket-queues and reads the create response.
  */
 
 import { ApiClient } from '../api-client.js';
@@ -76,32 +77,17 @@ export function openCreateTicketModal(onSuccess) {
     });
   });
 
-  // Populate the ticket-type dropdown from registered swarm-app workflows.
-  // Built-ins (build/incident) are seeded in markup; we extend with each
-  // active app's ticketType (e.g. education from little-monsters) so the
-  // operator can route to manifest-contributed pipelines too.
+  // Every selectable queue comes from a loaded native workflow.
   (async () => {
     const sel = document.getElementById('ctType');
     if (!sel) return;
     try {
-      const res = await fetch('/api/swarm/apps');
-      if (!res.ok) return;
-      const data = await res.json();
-      // 'build' is hardcoded as the always-present option (framework-embedded).
-      // Other types (incident, education, custom) only appear when an active
-      // swarm-app manifest declares them — keeps the dropdown honest.
-      const seen = new Set(['build']);
-      for (const app of data.apps || []) {
-        if (app.status !== 'active') continue;
-        const t = app.manifest?.ticketType;
-        if (!t || seen.has(t)) continue;
-        seen.add(t);
-        const opt = document.createElement('option');
-        opt.value = t;
-        opt.textContent = `${t.charAt(0).toUpperCase() + t.slice(1)} — ${app.displayName || app.name} (${app.manifest?.workflow?.name || 'manifest workflow'})`;
-        sel.appendChild(opt);
-      }
-    } catch { /* leave hardcoded options */ }
+      const response = await fetch('/api/ticket-queues');
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Queue catalog unavailable');
+      sel.replaceChildren(...(payload.queues || []).map(queue => new Option(queue.name, queue.queueId)));
+      if ((payload.queues || []).some(queue => queue.queueId === 'task')) sel.value = 'task';
+    } catch (error) { sel.replaceChildren(new Option(error.message, '')); sel.disabled = true; }
   })();
 
   // Quick form submit
@@ -114,11 +100,13 @@ export function openCreateTicketModal(onSuccess) {
       const priority = document.getElementById('ctPriority')?.value;
       const ticketType = document.getElementById('ctType')?.value || 'build';
       try {
-        await fetch('/api/v1/tickets', {
+        const response = await fetch('/api/v1/tickets', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title, description, priority, ticketType }),
         });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ticket?.id) throw new Error(payload.detail || `Ticket creation failed (${response.status})`);
         overlay.remove();
         if (onSuccess) onSuccess();
       } catch (err) { alert('Failed: ' + err.message); }
