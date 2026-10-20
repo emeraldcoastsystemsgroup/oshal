@@ -6,11 +6,13 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A, node half: push the vendor login this machine holds (the file `codex login` / `claude auth login` wrote after its own localhost redirect, the way VS Code's extension does it) into the swarm under the user's verified OIDC session, and wait for a just-launched browser login to finish before pushing. The credential travels only over the session's cookie jar to the configured swarm origin.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity reads the same rail from Windows Credential Manager: snapshot by content fingerprint, keep the credential in memory, validate its vendor JSON, then post it through the authenticated Electron session.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Import path follows the rename of antigravity-credential.ts to antigravity-login.ts; no behaviour change.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
  */
 import { createHash } from 'crypto';
-import { readFileSync, statSync } from 'fs';
+import { appendFileSync, readFileSync, statSync } from 'fs';
+import { join } from 'path';
 import { homedir } from 'os';
-import { session } from 'electron';
+import { app, session } from 'electron';
 import type { ConfigStore } from './config';
 import { readAntigravityCredential } from './antigravity-login';
 import {
@@ -63,7 +65,27 @@ export function snapshotLogin(id: PushableLogin): LoginFileSnapshot {
  * @param id - Which login to push
  * @returns Classified outcome the renderer can show verbatim
  */
+/** Record only fixed metadata; never provider response text, local paths or credentials. */
+function logPush(id: string, phase: string, attempt: string, outcome?: PushOutcome): void {
+  const record = { event: 'account_push', at: new Date().toISOString(), attempt,
+    vendor: isPushableLogin(id) ? id : 'unknown', phase, status: outcome?.status,
+    ok: outcome?.ok, stored: outcome?.stored, verified: outcome?.verified };
+  const line = JSON.stringify(record);
+  console.info(line);
+  try { appendFileSync(join(app.getPath('userData'), 'account-transfers.jsonl'), line + '\n', { mode: 0o600 }); }
+  catch { console.warn('account_push_log_unavailable'); }
+}
+
+/** Send the local login and leave a credential-free record for every button press. */
 export async function pushLoginToSwarm(store: ConfigStore, id: string): Promise<PushOutcome> {
+  const attempt = createHash('sha256').update(String(Date.now()) + Math.random()).digest('hex').slice(0, 16);
+  logPush(id, 'started', attempt);
+  const result = await attemptPush(store, id);
+  logPush(id, 'completed', attempt, result);
+  return result;
+}
+
+async function attemptPush(store: ConfigStore, id: string): Promise<PushOutcome> {
   if (!isPushableLogin(id)) return failure('unknown_account', `"${id}" cannot be pushed to the swarm.`);
   const base = swarmBaseUrl(store.load());
   if (!base.ok) return failure(base.reason, base.detail);
@@ -100,7 +122,7 @@ export async function pushLoginToSwarm(store: ConfigStore, id: string): Promise<
 export async function swarmLoginStatus(
   store: ConfigStore,
   id: string,
-): Promise<{ ok: boolean; authenticated: boolean; needsSignIn: boolean; detail?: string }> {
+): Promise<{ ok: boolean; authenticated: boolean; needsSignIn: boolean; stored?: boolean; verified?: boolean; detail?: string }> {
   if (!isPushableLogin(id)) return { ok: false, authenticated: false, needsSignIn: false, detail: 'unknown account' };
   const base = swarmBaseUrl(store.load());
   if (!base.ok) return { ok: false, authenticated: false, needsSignIn: false, detail: base.detail };
@@ -111,8 +133,10 @@ export async function swarmLoginStatus(
     });
     if (response.status === 401) return { ok: false, authenticated: false, needsSignIn: true, detail: 'not signed in to the swarm' };
     if (response.status === 403) return { ok: false, authenticated: false, needsSignIn: false, detail: 'operator only' };
-    const body = (await readJson(response)) as { authenticated?: unknown } | null;
-    return { ok: response.ok, authenticated: body?.authenticated === true, needsSignIn: false };
+    const body = (await readJson(response)) as { authenticated?: unknown; stored?: unknown; verified?: unknown; detail?: string } | null;
+    return { ok: response.ok, authenticated: body?.authenticated === true, needsSignIn: false,
+      stored: body?.stored === true, verified: body?.verified === true,
+      detail: response.ok ? body?.detail : `Portal answered HTTP ${response.status}` };
   } catch (error) {
     return { ok: false, authenticated: false, needsSignIn: false, detail: error instanceof Error ? error.message : String(error) };
   }

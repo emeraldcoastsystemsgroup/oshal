@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Window style (Config -> Window, viewMode): Simple chat shows the plain text chat (chat-view.js) instead of the orb, and replies and worker events go to it with no speech; the orb window and every orb path are unchanged when the setting is Voice orb (the default).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Plain log lines on the worker channel ({ type: 'log' }: CLI setup, the print service) render as log lines and never reach the chat; they used to show as failed tasks (the Simple chat's "Failed: a task").
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Show native enrollment instead of requesting a legacy shared secret; disable legacy machine control in this mode.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
  */
 
 'use strict';
@@ -469,12 +470,14 @@ async function refreshSwarmState(id) {
   const el = $('swarm-' + id);
   if (!el) return;
   const s = await oshal.authSwarmStatus(id);
-  const text = s.authenticated ? 'swarm: signed in' : s.needsSignIn ? 'swarm: sign in to check' : s.ok ? 'swarm: not signed in' : ('swarm: ' + (s.detail || 'unknown'));
+  const text = s.verified ? 'swarm: model verified' : s.authenticated ? 'swarm: signed in' : s.needsSignIn ? 'swarm: sign in to check' : s.stored ? 'swarm: stored; verification required' : s.ok ? 'swarm: not signed in' : ('swarm: ' + (s.detail || 'unknown'));
   el.textContent = text;
   el.className = 'acct-swarm' + (s.authenticated ? ' on' : '');
 }
 function describePush(res) {
-  if (res.ok) return 'Pushed to the swarm' + (res.email ? ' as ' + res.email : '') + ' — its bots run on this login now.';
+  if (res.ok && res.verified) return 'Transferred — the swarm completed a real model request with this login.';
+  if (res.ok && res.stored) return 'Transferred and stored. ' + (res.detail || 'Model verification is still required.');
+  if (res.ok) return 'The swarm accepted the login' + (res.email ? ' as ' + res.email : '') + '. Check the swarm status for availability.';
   return res.detail || res.reason || 'Push failed.';
 }
 // The swarm import routes need the user's own session: a 401 means "sign in first", so do that once.

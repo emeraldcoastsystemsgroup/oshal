@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A guard for the satellite half: only codex/claude are pushable, only their exact vendor file shapes leave the machine, a public plain-http swarm is refused, a finished browser login is detected from the file the CLI writes, and every swarm answer (adopted / sign in / not operator / not demo / read-only mount / bad shape) classifies to the reason the Config screen shows.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the pushable set: the row resolves to .gemini/oauth_creds.json and /api/gemini/auth/import, its google-auth-library shape is accepted, no vendor's file passes as another's in EITHER direction, an access token with no refresh token is refused, and the swarm's two Gemini-specific 409s classify to the sentence the Config screen shows. gcloud stays unpushable on purpose - it is the row below gemini in the account list and writes an ADC file the swarm does not consume.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Google row is DORMANT, and this guard now pins that rather than its pushability. Measured on the operator's box 2026-09-22: the CLI's "Sign in with Google" answers "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products", so oauth_creds.json cannot be produced by a sign-in and a push button on that row would have nothing to send. What is asserted is the SHAPE of that dormancy: the target, its file, its import path and its accepted vendor shape are all still there and still correct (reviving it is deleting one block), while isPushableLogin refuses it - and it refuses it by reading the table, which is why the last case flips the flag and watches the answer change.
+ * 4 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -173,5 +174,16 @@ describe('@oshal/chat login push — what may leave the machine, and where', () 
     expect(classifyPushResponse(400, { error: 'claude_login_file_invalid', detail: 'no token' })).toMatchObject({ ok: false, refused: false, reason: 'claude_login_file_invalid', detail: 'no token' });
     expect(classifyPushResponse(502, 'not json')).toMatchObject({ ok: false, reason: 'http_502' });
     expect(classifyPushResponse(200, { success: false, error: 'x' })).toMatchObject({ ok: false });
+  });
+});
+
+describe('native kernel account verification', () => {
+  it('keeps storage distinct from measured model use and rejects an empty success page', () => {
+    expect(classifyPushResponse(200, {success: true, stored: true, verified: false}))
+      .toMatchObject({ok: true, stored: true, verified: false});
+    expect(classifyPushResponse(200, {success: true, stored: true, verified: true}))
+      .toMatchObject({ok: true, stored: true, verified: true});
+    expect(classifyPushResponse(200, null).ok).toBe(false);
+    expect(classifyPushResponse(404, null)).toMatchObject({ok: false, reason: 'http_404'});
   });
 });
