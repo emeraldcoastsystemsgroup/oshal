@@ -317,3 +317,25 @@ that secret is fully trusted (this matches the existing remote-client/A2A model)
 | `src/main/config.ts` | persisted settings (userData/config.json) |
 | `src/main/vpn.ts` | optional headscale `tailscale up` helper |
 | `src/renderer/*` | Jarvis orb + voice UI, config screen, worker activity log |
+
+## Native kernel enrollment
+
+The native Kubernetes installer starts infrastructure and initializes the administrator
+before opening the web portal. Sign in there, create a single-use connection code on
+**Get oshal on your devices**, then use the installer's `enroll` command. It installs
+the approved native client and keeps a device-bound token in a private credential file.
+A desktop package declaring `oshalNativeEnrollment: 1` accepts that file through
+`OSHAL_NATIVE_NODE_CREDENTIALS`. Its main process verifies ownership, file permissions
+and the exact configured server origin, then renews the native node heartbeat. The
+renderer shows native enrollment instead of a missing legacy shared secret.
+
+This mode connects device presence and opens the hosted portal. The person signs in
+separately; the device credential cannot become their browser session. It does not
+start the legacy worker, print service, local machine-control tools or import vendor
+logins. Native bot execution uses the separately installed audited `oshal-node` worker.
+Older installations keep the existing remote-client connection mode.
+
+Run `npm run test:native-enrollment` to build and exercise the real HTTP fixture tests:
+credential ownership/origin binding, successful and refused heartbeats, redirect refusal
+and separation from browser chat. The Kubernetes installed-environment acceptance adds
+actual portal login, minted code redemption, ownership readback and Electron UI checks.

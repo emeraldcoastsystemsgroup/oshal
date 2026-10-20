@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | ADR-137 amendment A: the Codex and Claude rows show the swarm's login state and offer "Log in + push" (vendor login here, pushed when it lands) and "Push to swarm" (push the login this machine already holds); a 401 offers the swarm sign-in and retries once.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Window style (Config -> Window, viewMode): Simple chat shows the plain text chat (chat-view.js) instead of the orb, and replies and worker events go to it with no speech; the orb window and every orb path are unchanged when the setting is Voice orb (the default).
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Plain log lines on the worker channel ({ type: 'log' }: CLI setup, the print service) render as log lines and never reach the chat; they used to show as failed tasks (the Simple chat's "Failed: a task").
+ * 8 | maintainer@emeraldcoastsystemsgroup.com   | Show native enrollment instead of requesting a legacy shared secret; disable legacy machine control in this mode.
  */
 
 'use strict';
@@ -401,8 +402,14 @@ function applyViewMode(mode) {
 }
 async function loadConfig() {
   const cfg = await oshal.getConfig();
+  const nativeEnrollment = Boolean(cfg.nativeNodeCredentials);
+  $('nativeEnrollmentStatus').hidden = !nativeEnrollment;
+  $('legacySecretLabel').hidden = nativeEnrollment;
+  $('legacyHeaderLabel').hidden = nativeEnrollment;
+  $('workerEnabled').disabled = nativeEnrollment;
+  $('allowSystemControl').disabled = nativeEnrollment;
   CONFIG_FIELDS.forEach((k) => { if ($(k)) $(k).value = cfg[k] || ''; });
-  $('workerEnabled').checked = cfg.workerEnabled !== false;
+  $('workerEnabled').checked = !nativeEnrollment && cfg.workerEnabled !== false;
   $('allowSystemControl').checked = cfg.allowSystemControl === true;
   $('fullJarvisEnabled').checked = cfg.fullJarvisEnabled === true;
   $('backgroundWakeEnabled').checked = cfg.backgroundWakeEnabled === true;
@@ -415,7 +422,7 @@ async function loadConfig() {
   applyBackgroundWakeStatus(await oshal.getBackgroundWakeStatus());
   $('viewMode').value = cfg.viewMode === 'chat' ? 'chat' : 'orb';
   applyViewMode(cfg.viewMode);
-  if (!cfg.controlPlaneUrl || !cfg.sharedSecret) showSettings(true);
+  if (!cfg.controlPlaneUrl || (!cfg.sharedSecret && !nativeEnrollment)) showSettings(true);
 }
 async function saveSettings() {
   const update = {};

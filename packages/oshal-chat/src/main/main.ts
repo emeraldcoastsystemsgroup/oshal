@@ -20,6 +20,7 @@
  * 15 | maintainer@emeraldcoastsystemsgroup.com   | espn:connect / espn:status / espn:forget — the Sports Edge fantasy connector's credential is a pair of ESPN account session cookies, not a token, so it is captured from a real ESPN sign-in window on this machine instead of asking the user to open DevTools and copy two values by hand. The window runs in its own partition (a swarm sign-out clears defaultSession, which would otherwise wipe the ESPN jar as a side effect).
  * 16 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) is now one of the swarm-adoptable logins, so the comments naming the account list and the pushable subset say so. No handler changed: loginAndPush, auth:push and auth:swarm-status are all generic over isPushableLogin/LOGIN_TARGETS, which is exactly why the third vendor needed no code here.
  * 17 | maintainer@emeraldcoastsystemsgroup.com   | The user agent comes from presentableUserAgent (user-agent.ts), which removes the app's own name token whatever it is. The hard-coded `oshal-chat/` scrub missed `@oshal/chat/0.5.2`, the name an npm install reports, so Google refused the swarm sign-in window on Linux (DGX Spark, 2026-10-05).
+ * 18 | maintainer@emeraldcoastsystemsgroup.com   | Connect an enrolled native desktop through device heartbeats; keep legacy workers out of this mode.
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
@@ -27,6 +28,7 @@ import { join } from 'path';
 import { parseLaunchAppArg, parseMakeShortcutsArg, prettifyAppTitle } from './app-launch';
 import { presentableUserAgent } from './user-agent';
 import { ConfigStore, type OshalChatConfig } from './config';
+import { NativeNodeClient } from './native-node-client';
 import { MeshChatClient, type ChatReply, type MeshStatus } from './mesh-client';
 import { resolveEnrollmentIdentity } from './enrollment';
 import { TaskWorker, type WorkerEvent } from './worker';
@@ -69,7 +71,7 @@ const cockpitHooks: CockpitWindowHooks = {
 
 const store = new ConfigStore();
 let win: BrowserWindow | null = null;
-let client: MeshChatClient | null = null;
+let client: MeshChatClient | NativeNodeClient | null = null;
 let worker: TaskWorker | null = null;
 let printService: PrintService | null = null;
 
@@ -282,6 +284,13 @@ async function connect(): Promise<MeshStatus> {
   await teardownClient();
 
   let config = store.load();
+  if (config.nativeNodeCredentials) {
+    const native = new NativeNodeClient(config.nativeNodeCredentials, config.controlPlaneUrl,
+      (status) => send('mesh:status', status));
+    client = native;
+    await native.start();
+    return native.status(true);
+  }
   if (!config.controlPlaneUrl || !config.sharedSecret) {
     return { connected: false, clientId: config.clientId, agentId: '', lastError: 'Control-plane URL and shared secret are required.' };
   }
@@ -622,7 +631,7 @@ app.whenReady().then(async () => {
   // Auto-connect on launch when already configured, so the node rejoins the swarm
   // (and its worker starts pulling) without a manual click. Errors are surfaced to
   // the UI via the status channel inside connect().
-  if (cfg.controlPlaneUrl && cfg.sharedSecret) {
+  if (cfg.controlPlaneUrl && (cfg.sharedSecret || cfg.nativeNodeCredentials)) {
     connect()
       .then((status) => send('mesh:status', status))
       .catch((error) => send('mesh:status', {
