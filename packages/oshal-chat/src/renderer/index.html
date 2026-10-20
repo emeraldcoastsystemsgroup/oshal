@@ -69,14 +69,15 @@
     <!-- ============ Config screen ============ -->
     <section id="settings" class="settings hidden">
       <h2>Connection</h2>
+      <p id="nativeEnrollmentStatus" hidden>Native enrollment is configured. Your device credential is managed by the installer. Sign in separately in the portal to use your applications.</p>
       <label>Control-plane URL
         <input id="controlPlaneUrl" type="text" placeholder="http://100.x.x.x:5000 (tailnet) or http://localhost:35457" />
       </label>
-      <label>Shared secret
+      <label id="legacySecretLabel">Shared secret
         <input id="sharedSecret" type="password" placeholder="REMOTE_CLIENT_SHARED_SECRET" />
       </label>
       <div class="row">
-        <label>Auth header
+        <label id="legacyHeaderLabel">Auth header
           <input id="authHeaderName" type="text" placeholder="x-remote-client-key" />
         </label>
         <label>Target bot agent id <span class="hint">(blank → default chat agent)</span>

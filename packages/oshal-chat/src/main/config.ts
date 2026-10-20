@@ -11,6 +11,7 @@
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Version desktop settings and make the hosted Full-Jarvis surface the default for new/unset profiles without overriding an explicit orb-only choice.
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | printServicePort (OSHAL_PRINT_SERVICE_PORT) so a node can advertise its print-to-rag printer alongside a standalone print-drop already holding 631. A non-numeric env value is REJECTED rather than becoming NaN and landing the printer on a random port.
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | viewMode (OSHAL_VIEW): 'orb' keeps the voice orb (the default, unchanged); 'chat' shows the simple text chat in this window and opens /simple in the Full Jarvis window (docs/architecture/simple-chat.md). Any other value reads as 'orb'.
+ * 9 | maintainer@emeraldcoastsystemsgroup.com   | Accept a private native enrollment file without importing a device token into browser authentication.
  */
 
 import { app } from 'electron';
@@ -24,6 +25,8 @@ import { dirname, join } from 'path';
 export interface OshalChatConfig {
   /** Persisted schema/migration version for desktop settings. */
   configVersion: number;
+  /** Private native node credential file; the token stays in the main process. */
+  nativeNodeCredentials?: string;
   /** Base URL of the OSHAL control plane (a tailnet address when using headscale). */
   controlPlaneUrl: string;
   /** Shared secret sent in the auth header (REMOTE_CLIENT_SHARED_SECRET on the server). */
@@ -170,6 +173,12 @@ function readEnvSeed(): Partial<OshalChatConfig> {
     OSHAL_WAKE_NAME, OSHAL_ENROLLMENT_TOKEN, OSHAL_CLIENT_ID,
     OSHAL_PRINT_SERVICE, OSHAL_PRINT_SERVICE_DIR, OSHAL_PRINT_SERVICE_PORT, OSHAL_VIEW,
   } = process.env;
+
+  if (process.env.OSHAL_NATIVE_NODE_CREDENTIALS) {
+    seed.nativeNodeCredentials = process.env.OSHAL_NATIVE_NODE_CREDENTIALS;
+    seed.workerEnabled = false;
+    seed.printServiceEnabled = false;
+  }
 
   // A DEVICE-BOUND token names the device it may register as, so when the swarm mints the
   // credential first -- which is exactly what the cockpit's one-click installer does -- the

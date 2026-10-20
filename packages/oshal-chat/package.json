@@ -25,7 +25,8 @@
     "test:windows-boundary": "npm run build && node scripts/start-electron.js dist/main/windows-desktop-boundary.js",
     "test:espn-login": "npm run build && node scripts/start-electron.js dist/main/espn-login-boundary.js",
     "test:remote": "node scripts/test-remote-control.mjs",
-    "test:wake": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-background-wake.ps1"
+    "test:wake": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/test-background-wake.ps1",
+    "test:native-enrollment": "npm run build && node --test scripts/test-native-enrollment.cjs"
   },
   "dependencies": {
     "electron": "43.3.0"
@@ -59,5 +60,6 @@
     "type": "git",
     "url": "git+https://github.com/emeraldcoastsystemsgroup/oshal.git",
     "directory": "packages/oshal-chat"
-  }
+  },
+  "oshalNativeEnrollment": 1
 }

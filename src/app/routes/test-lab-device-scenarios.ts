@@ -6,6 +6,7 @@
  * 1 | maintainer@emeraldcoastsystemsgroup.com   | AI Test Lab registration for the remote-node binding card (BACKLOG "Node enrolment is the blocker for every remote-node capability"). A node's enrolment succeeds or fails on one fact - did the computer come up BOUND to a person - and a node that installed, connected and heartbeats but bound to nobody looks identical to a working one while receiving no owner-scoped work at all. The live step reads the caller's own device list and checks the surface can say, per computer, who it is bound to, without any owner subject id inside what it renders. Read-only: it registers nothing, adopts nothing and dispatches nothing.
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Register the node chat reply guard (a refused turn reaches the node with its reason, not "empty reply") as an integration regression test of the remote-node card.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Register the node-runs-its-own-chat guards (the real route handing the turn to the requesting node; the node's Antigravity executor).
+ * 4 | maintainer@emeraldcoastsystemsgroup.com   | Register native desktop device credential, heartbeat and session-isolation regressions.
  *
  * @module routes/test-lab-device-scenarios
  */
@@ -66,6 +67,7 @@ export const DEVICE_SCENARIOS: Scenario[] = [{
   id: 'device-node-bindings', title: 'Remote nodes — whether each computer finished enrolling', group: 'tool',
   description: 'Reads the computers registered to you and checks the cockpit can say, for each one, who it is bound to. A node that installed and connected but bound to nobody heartbeats exactly like a working one and receives no work dispatched to you; this is the read that tells them apart. Read-only.',
   regressionTests: [
+    { level: 'integration', path: 'packages/oshal-chat/scripts/test-native-enrollment.cjs' },
     { level: 'unit', path: 'tests/unit/device-ownership-visible.spec.ts' },
     { level: 'unit', path: 'tests/unit/remote-client-device-ownership.spec.ts' },
     { level: 'unit', path: 'tests/unit/device-access-dispatch.spec.ts' },
