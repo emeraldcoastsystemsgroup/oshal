@@ -9,6 +9,7 @@
  * 4 | maintainer@emeraldcoastsystemsgroup.com   | Google joins the pushable logins as a THIRD row, not a third code path: the table already carried the file/import/status triple, so widening PushableLogin plus one LOGIN_TARGETS entry and one parseLoginFile arm is the whole client half, and the popup-login + push flow picks it up with no special-casing. The file is `.gemini/oauth_creds.json` — read from the installed @google/gemini-cli bundle, where packages/core/src/config/storage.ts declares `OAUTH_FILE = "oauth_creds.json"` under `getGlobalGeminiDir()` = `<home>/.gemini`. Its shape is the google-auth-library Credentials object (snake_case access_token/refresh_token), which is why it gets its own arm rather than reusing codex's `tokens` block or claude's `claudeAiOauth` block.
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The Google target is marked DORMANT rather than pushable, and isPushableLogin now reads that flag off the table instead of listing ids. Measured on the operator's box 2026-09-22: choosing "Sign in with Google" in the `gemini` CLI answers "Failed to sign in. Message: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google". oauth_creds.json therefore cannot be produced by a sign-in any more, so a Push to swarm button on that row is a button with nothing to send - the same class of defect as offering a brain option nothing can run. The row, the file shape, the parse arm and the swarm-side import route are all KEPT: they are correct, they are proven by their own guards, and they cost nothing while dormant. Reviving the row is deleting one `dormant` block.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity joins the same push rail: its Windows Credential Manager blob is the vendor JSON consumed by agy's headless token file, so the node validates and posts that shape to the dedicated import/status endpoints.
+ * 7 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
  */
 
 /** The vendor logins the swarm can adopt through the authenticated operator rail. */
@@ -173,6 +174,8 @@ export interface PushOutcome {
   reason?: string;
   detail?: string;
   email?: string;
+  stored?: boolean;
+  verified?: boolean;
 }
 
 /**
@@ -337,8 +340,9 @@ export function classifyPushResponse(status: number, body: unknown): PushOutcome
   const email = typeof record.email === 'string' ? record.email
     : typeof record.account === 'string' ? record.account : undefined;
   const hint = typeof record.hint === 'string' ? record.hint : typeof record.detail === 'string' ? record.detail : undefined;
-  if (status >= 200 && status < 300 && record.success !== false) {
-    return { ok: true, status, needsSignIn: false, refused: false, email };
+  if (status >= 200 && status < 300 && record.success === true) {
+    return { ok: true, status, needsSignIn: false, refused: false, email,
+      stored: record.stored === true, verified: record.verified === true, detail: hint };
   }
   if (status === 401) return { ok: false, status, needsSignIn: true, refused: false, reason: 'sign_in_required', detail: 'Sign in to the swarm, then push again.' };
   if (status === 403) return { ok: false, status, needsSignIn: false, refused: true, reason: 'not_operator', detail: 'Only the deployment operator can push a login into the swarm.' };

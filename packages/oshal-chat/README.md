@@ -339,3 +339,19 @@ Run `npm run test:native-enrollment` to build and exercise the real HTTP fixture
 credential ownership/origin binding, successful and refused heartbeats, redirect refusal
 and separation from browser chat. The Kubernetes installed-environment acceptance adds
 actual portal login, minted code redemption, ownership readback and Electron UI checks.
+
+### Native account transfer diagnostics
+
+Codex and Claude pushes use the web portal's signed-in operator session. A native
+node's device token is not a browser login. Each push writes `started` and
+`completed` records to `account-transfers.jsonl` in this desktop profile's user-data
+directory and to its process log. The records contain only an attempt identifier,
+vendor, time, HTTP status and outcome flags; credentials and provider text are omitted.
+
+The native portal distinguishes stored credentials from a recent completed model
+request. The account row says **model verified** only for the latter. Expired
+verification says **stored; verification required**. A push does not itself change
+bot defaults. HTTP failures are displayed rather than a generic unknown state.
+
+Regression coverage: `tests/unit/node-login-push.spec.ts`, also registered in the
+existing vendor-login Test Lab scenario and `npm run test:vendor-login`.
