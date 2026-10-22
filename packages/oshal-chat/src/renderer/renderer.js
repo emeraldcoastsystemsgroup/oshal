@@ -12,6 +12,7 @@
  * 7 | maintainer@emeraldcoastsystemsgroup.com   | Plain log lines on the worker channel ({ type: 'log' }: CLI setup, the print service) render as log lines and never reach the chat; they used to show as failed tasks (the Simple chat's "Failed: a task").
  * 8 | maintainer@emeraldcoastsystemsgroup.com   | Show native enrollment instead of requesting a legacy shared secret; disable legacy machine control in this mode.
  * 9 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
+ * 10 | maintainer@emeraldcoastsystemsgroup.com | Disable Push to swarm, with the reason in its title, when the swarm status probe says the portal cannot receive that login (no route, no account runtime, operator only or unreachable); a sign-in prompt keeps the button because the push signs in first.
  */
 
 'use strict';
@@ -473,6 +474,9 @@ async function refreshSwarmState(id) {
   const text = s.verified ? 'swarm: model verified' : s.authenticated ? 'swarm: signed in' : s.needsSignIn ? 'swarm: sign in to check' : s.stored ? 'swarm: stored; verification required' : s.ok ? 'swarm: not signed in' : ('swarm: ' + (s.detail || 'unknown'));
   el.textContent = text;
   el.className = 'acct-swarm' + (s.authenticated ? ' on' : '');
+  // A push the portal cannot receive (no route, no account runtime, operator-only, unreachable) is not offered.
+  const push = $('accounts').querySelector('[data-push="' + id + '"]');
+  if (push && s.canPush === false) { push.disabled = true; push.title = 'Push unavailable: ' + (s.detail || s.receiver || 'no receiver'); }
 }
 function describePush(res) {
   if (res.ok && res.verified) return 'Transferred — the swarm completed a real model request with this login.';
