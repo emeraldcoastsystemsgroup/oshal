@@ -7,6 +7,7 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity reads the same rail from Windows Credential Manager: snapshot by content fingerprint, keep the credential in memory, validate its vendor JSON, then post it through the authenticated Electron session.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | Import path follows the rename of antigravity-credential.ts to antigravity-login.ts; no behaviour change.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | The status probe now reports a receiver state through classifyStatusResponse, and a transport failure is logged as a credential-free status_probe line, so the renderer can disable a push the portal cannot receive and the log shows why.
  */
 import { createHash } from 'crypto';
 import { appendFileSync, readFileSync, statSync } from 'fs';
@@ -17,7 +18,9 @@ import type { ConfigStore } from './config';
 import { readAntigravityCredential } from './antigravity-login';
 import {
   LOGIN_TARGETS,
+  type SwarmLoginState,
   classifyPushResponse,
+  classifyStatusResponse,
   importRequestBody,
   isPushableLogin,
   loginFileChanged,
@@ -122,23 +125,22 @@ async function attemptPush(store: ConfigStore, id: string): Promise<PushOutcome>
 export async function swarmLoginStatus(
   store: ConfigStore,
   id: string,
-): Promise<{ ok: boolean; authenticated: boolean; needsSignIn: boolean; stored?: boolean; verified?: boolean; detail?: string }> {
-  if (!isPushableLogin(id)) return { ok: false, authenticated: false, needsSignIn: false, detail: 'unknown account' };
+): Promise<SwarmLoginState> {
+  if (!isPushableLogin(id)) return { ok: false, authenticated: false, needsSignIn: false, receiver: 'unreachable', canPush: false, detail: 'unknown account' };
   const base = swarmBaseUrl(store.load());
-  if (!base.ok) return { ok: false, authenticated: false, needsSignIn: false, detail: base.detail };
+  if (!base.ok) return { ok: false, authenticated: false, needsSignIn: false, receiver: 'unreachable', canPush: false, detail: base.detail };
   try {
     const response = await session.defaultSession.fetch(`${base.url}${LOGIN_TARGETS[id].statusPath}`, {
       credentials: 'include',
       headers: { accept: 'application/json' },
     });
-    if (response.status === 401) return { ok: false, authenticated: false, needsSignIn: true, detail: 'not signed in to the swarm' };
-    if (response.status === 403) return { ok: false, authenticated: false, needsSignIn: false, detail: 'operator only' };
-    const body = (await readJson(response)) as { authenticated?: unknown; stored?: unknown; verified?: unknown; detail?: string } | null;
-    return { ok: response.ok, authenticated: body?.authenticated === true, needsSignIn: false,
-      stored: body?.stored === true, verified: body?.verified === true,
-      detail: response.ok ? body?.detail : `Portal answered HTTP ${response.status}` };
+    const state = classifyStatusResponse(response.status, await readJson(response));
+    if (!state.canPush) console.info(JSON.stringify({ event: 'status_probe', at: new Date().toISOString(), vendor: id, status: response.status, receiver: state.receiver }));
+    return state;
   } catch (error) {
-    return { ok: false, authenticated: false, needsSignIn: false, detail: error instanceof Error ? error.message : String(error) };
+    const detail = error instanceof Error ? error.message : String(error);
+    console.info(JSON.stringify({ event: 'status_probe', at: new Date().toISOString(), vendor: id, receiver: 'unreachable' }));
+    return { ok: false, authenticated: false, needsSignIn: false, receiver: 'unreachable', canPush: false, detail };
   }
 }
 

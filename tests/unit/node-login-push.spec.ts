@@ -7,12 +7,14 @@
  * 2 | maintainer@emeraldcoastsystemsgroup.com   | Google (Gemini) joins the pushable set: the row resolves to .gemini/oauth_creds.json and /api/gemini/auth/import, its google-auth-library shape is accepted, no vendor's file passes as another's in EITHER direction, an access token with no refresh token is refused, and the swarm's two Gemini-specific 409s classify to the sentence the Config screen shows. gcloud stays unpushable on purpose - it is the row below gemini in the account list and writes an ADC file the swarm does not consume.
  * 3 | maintainer@emeraldcoastsystemsgroup.com   | The Google row is DORMANT, and this guard now pins that rather than its pushability. Measured on the operator's box 2026-09-22: the CLI's "Sign in with Google" answers "This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products", so oauth_creds.json cannot be produced by a sign-in and a push button on that row would have nothing to send. What is asserted is the SHAPE of that dormancy: the target, its file, its import path and its accepted vendor shape are all still there and still correct (reviving it is deleting one block), while isPushableLogin refuses it - and it refuses it by reading the table, which is why the last case flips the flag and watches the answer change.
  * 4 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
+ * 5 | maintainer@emeraldcoastsystemsgroup.com | Guard the receiver gate: a 404 (no import route on this portal) or 503 (route without an account runtime) status answer classifies to canPush=false, so the Config screen disables the button instead of offering a push that can only fail; 401 keeps it pushable because the push signs in first.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
   LOGIN_TARGETS,
   classifyPushResponse,
+  classifyStatusResponse,
   importRequestBody,
   isPushableLogin,
   loginFileChanged,
@@ -185,5 +187,20 @@ describe('native kernel account verification', () => {
       .toMatchObject({ok: true, stored: true, verified: true});
     expect(classifyPushResponse(200, null).ok).toBe(false);
     expect(classifyPushResponse(404, null)).toMatchObject({ok: false, reason: 'http_404'});
+  });
+});
+
+describe('swarm status probe gates the Push to swarm button', () => {
+  it('disables the push when the portal has no receiver, keeps it when only a sign-in is missing', () => {
+    expect(classifyStatusResponse(404, null)).toMatchObject({ ok: false, receiver: 'missing_route', canPush: false });
+    expect(classifyStatusResponse(503, { detail: 'account runtime not configured' }))
+      .toMatchObject({ ok: false, receiver: 'runtime_unavailable', canPush: false, detail: 'account runtime not configured' });
+    expect(classifyStatusResponse(401, null)).toMatchObject({ ok: false, needsSignIn: true, receiver: 'sign_in_required', canPush: true });
+    expect(classifyStatusResponse(403, null)).toMatchObject({ ok: false, receiver: 'operator_only', canPush: false });
+    expect(classifyStatusResponse(200, { success: true, authenticated: true, stored: true, verified: true }))
+      .toMatchObject({ ok: true, authenticated: true, stored: true, verified: true, receiver: 'available', canPush: true });
+    expect(classifyStatusResponse(200, { success: true, stored: true }))
+      .toMatchObject({ ok: true, authenticated: false, stored: true, verified: false, receiver: 'available', canPush: true });
+    expect(classifyStatusResponse(502, 'not json')).toMatchObject({ ok: false, receiver: 'unreachable', canPush: false });
   });
 });

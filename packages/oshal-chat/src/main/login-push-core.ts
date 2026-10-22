@@ -10,6 +10,7 @@
  * 5 | maintainer@emeraldcoastsystemsgroup.com   | The Google target is marked DORMANT rather than pushable, and isPushableLogin now reads that flag off the table instead of listing ids. Measured on the operator's box 2026-09-22: choosing "Sign in with Google" in the `gemini` CLI answers "Failed to sign in. Message: This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google". oauth_creds.json therefore cannot be produced by a sign-in any more, so a Push to swarm button on that row is a button with nothing to send - the same class of defect as offering a brain option nothing can run. The row, the file shape, the parse arm and the swarm-side import route are all KEPT: they are correct, they are proven by their own guards, and they cost nothing while dormant. Reviving the row is deleting one `dormant` block.
  * 6 | maintainer@emeraldcoastsystemsgroup.com   | Antigravity joins the same push rail: its Windows Credential Manager blob is the vendor JSON consumed by agy's headless token file, so the node validates and posts that shape to the dedicated import/status endpoints.
  * 7 | maintainer@emeraldcoastsystemsgroup.com | Distinguish stored from verified native account transfer and record credential-free push outcomes.
+ * 8 | maintainer@emeraldcoastsystemsgroup.com | Classify the swarm's status answer into a receiver state (available / sign-in required / operator only / missing route / runtime not configured) so the Config screen can disable a Push to swarm button whose portal has nothing to receive it, instead of offering a push that can only fail (Antigravity on a native kernel without that route answered 404 and the button stayed enabled).
  */
 
 /** The vendor logins the swarm can adopt through the authenticated operator rail. */
@@ -349,6 +350,45 @@ export function classifyPushResponse(status: number, body: unknown): PushOutcome
   if (status === 409) return { ok: false, status, needsSignIn: false, refused: true, reason: error || 'refused', detail: hint || describeRefusal(error) };
   if (status === 400) return { ok: false, status, needsSignIn: false, refused: false, reason: error || 'invalid', detail: hint || 'The swarm rejected the login file shape.' };
   return { ok: false, status, needsSignIn: false, refused: false, reason: error || `http_${status}`, detail: hint || `The swarm answered HTTP ${status}.` };
+}
+
+/** What the swarm's status route says about its ability to receive a pushed login. */
+export type ReceiverState = 'available' | 'sign_in_required' | 'operator_only' | 'missing_route' | 'runtime_unavailable' | 'unreachable';
+
+export interface SwarmLoginState {
+  ok: boolean;
+  authenticated: boolean;
+  needsSignIn: boolean;
+  stored?: boolean;
+  verified?: boolean;
+  /** Whether a push could be received at all; the Config screen disables the button unless it can. */
+  receiver: ReceiverState;
+  /** True only when pressing Push to swarm has a receiver to reach (a sign-in prompt still counts). */
+  canPush: boolean;
+  detail?: string;
+}
+
+/**
+ * @description Turns the swarm's status answer into a receiver state the Config screen can gate the
+ * Push to swarm button on. A 404 means the portal has no import route for this vendor; a 503 means
+ * the kernel has the route but no account runtime behind it. Neither can accept a push, so the button
+ * is disabled with that reason. 401 keeps the button: the push flow signs in first.
+ * @param status - HTTP status of GET statusPath
+ * @param body - Parsed JSON body, or null
+ * @returns Classified state
+ */
+export function classifyStatusResponse(status: number, body: unknown): SwarmLoginState {
+  const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const detail = typeof record.detail === 'string' ? record.detail : undefined;
+  if (status === 401) return { ok: false, authenticated: false, needsSignIn: true, receiver: 'sign_in_required', canPush: true, detail: 'not signed in to the swarm' };
+  if (status === 403) return { ok: false, authenticated: false, needsSignIn: false, receiver: 'operator_only', canPush: false, detail: 'operator only' };
+  if (status === 404) return { ok: false, authenticated: false, needsSignIn: false, receiver: 'missing_route', canPush: false, detail: 'this portal has no receiving route for this login' };
+  if (status === 503) return { ok: false, authenticated: false, needsSignIn: false, receiver: 'runtime_unavailable', canPush: false, detail: detail || 'the portal has no account runtime configured for this login' };
+  if (status >= 200 && status < 300) {
+    return { ok: true, authenticated: record.authenticated === true, needsSignIn: false,
+      stored: record.stored === true, verified: record.verified === true, receiver: 'available', canPush: true, detail };
+  }
+  return { ok: false, authenticated: false, needsSignIn: false, receiver: 'unreachable', canPush: false, detail: detail || `Portal answered HTTP ${status}` };
 }
 
 /** Plain-language reasons for the refusals the swarm can send. */
