@@ -253,9 +253,16 @@ linked ticket ownership is fallback; legacy unowned rows deny by default unless
      UI-tested pass" caution was costing observability for nothing. `OSHAL_STRICT_CSP=on` enforces
      (blocking header); `OSHAL_CSP=off` is the kill switch. Directives pinned: `default-src 'self'`,
      `object-src 'none'`, `base-uri`/`form-action`/`frame-ancestors`/`frame-src` `'self'`,
-     `worker-src 'self' blob:`, `upgrade-insecure-requests`, and `script-src` WITHOUT
+     `worker-src 'self' blob:`, `upgrade-insecure-requests` (on the blocking header only: browsers ignore it
+     on a report-only policy and log a console error for it on every page, so the report-only header
+     leaves it out), and `script-src` WITHOUT
      `'unsafe-inline'` unless a nonce is supplied. Inline `style=` is still permitted (styles cannot
-     exfiltrate the way scripts can — the documented pragmatic step). The collector dedupes by
+     exfiltrate the way scripts can — the documented pragmatic step).
+     `OSHAL_CSP_REPORT_ONLY=on` also omits the upgrade directive when it overrides
+     `OSHAL_STRICT_CSP=on`; nonce, source allowlists and report URI overrides are preserved.
+     `npx vitest run tests/unit/web-hardening-csp-body.spec.ts --maxWorkers=1 --no-file-parallelism`
+     checks these headers through real HTTP and Helmet, including the enforced and disabled modes.
+     Browser surface acceptance remains a separate check. The collector dedupes by
      `directive|blockedUri|documentUri` so report-only on a cockpit full of inline scripts cannot
      bury real faults. **Remaining, and it is now measurable:** nonce/externalise the cockpit's
      inline `<script>` blocks until the report-only log is clean, then flip to enforce.

@@ -1,3 +1,12 @@
+/**
+ * CHANGE LOG
+ * -----------------------------------------------------------------------------
+ * SEQ                 | AUTHOR                      | DESCRIPTION
+ * -----------------------------------------------------------------------------
+ * 1 | maintainer@emeraldcoastsystemsgroup.com   | Initial implementation: the plan/act provider configuration page and the /api/config filesystem persistence it drives.
+ * 2 | maintainer@emeraldcoastsystemsgroup.com   | The Functionality and Functional Correctness blocks opened /chat.html, which the server now answers with a 302 to the standalone /chat UI on purpose (server.ts change 24, server-auxiliary-routes.ts), so none of their selectors existed and 13 cases failed at zero retries. The configuration page they test is served at /ui.html, where the other three blocks already go; both blocks now open it.
+ */
+
 import { test, expect } from '@playwright/test';
 
 // ============================================================
@@ -6,7 +15,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Functionality — UI features work correctly', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/chat.html');
+    await page.goto('/ui.html');
   });
 
   test('page loads with all essential elements', async ({ page }) => {
@@ -117,7 +126,7 @@ test.describe('Functionality — UI features work correctly', () => {
 
 test.describe('Functional Correctness — Business logic is accurate', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/chat.html');
+    await page.goto('/ui.html');
   });
 
   test('all 40 providers are available in dropdowns', async ({ page }) => {
