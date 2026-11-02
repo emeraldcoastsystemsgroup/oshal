@@ -282,3 +282,9 @@ Recording*.m4a
 
 # Operator-local Vault material for a dev cluster (unseal shares, root/operator logins). Never staged.
 .vault-local/
+
+# tsc output emitted beside the sources (every such file has a .ts sibling). Tracked .js files stay tracked.
+src/**/*.js
+src/**/*.js.map
+# The connector catalog lives in oshal-kernel/connectors; local copies here are not source. Tracked ones stay tracked.
+swarm-apps/connectors/*.yaml
